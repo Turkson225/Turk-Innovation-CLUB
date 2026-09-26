@@ -13,6 +13,8 @@ A responsive club workspace for a TTU engineering community. The site is static 
 - Administrator-approved member applications, threaded channel replies, reactions, mentions, unread counts, search and in-app notifications.
 - Three-column member activity feed with project updates, resource links, shared club documents, comments, likes, recent stories and active members.
 - Member profiles with a headline, bio and availability, plus private one-to-one messaging and unread counts. Optional dark theme is saved in the browser.
+- New applicants choose member, teacher, founder or investor before email verification. The selected type is a request until an administrator approves it. Teachers can publish courses; founders have a private meeting room; investors have a separate curated portal and inquiry form.
+- Administrator dashboard for pending applications, reports, club activity, investor inquiries and selected CSV exports.
 - Blog-style engineering posts with an optional headline, topic, cover image, links and document attachments; comments support one level of replies. Channel messages can include an image selected from the member's gallery.
 - Project collaborators, milestones and task assignments; meeting RSVPs, document versions, reports and moderation actions.
 - Administrator-published courses, alerts and events. Events can include Google Meet links and open in Google Calendar or download as an ICS file.
@@ -49,6 +51,8 @@ Run [`supabase/upgrade_media_threads.sql`](supabase/upgrade_media_threads.sql) *
 
 Then run [`supabase/upgrade_profile_images.sql`](supabase/upgrade_profile_images.sql) **once**. Approved members can upload, replace or remove their own profile photo from the Members page. Photos appear in the directory, feed, channels and direct messages through temporary links. The private `club-media` bucket accepts images up to 5 MB; only approved members can view an approved member's current profile photo. The home page uses original concept artwork in optimized WebP files under `assets/`; it does not depict actual club members or events. Interface motion follows the device's reduced motion preference.
 
+Run [`supabase/upgrade_roles_investors.sql`](supabase/upgrade_roles_investors.sql) **once** after the profile images upgrade. This adds applicant types, administrator assignment of the approved role, a separate investor portal and private investor inquiries. Existing approved users keep their existing roles. New applicants remain pending until an administrator approves them under **Admin dashboard → Applications**. Choosing a type in the sign-in form never grants privileges directly. Teachers can publish courses after approval. Approved investors can read curated investor updates and their own inquiries; they cannot read club channels, posts, documents or private messages. Public founder profiles remain subject to consent. Administrators can publish investor updates from the portal and review inquiries there.
+
 Once the first administrator has been promoted using step 5 above:
 
 1. Members can use **Channels**, share files up to 10 MB in **Document library**, and submit external stories through **Technology news**. Administrators review submitted news before publication and can create new channels. The news feed is curated by members; it does not automatically ingest third-party articles.
@@ -72,7 +76,7 @@ Members respond to events using **Going**, **Maybe** or **Can't go**. Accepted f
 ## Operations and data protection
 
 - **Moderation:** Administrators can approve accounts, inspect reports, remove reported messages, posts, documents and news, and see recent admin actions. Suspended accounts cannot access the member workspace. Club leaders should decide who reviews applications and reports.
-- **Content export:** The administrator's **Export content JSON** button downloads shared club content currently loaded in the browser. It deliberately excludes private direct messages, authentication users and file bytes (including images) and may be limited by Supabase query limits; it is **not a complete backup**. Use Supabase database backups or CLI dumps, and independently preserve important Storage files. See [Supabase database backups](https://supabase.com/docs/guides/platform/backups).
+- **Content export:** The administrator's **Admin dashboard** offers CSV downloads for applications and members, projects, events, posts, reports, investor inquiries and audit actions. **Moderation → Export content JSON** remains available. Exports contain rows currently loaded in the browser, usually up to Supabase's query limit; they exclude authentication records, private direct messages and file bytes. These are **not complete backups**. Use Supabase database backups or CLI dumps, and independently preserve important Storage files. See [Supabase database backups](https://supabase.com/docs/guides/platform/backups).
 - **Verification:** Test access from separate accounts for pending, approved, founder and admin roles; test a direct database request as a pending user and verify it cannot read channels, documents or meetings. Then test upload, version download, reported content and meeting RSVPs. Keep the SQL migrations in the repository for review.
 
 ## Publish on GitHub Pages
@@ -93,11 +97,13 @@ For a local preview, run `python3 -m http.server 8000` from the repository root 
 
 | Role | Abilities |
 | --- | --- |
-| Visitor | Public home, founders, privacy and conduct pages |
-| Applicant | Own application and privacy pages while approval is pending |
+| Visitor | Public home, founders, investors, privacy and conduct pages |
+| Applicant | Own application and privacy pages while approval is pending; requested type does not confer access |
 | Member | Directory and profiles, private direct messages, activity posts and comments, channels, documents, news, projects and assigned tasks, discussions, events, RSVPs and inbox |
-| Founder | Member abilities plus private founder meetings after accepting an invitation |
-| Administrator | Member abilities plus account reviews, moderation, content export, publishing, channel creation and founder invitations |
+| Teacher | Member abilities plus course publishing after approval |
+| Founder | Member abilities plus private founder meetings after approval or accepting an invitation |
+| Investor | Curated investor updates and own private inquiries, separate from the member workspace |
+| Administrator | Member abilities plus account reviews, moderation, CSV and JSON export, investor updates and inquiries, publishing, channel creation and founder invitations |
 
 ## References
 
