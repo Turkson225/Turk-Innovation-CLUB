@@ -10,6 +10,7 @@ const date = (s) => s ? new Date(s).toLocaleDateString(undefined,{month:'short',
 const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'TBD';
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
 let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, activePeerId = null, lastRenderedPage = '';
+let calendarMonth = new Date(new Date().getFullYear(),new Date().getMonth(),1), calendarSelected = new Date();
 const mediaUrls = new Map();
 const mediaUrl = path => path && mediaUrls.get(path)?.url || '';
 async function hydrateMedia() {
@@ -43,7 +44,7 @@ let pendingEmail = sessionStorage.getItem('innovatex.pendingEmail') || '';
 let pendingType = sessionStorage.getItem('innovatex.pendingType') || 'member';
 let pendingAuthMode = sessionStorage.getItem('innovatex.pendingAuthMode') === 'signup' ? 'signup' : 'signin';
 let toastTimer;
-const pages = ['home','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','discussions','courses','teaching','events','announcements','founder-room'];
+const pages = ['home','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','discussions','courses','teaching','events','calendar','announcements','founder-room'];
 const approved = () => !!me && (!('membership_status' in me) || me.membership_status==='approved');
 const investor = () => approved() && me?.role==='investor';
 const clubAccess = () => approved() && !investor();
@@ -63,6 +64,7 @@ iconPaths['investor-portal']='<path d="M3 20h18M5 16l5-5 4 3 5-7M16 7h3v3"/>';
 iconPaths.admin='<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="5" rx="1"/><rect x="13" y="10" width="8" height="11" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/>';
 iconPaths.teaching='<path d="M3 5h18v13H3zM7 22h10M12 18v4M7 10h10M7 13h6"/>';
 const iconSvg = name => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconPaths[name]||iconPaths.home}</svg>`;
+iconPaths.calendar=iconPaths.events;
 const modal = (html) => { if($('#modal').open) $('#modal').close(); $('#modalContent').innerHTML=html; $('#modal').showModal(); };
 const close = () => $('#modal').close();
 const fail = (error) => { console.error(error); show(error?.message || 'Something went wrong. Please try again.'); };
@@ -207,7 +209,7 @@ function render() {
   $('#notificationBadge').textContent=(cache.notifications||[]).filter(n=>!n.read_at).length;
   const unreadDm=(cache.direct_messages||[]).filter(m=>m.recipient_id===session?.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;
   $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
-  const views={home,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,discussions,courses,teaching,events,announcements,'founder-room':founderRoom};
+  const views={home,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').innerHTML=views[page]();
   $('#content').classList.toggle('view-enter',page!==lastRenderedPage);lastRenderedPage=page;
   if(page==='channels'){const stream=$('#messageStream');if(stream)stream.scrollTop=stream.scrollHeight;if(activeChannelId&&enhancedReady)markChannelRead(activeChannelId);}
@@ -314,6 +316,38 @@ function events() {
   const list=(cache.events||[]).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));
   return `${head('MAKE TIME TO BUILD','Events calendar','Workshops, project reviews, club meetings and demo days.',admin()?button('+ Schedule event','eventForm'):'')}
   <div class="grid grid-2">${list.length?list.map(e=>`<div class="card"><div class="row"><span class="tag ${new Date(e.starts_at)<new Date()?'gold':''}">${new Date(e.starts_at)<new Date()?'Past event':'Upcoming'}</span><span class="subtle">${dateTime(e.starts_at)}</span></div><h3 style="margin-top:18px">${esc(e.title)}</h3><p>${esc(e.description||'')}</p><div class="meta"><span>◷ ${dateTime(e.starts_at)}</span><span>⌁ ${esc(e.location||'Online')}</span></div>${rsvpControls("event",e.id)}<div class="card-footer"><div>${e.meet_url?`<a class="link" href="${esc(cleanUrl(e.meet_url))}" target="_blank" rel="noopener noreferrer">Join Google Meet ↗</a>`:''}</div><div>${admin()&&!e.meet_url?`<button class="text-button" data-action="createMeet" data-kind="event" data-id="${esc(e.id)}">Create Meet</button> · `:''}<button class="text-button" data-action="calendar" data-id="${esc(e.id)}">Add to calendar</button> · <button class="text-button" data-action="ics" data-id="${esc(e.id)}">ICS</button></div></div></div>`).join(''):empty('No events yet','Events will appear here when the team sets the schedule.')}</div>`;
+}
+const calendarDayKey = value => {const d=new Date(value);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
+function calendarEntries() {
+  const items=(cache.events||[]).map(e=>({...e,kind:'event'}));
+  if(founder())items.push(...(cache.founder_meetings||[]).map(m=>({...m,kind:'meeting'})));
+  items.push(...(cache.project_tasks||[]).filter(t=>t.due_at&&t.status!=='done').map(t=>({...t,kind:'task',starts_at:t.due_at})));
+  return items.filter(x=>x.starts_at&&!Number.isNaN(new Date(x.starts_at).getTime())).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));
+}
+function calendarPage() {
+  const year=calendarMonth.getFullYear(),month=calendarMonth.getMonth(),today=calendarDayKey(new Date()),selected=calendarDayKey(calendarSelected);
+  const entries=calendarEntries(),byDay=new Map();
+  entries.forEach(item=>{const key=calendarDayKey(item.starts_at);if(!byDay.has(key))byDay.set(key,[]);byDay.get(key).push(item);});
+  const offset=new Date(year,month,1).getDay(),days=new Date(year,month+1,0).getDate();
+  const cells=Array.from({length:Math.ceil((offset+days)/7)*7},(_,index)=>{
+    const day=index-offset+1;if(day<1||day>days)return '<div class="cal-cell outside" aria-hidden="true"></div>';
+    const key=calendarDayKey(new Date(year,month,day)),items=byDay.get(key)||[];
+    return `<div class="cal-cell ${key===today?'today':''} ${key===selected?'selected':''}"><button class="cal-date" data-action="calendarDay" data-date="${key}" aria-label="${esc(new Date(year,month,day).toLocaleDateString(undefined,{dateStyle:'full'}))}, ${items.length} calendar items" aria-pressed="${key===selected}">${day}</button><div class="cal-items">${items.slice(0,3).map(item=>`<button class="cal-chip ${item.kind}" data-action="calendarItem" data-kind="${item.kind}" data-id="${esc(item.id)}" title="${esc(item.title)}">${esc(item.title)}</button>`).join('')}${items.length>3?`<button class="cal-more" data-action="calendarDay" data-date="${key}">+${items.length-3} more</button>`:''}</div></div>`;
+  }).join('');
+  const selectedItems=byDay.get(selected)||[];
+  const card=item=>`<button class="cal-agenda-item" data-action="calendarItem" data-kind="${item.kind}" data-id="${esc(item.id)}"><span class="cal-dot ${item.kind}"></span><span><strong>${esc(item.title)}</strong><small>${item.kind==='task'?'Task deadline':item.kind==='meeting'?'Founder meeting':'Club event'} · ${dateTime(item.starts_at)}</small></span><span aria-hidden="true">↗</span></button>`;
+  const upcoming=entries.filter(item=>new Date(item.starts_at)>=new Date()).slice(0,5);
+  return `${head('PLAN TOGETHER','Club calendar','See club events and project deadlines in one place. Founder meetings appear only for approved founders.',admin()?button('+ Schedule event','eventForm'):'')}
+  <div class="cal-toolbar"><div><h2>${esc(calendarMonth.toLocaleDateString(undefined,{month:'long',year:'numeric'}))}</h2><p class="subtle">${entries.filter(item=>{const d=new Date(item.starts_at);return d.getMonth()===month&&d.getFullYear()===year;}).length} items this month</p></div><div class="cal-nav"><button data-action="calendarToday" class="button button-outline button-sm">Today</button><button data-action="calendarPrev" aria-label="Previous month" class="cal-arrow">‹</button><button data-action="calendarNext" aria-label="Next month" class="cal-arrow">›</button></div></div>
+  <div class="cal-layout"><div class="cal-board"><div class="cal-weekdays">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<span>${d}</span>`).join('')}</div><div class="cal-grid">${cells}</div></div><aside class="cal-agenda"><h3>${esc(calendarSelected.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}))}</h3>${selectedItems.length?selectedItems.map(card).join(''):empty('Nothing scheduled','Choose a date with an item to view its details.')}<h3 class="cal-upcoming-title">Coming up</h3>${upcoming.length?upcoming.map(card).join(''):empty('No upcoming items','New events will show here when scheduled.')}<a href="#events" class="link cal-events-link">All club events →</a></aside></div><div class="cal-legend"><span><i class="cal-dot event"></i> Club event</span><span><i class="cal-dot task"></i> Task deadline</span>${founder()?'<span><i class="cal-dot meeting"></i> Founder meeting</span>':''}</div>`;
+}
+function calendarItem(kind,id) {
+  const table={event:'events',meeting:'founder_meetings',task:'project_tasks'}[kind];
+  if(!clubAccess()||!table||kind==='meeting'&&!founder())return;
+  const item=(cache[table]||[]).find(x=>x.id===id);if(!item)return;
+  if(kind==='task')return modal(`<span class="eyebrow">PROJECT DEADLINE</span><h2>${esc(item.title)}</h2><p>Due ${dateTime(item.due_at)}</p><p>${esc(item.description||'Check the project plan for more details.')}</p><button class="button" data-action="calendarProject" data-id="${esc(item.project_id)}">View project →</button>`);
+  const meeting=kind==='meeting';
+  modal(`<span class="eyebrow">${meeting?'FOUNDER MEETING':'CLUB EVENT'}</span><h2>${esc(item.title)}</h2><p>${esc(meeting?item.agenda||'Agenda to follow.':item.description||'Details to follow.')}</p><div class="meta"><span>◷ ${dateTime(item.starts_at)}${item.ends_at?' – '+dateTime(item.ends_at):''}</span><span>⌁ ${esc(meeting?'Private founder meeting':item.location||'Online')}</span></div>${rsvpControls(meeting?'meeting':'event',id)}<div class="cal-detail-actions">${item.meet_url?`<a class="button" href="${esc(cleanUrl(item.meet_url))}" target="_blank" rel="noopener noreferrer">Join Google Meet ↗</a>`:''}<button class="button button-outline" data-action="${meeting?'founderCalendar':'calendar'}" data-id="${esc(id)}">Add to Google Calendar</button><button class="button button-outline" data-action="${meeting?'founderIcs':'ics'}" data-id="${esc(id)}">Download ICS</button></div>`);
 }
 function announcements() {
   const list=cache.announcements||[];
@@ -520,6 +554,11 @@ async function signOut() {try{await touchPresence(false);const {error}=await db.
 
 function actions(e) {
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
+  if(action==='calendarPrev'||action==='calendarNext'){calendarMonth=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth()+(action==='calendarNext'?1:-1),1);calendarSelected=new Date(calendarMonth);render();return;}
+  if(action==='calendarToday'){calendarSelected=new Date();calendarMonth=new Date(calendarSelected.getFullYear(),calendarSelected.getMonth(),1);render();return;}
+  if(action==='calendarDay'){const [y,m,d]=(el.dataset.date||'').split('-').map(Number);if(!y||m<1||m>12||d<1||d>31)return;calendarSelected=new Date(y,m-1,d);render();return;}
+  if(action==='calendarItem')return calendarItem(el.dataset.kind,id);
+  if(action==='calendarProject'){close();location.hash='#projects';projectDetail(id);return;}
   if(action==='login'||action==='signup')return signInDialog('signup');
   if(action==='signin')return signInDialog('signin');
   if(action==='memberProfile')return memberProfile(id);
