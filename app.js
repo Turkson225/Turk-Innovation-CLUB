@@ -9,7 +9,7 @@ const cleanUrl = (s) => { try { const u = new URL(s); return u.protocol === 'htt
 const date = (s) => s ? new Date(s).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : 'TBD';
 const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'TBD';
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
-let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, activePeerId = null, lastRenderedPage = '';
+let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, activePeerId = null, lastRenderedPage = '';
 const mediaUrls = new Map();
 const mediaUrl = path => path && mediaUrls.get(path)?.url || '';
 async function hydrateMedia() {
@@ -41,8 +41,9 @@ async function removeAvatar(){
 }
 let pendingEmail = sessionStorage.getItem('innovatex.pendingEmail') || '';
 let pendingType = sessionStorage.getItem('innovatex.pendingType') || 'member';
+let pendingAuthMode = sessionStorage.getItem('innovatex.pendingAuthMode') === 'signup' ? 'signup' : 'signin';
 let toastTimer;
-const pages = ['home','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','discussions','courses','events','announcements','founder-room'];
+const pages = ['home','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','discussions','courses','teaching','events','announcements','founder-room'];
 const approved = () => !!me && (!('membership_status' in me) || me.membership_status==='approved');
 const investor = () => approved() && me?.role==='investor';
 const clubAccess = () => approved() && !investor();
@@ -55,10 +56,12 @@ const empty = (title,body) => `<div class="empty"><strong>${esc(title)}</strong>
 const head = (label,title,subtitle,action='') => `<div class="page-head"><div><span class="eyebrow">${esc(label)}</span><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${action}</div>`;
 const avatar = (name,large=false,photoPath='') => {const url=mediaUrl(photoPath);return `<span class="avatar ${large?'large':''}">${url?`<img src="${esc(url)}" alt="" loading="lazy">`:esc(initials(name))}</span>`;};
 const memberAvatar = (id,large=false) => {const p=(cache.profiles||[]).find(x=>x.id===id);return avatar(p?.full_name||'Member',large,p?.avatar_path);};
+const roleBadge = p => {const labels={member:'Member',teacher:'Teacher',founder:'Founder',investor:'Investor',admin:'Administrator'};const role=Object.hasOwn(labels,p?.role)?p.role:'member';return `<span class="member-badge badge-${role}" title="Approved ${esc(labels[role])} account">${labels[role]}</span>`;};
 const iconPaths={home:'<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',founders:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',privacy:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',application:'<path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/>',members:'<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M17 5a3 3 0 0 1 0 6M19 14a5 5 0 0 1 2 4v2"/>',messages:'<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3 8.5 8.5 0 0 1 21 11.5z"/>',notifications:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',feed:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',channels:'<path d="M4 5h16v11H8l-4 4zM8 9h8M8 12h5"/>',library:'<path d="M4 4h12l4 4v12H4zM16 4v4h4M8 13h8M8 17h6"/>',news:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h4M13 12h4M7 16h10"/>',projects:'<path d="M3 7h7l2 2h9v11H3zM3 7V4h8l2 3"/>',discussions:'<path d="M4 4h16v12H8l-4 4zM8 9h8M8 12h5"/>',courses:'<path d="M3 6 12 3l9 3-9 3-9-3zM5 10v7c4 3 10 3 14 0v-7M21 7v8"/>',events:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M8 14h3M8 17h3"/>',announcements:'<path d="M3 10h4l12-5v14L7 14H3zM7 14l2 7h4l-2-6M21 9v6"/>','founder-room':'<path d="m12 2 2.5 6.5L21 11l-6.5 2.5L12 20l-2.5-6.5L3 11l6.5-2.5z"/>',applications:'<path d="M5 3h14v18H5zM8 8h8M8 13l2 2 5-5"/>',moderation:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM12 7v6M12 17h.01"/>'};
 iconPaths.investors='<path d="M3 20h18M5 16l5-5 4 3 5-7M16 7h3v3"/>';
 iconPaths['investor-portal']='<path d="M3 20h18M5 16l5-5 4 3 5-7M16 7h3v3"/>';
 iconPaths.admin='<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="5" rx="1"/><rect x="13" y="10" width="8" height="11" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/>';
+iconPaths.teaching='<path d="M3 5h18v13H3zM7 22h10M12 18v4M7 10h10M7 13h6"/>';
 const iconSvg = name => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconPaths[name]||iconPaths.home}</svg>`;
 const modal = (html) => { if($('#modal').open) $('#modal').close(); $('#modalContent').innerHTML=html; $('#modal').showModal(); };
 const close = () => $('#modal').close();
@@ -72,15 +75,15 @@ async function refresh() {
   if(!self.error&&self.data)me=self.data;
   roleReady=!!me&&'application_type' in me;
   if(previous!==`${me?.membership_status}:${me?.role}`)return signedIn(session);
-  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;mediaUrls.clear();route();return;}
+  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;mediaUrls.clear();route();return;}
   if(investor()){
     const results=await Promise.allSettled(['investor_updates','investor_inquiries'].map(n=>read(n,q=>q.order('created_at',{ascending:false}))));
     cache={profiles:[me],investor_updates:results[0].status==='fulfilled'?results[0].value:[],investor_inquiries:results[1].status==='fulfilled'?results[1].value:[]};
-    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;mediaUrls.clear();
+    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;mediaUrls.clear();
     if(previous!==`${me.membership_status}:${me.role}`||!['home','founders','investors','investor-portal','privacy'].includes(page)) {route();return;}
     render();return;
   }
-  const names=['profiles','projects','project_tasks','topics','replies','courses','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes','direct_messages','direct_message_reads','investor_updates','investor_inquiries'];
+  const names=['profiles','projects','project_tasks','topics','replies','courses','learning_materials','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes','direct_messages','direct_message_reads','investor_updates','investor_inquiries'];
   const unordered=new Set(['channel_reads','project_members','event_rsvps','founder_meeting_rsvps']);
   const results=await Promise.allSettled(names.map(n=>read(n,q=>unordered.has(n)?q:q.order('created_at',{ascending:false}))));
   results.forEach((r,i)=>{ if(r.status==='fulfilled') cache[names[i]]=r.value; else console.error(names[i],r.reason); });
@@ -88,6 +91,7 @@ async function refresh() {
   enhancedReady=results[names.indexOf('channel_reads')].status==='fulfilled';
   feedReady=results[names.indexOf('activity_posts')].status==='fulfilled';
   dmReady=results[names.indexOf('direct_messages')].status==='fulfilled';
+  learningReady=results[names.indexOf('learning_materials')].status==='fulfilled';
   const {error:mediaError}=feedReady?await db.from('activity_posts').select('image_path').limit(1):{error:true};
   mediaReady=!mediaError;
   const {error:avatarError}=mediaReady?await db.from('profiles').select('avatar_path').eq('id',session.user.id).limit(1):{error:true};
@@ -122,7 +126,7 @@ async function signedIn(newSession) {
   clearInterval(chatTimer);
   if(chatRealtime) { await db.removeChannel(chatRealtime); chatRealtime=null; }
   if(session) {
-    pendingEmail=''; sessionStorage.removeItem('innovatex.pendingEmail');
+    pendingEmail=''; sessionStorage.removeItem('innovatex.pendingEmail');sessionStorage.removeItem('innovatex.pendingAuthMode');
     const {data,error}=await db.from('profiles').select('*').eq('id',session.user.id).single();
     if(error) { fail(error); return; }
     me=data;
@@ -180,6 +184,7 @@ function route() {
   if(session&&!approved()&&!['application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
   if(investor()&&!['home','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='investor-portal'&&authReady&&!investor()&&!admin()){page='investors';history.replaceState(null,'','#investors');}
+  if(page==='teaching'&&authReady&&!teacher()){page=clubAccess()?'courses':'home';history.replaceState(null,'','#'+page);}
   if(page==='founder-room'&&authReady&&!founder()){page='founders';history.replaceState(null,'','#founders');show('Founder access required.');}
   if(['admin','applications','moderation'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   $('#sidebar').classList.remove('open');render();
@@ -187,9 +192,11 @@ function route() {
 function render() {
   $('#authButton').textContent=session?'Sign out':'Join / sign in';
   $('#connectionLabel').textContent=!configured?'Setup required':session&&!approved()?'Application pending':investor()?'Investor portal live':session?'Member workspace live':'Public preview';
+  $('#accountBadge').hidden=!approved();$('#accountBadge').innerHTML=approved()?roleBadge(me):'';
   $('#pageCrumb').textContent=page==='founder-room'?'Founder room':page[0].toUpperCase()+page.slice(1);
   document.querySelectorAll('#nav a').forEach(a=>{a.classList.toggle('active',a.dataset.page===page);a.hidden=!!a.dataset.private&&!clubAccess();});
   document.querySelectorAll('#nav [data-founder]').forEach(a=>a.hidden=!founder());
+  document.querySelectorAll('#nav [data-teacher]').forEach(a=>a.hidden=!teacher());
   document.querySelectorAll('#nav [data-investor]').forEach(a=>a.hidden=!investor()&&!admin());
   document.querySelectorAll('#nav [data-admin]').forEach(a=>a.hidden=!admin());
   document.querySelectorAll('#nav [data-pending]').forEach(a=>a.hidden=!session||approved());
@@ -199,7 +206,7 @@ function render() {
   $('#notificationBadge').textContent=(cache.notifications||[]).filter(n=>!n.read_at).length;
   const unreadDm=(cache.direct_messages||[]).filter(m=>m.recipient_id===session?.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;
   $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
-  const views={home,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,discussions,courses,events,announcements,'founder-room':founderRoom};
+  const views={home,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,discussions,courses,teaching,events,announcements,'founder-room':founderRoom};
   $('#content').innerHTML=views[page]();
   $('#content').classList.toggle('view-enter',page!==lastRenderedPage);lastRenderedPage=page;
   if(page==='channels'){const stream=$('#messageStream');if(stream)stream.scrollTop=stream.scrollHeight;if(activeChannelId&&enhancedReady)markChannelRead(activeChannelId);}
@@ -245,12 +252,12 @@ function members() {
   const invite=(cache.founder_invites||[]).find(i=>i.email===session?.user.email?.toLowerCase()&&!i.accepted_at);
   return `${head('COMMUNITY','Members','See who is around and connect with the people building InnovateX.',`<div class="profile-buttons">${avatarReady?button('Change photo','avatarForm','button-outline'):''}${button('Edit my profile','profileForm')}</div>`)}
   ${invite?`<div class="founder-invite-banner"><div><span class="eyebrow">FOUNDER INVITATION</span><h3>You’ve been invited to join the founding team.</h3><p>Accept with your verified account to open founder meetings and planning.</p></div>${button('Accept invitation','acceptFounder')}</div>`:''}
-  <div class="grid grid-4"><div class="stat"><small>Registered members</small><b>${people.length}</b><span>Club workspace</span></div><div class="stat"><small>Online now</small><b>${people.filter(online).length}</b><span>Seen within 65 seconds</span></div></div><div class="section-heading"><h2>Member directory</h2><p>Presence updates while the workspace is open.</p></div><div class="profile-grid">${people.length?people.sort((a,b)=>Number(online(b))-Number(online(a))).map(p=>`<div class="card person">${memberAvatar(p.id)}<div><h3>${esc(p.full_name||'New member')}</h3><p class="subtle">${esc(p.headline||p.programme||'Member')}</p></div>${online(p)?'<span class="online-dot" title="Online"></span>':''}<button class="text-button" data-action="memberProfile" data-id="${esc(p.id)}">Profile</button></div>`).join(''):empty('No members yet','Member profiles will appear after signup.')}</div>`;
+  <div class="grid grid-4"><div class="stat"><small>Registered members</small><b>${people.length}</b><span>Club workspace</span></div><div class="stat"><small>Online now</small><b>${people.filter(online).length}</b><span>Seen within 65 seconds</span></div></div><div class="section-heading"><h2>Member directory</h2><p>Presence updates while the workspace is open.</p></div><div class="profile-grid">${people.length?people.sort((a,b)=>Number(online(b))-Number(online(a))).map(p=>`<div class="card person">${memberAvatar(p.id)}<div><h3>${esc(p.full_name||'New member')}</h3>${roleBadge(p)}<p class="subtle">${esc(p.headline||p.programme||'Member')}</p></div>${online(p)?'<span class="online-dot" title="Online"></span>':''}<button class="text-button" data-action="memberProfile" data-id="${esc(p.id)}">Profile</button></div>`).join(''):empty('No members yet','Member profiles will appear after signup.')}</div>`;
 }
 function memberProfile(id) {
   const p=(cache.profiles||[]).find(x=>x.id===id&&x.membership_status==='approved'&&x.role!=='investor');if(!p)return;
   const online=p.last_seen_at&&Date.now()-new Date(p.last_seen_at)<65000;
-  modal(`<div class="member-profile-hero">${memberAvatar(p.id,true)}<span class="tag ${online?'':'blue'}">${online?'Online':esc(p.availability||'Member')}</span></div><h2>${esc(p.full_name)}</h2><p class="profile-headline">${esc(p.headline||p.programme||'Club member')}</p><p class="subtle">${p.handle?'@'+esc(p.handle)+' · ':''}${esc(p.programme||'InnovateX Engineering Club')}</p><div class="profile-facts"><div><small>Role</small><strong>${esc(p.role)}</strong></div><div><small>Availability</small><strong>${esc(p.availability||'Available')}</strong></div><div><small>Joined</small><strong>${date(p.created_at)}</strong></div></div><h3>About</h3><p class="profile-bio">${esc(p.bio||'This member has not added a bio yet.')}</p><h3>Skills & interests</h3><p>${esc(p.skills||'Not listed yet.')}</p><div class="profile-buttons">${p.id===session?.user.id?`${avatarReady?button('Change photo','avatarForm','button-outline'):''}${button('Edit my profile','profileForm')}`:dmReady?`<button class="button" data-action="openDm" data-id="${esc(p.id)}">Message ${esc(p.full_name.split(' ')[0])} →</button>`:''}</div>`);
+  modal(`<div class="member-profile-hero">${memberAvatar(p.id,true)}<span class="tag ${online?'':'blue'}">${online?'Online':esc(p.availability||'Member')}</span></div><h2>${esc(p.full_name)}</h2>${roleBadge(p)}<p class="profile-headline">${esc(p.headline||p.programme||'Club member')}</p><p class="subtle">${p.handle?'@'+esc(p.handle)+' · ':''}${esc(p.programme||'InnovateX Engineering Club')}</p><div class="profile-facts"><div><small>Role</small><strong>${esc(p.role)}</strong></div><div><small>Availability</small><strong>${esc(p.availability||'Available')}</strong></div><div><small>Joined</small><strong>${date(p.created_at)}</strong></div></div><h3>About</h3><p class="profile-bio">${esc(p.bio||'This member has not added a bio yet.')}</p><h3>Skills & interests</h3><p>${esc(p.skills||'Not listed yet.')}</p><div class="profile-buttons">${p.id===session?.user.id?`${avatarReady?button('Change photo','avatarForm','button-outline'):''}${button('Edit my profile','profileForm')}`:dmReady?`<button class="button" data-action="openDm" data-id="${esc(p.id)}">Message ${esc(p.full_name.split(' ')[0])} →</button>`:''}</div>`);
 }
 function messages() {
   if(!dmReady)return head('MEMBER CONNECTIONS','Direct messages','Private conversations with club members.')+communityNotice();
@@ -279,8 +286,19 @@ function discussions() {
 }
 function courses() {
   const list=cache.courses||[];
-  return `${head('LEARN BY DOING','Courses','Find workshops, resources and guided learning pathways.',teacher()?button('+ Publish course','courseForm'):'')}
-  <div class="grid grid-3">${list.length?list.map(c=>`<div class="card"><span class="tag blue">${esc(c.level)}</span><h3 style="margin-top:18px">${esc(c.title)}</h3><p>${esc(c.description||'Details coming soon.')}</p><div class="pill-row"><span class="subtle">${esc(c.category)}</span></div><div class="card-footer"><span>${date(c.starts_at)}</span>${c.resource_url?`<a class="link" href="${esc(cleanUrl(c.resource_url))}" target="_blank" rel="noopener noreferrer">Resources ↗</a>`:''}</div></div>`).join(''):empty('Courses are being prepared','The training team will publish upcoming workshops here.')}</div>`;
+  const materials=learningReady?(cache.learning_materials||[]).filter(m=>!m.hidden_at):[];
+  return `${head('LEARN BY DOING','Courses','Workshops, learning materials and slides for approved club members.',teacher()?`<div class="profile-buttons">${button('+ Publish course','courseForm')}${button('+ Upload material','learningForm','button-outline')}</div>`:'')}
+  <div class="grid grid-3">${list.length?list.map(c=>`<div class="card"><span class="tag blue">${esc(c.level)}</span><h3 style="margin-top:18px">${esc(c.title)}</h3><p>${esc(c.description||'Details coming soon.')}</p><div class="pill-row"><span class="subtle">${esc(c.category)}</span></div>${materials.filter(m=>m.course_id===c.id).map(materialRow).join('')}<div class="card-footer"><span>${date(c.starts_at)}</span>${c.resource_url?`<a class="link" href="${esc(cleanUrl(c.resource_url))}" target="_blank" rel="noopener noreferrer">Resource link ↗</a>`:''}</div></div>`).join(''):empty('Courses are being prepared','The teaching team will publish workshops here.')}</div>
+  ${materials.some(m=>!m.course_id)?`<div class="section-heading"><h2>Club learning library</h2></div><div class="grid grid-2">${materials.filter(m=>!m.course_id).map(m=>`<div class="card">${materialRow(m)}</div>`).join('')}</div>`:''}`;
+}
+function materialRow(m){return `<div class="learning-row"><span class="tag blue">${esc(m.kind)}</span><div><strong>${esc(m.title)}</strong><small>${esc(m.file_name)} · ${fileSize(m.file_size)} · ${date(m.created_at)}</small>${m.description?`<p>${esc(m.description)}</p>`:''}</div>${m.hidden_at?'<span class="tag gold">Hidden</span>':`<button class="text-button" data-action="downloadLearning" data-id="${esc(m.id)}">Download ↓</button>`}</div>`;}
+function teaching(){
+  if(!teacher())return '';
+  if(!learningReady)return head('TEACHING','Teaching studio','Upload slides and learning materials.')+communityNotice();
+  const items=(cache.learning_materials||[]).filter(m=>admin()||m.uploaded_by===session.user.id);
+  return `${head('TEACHING','Teaching studio','Share notes, presentations and guides with approved club members.',button('+ Upload material','learningForm'))}
+  <div class="notice">Only approved teachers and administrators can publish learning files. Approved club members can download visible materials.</div>
+  <div class="section-heading"><h2>${admin()?'All learning materials':'Materials I uploaded'}</h2><p>PDF, PPT, PPTX, DOC or DOCX · up to 20 MB</p></div><div class="grid grid-2">${items.length?items.map(m=>`<div class="card teaching-card">${materialRow(m)}<div class="card-footer"><span>${m.course_id?esc((cache.courses||[]).find(c=>c.id===m.course_id)?.title||'Course'):'General learning library'} · ${esc(memberName(m.uploaded_by))}</span>${admin()?`<button class="text-button" data-action="toggleLearning" data-id="${esc(m.id)}">${m.hidden_at?'Restore':'Hide'}</button>`:''}</div></div>`).join(''):empty('No materials yet','Upload a presentation, lesson notes or a guide to begin.')}</div>`;
 }
 function eventRow(e) {return `<div class="list-item"><div class="event-date"><b>${new Date(e.starts_at).getDate()}</b><small>${new Date(e.starts_at).toLocaleString(undefined,{month:'short'})}</small></div><div><strong>${esc(e.title)}</strong><small>${dateTime(e.starts_at)} · ${esc(e.location||'Online')}</small></div></div>`;}
 function rsvpControls(kind,id) {
@@ -330,7 +348,7 @@ function feedPostCard(p) {
   const doc=(cache.documents||[]).find(d=>d.id===p.document_id);
   let domain='';try{domain=p.link_url?new URL(p.link_url).hostname.replace(/^www\./,''):'';}catch{}
   const photo=mediaUrl(p.image_path);
-  return `<article class="card feed-post" id="post-${esc(p.id)}"><div class="feed-post-head">${memberAvatar(p.author_id)}<div><strong>${esc(memberName(p.author_id))}</strong><small>${dateTime(p.created_at)}${p.edited_at?' · edited':''}</small></div>${p.author_id===session?.user.id||admin()?`<div class="feed-post-menu">${p.author_id===session?.user.id?`<button class="text-button" data-action="editFeedPost" data-id="${esc(p.id)}">Edit</button>`:''}<button class="text-button" data-action="removeFeedPost" data-id="${esc(p.id)}">Remove</button></div>`:''}</div>${mediaReady?`<span class="tag blue feed-category">${esc(p.category||'Project update')}</span>`:''}${p.title?`<h2 class="feed-post-title">${esc(p.title)}</h2>`:''}<p class="feed-body">${esc(p.body)}</p>
+  return `<article class="card feed-post" id="post-${esc(p.id)}"><div class="feed-post-head">${memberAvatar(p.author_id)}<div><strong>${esc(memberName(p.author_id))} ${roleBadge((cache.profiles||[]).find(x=>x.id===p.author_id))}</strong><small>${dateTime(p.created_at)}${p.edited_at?' · edited':''}</small></div>${p.author_id===session?.user.id||admin()?`<div class="feed-post-menu">${p.author_id===session?.user.id?`<button class="text-button" data-action="editFeedPost" data-id="${esc(p.id)}">Edit</button>`:''}<button class="text-button" data-action="removeFeedPost" data-id="${esc(p.id)}">Remove</button></div>`:''}</div>${mediaReady?`<span class="tag blue feed-category">${esc(p.category||'Project update')}</span>`:''}${p.title?`<h2 class="feed-post-title">${esc(p.title)}</h2>`:''}<p class="feed-body">${esc(p.body)}</p>
     ${photo?`<a href="${esc(photo)}" target="_blank" rel="noopener noreferrer" aria-label="Open full image"><img class="feed-photo" src="${esc(photo)}" loading="lazy" alt="Image shared by ${esc(memberName(p.author_id))}"></a>`:''}
     ${p.link_url?`<a class="feed-link" href="${esc(cleanUrl(p.link_url))}" target="_blank" rel="noopener noreferrer"><span class="feed-link-art">↗</span><span><small>${esc(domain)}</small><strong>${esc(p.link_url)}</strong></span></a>`:''}
     ${doc?`<button class="feed-file" data-action="downloadDoc" data-id="${esc(doc.id)}">▤ &nbsp; ${esc(doc.title)} <small>Open document ↗</small></button>`:''}
@@ -357,7 +375,7 @@ function applications() {
   const applicants=(cache.profiles||[]).filter(p=>p.membership_status!=='approved');
   return `${head('ADMINISTRATION','Applications','Review verified accounts before they enter the club workspace.')}
     <div class="grid grid-2">${applicants.length?applicants.map(p=>`<div class="card"><div class="row"><span class="tag ${p.membership_status==='pending'?'gold':''}">${esc(p.membership_status)}</span><span class="tag blue">${esc(p.application_type||'member')}</span><small class="subtle">${date(p.created_at)}</small></div><h3 style="margin-top:14px">${esc(p.full_name)}</h3><p>${esc(p.programme||'Programme not provided')}</p><p class="detail">${esc(p.application_reason||'No reason submitted yet.')}</p><div class="card-footer"><span>${esc(p.skills||'')}</span><div><button class="text-button" data-action="reviewMember" data-status="approved" data-id="${esc(p.id)}">Approve</button> · <button class="text-button" data-action="reviewMember" data-status="rejected" data-id="${esc(p.id)}">Reject</button></div></div></div>`).join(''):empty('No applications waiting','New verified accounts will appear here.')}</div>
-    <div class="section-heading"><h2>Approved accounts</h2><p>Pause access if needed.</p></div><div class="profile-grid">${(cache.profiles||[]).filter(p=>p.membership_status==='approved'&&p.id!==session.user.id).map(p=>`<div class="card person">${memberAvatar(p.id)}<div><strong>${esc(p.full_name)}</strong><small class="subtle">${esc(p.role)} · ${esc(p.handle||'')}</small></div><button class="text-button" data-action="reviewMember" data-status="suspended" data-id="${esc(p.id)}">Suspend</button></div>`).join('')}</div>`;
+    <div class="section-heading"><h2>Approved accounts</h2><p>Pause access if needed.</p></div><div class="profile-grid">${(cache.profiles||[]).filter(p=>p.membership_status==='approved'&&p.id!==session.user.id).map(p=>`<div class="card person">${memberAvatar(p.id)}<div><strong>${esc(p.full_name)}</strong>${roleBadge(p)}<small class="subtle">${esc(p.role)} · ${esc(p.handle||'')}</small></div><button class="text-button" data-action="reviewMember" data-status="suspended" data-id="${esc(p.id)}">Suspend</button></div>`).join('')}</div>`;
 }
 function adminDashboard(){
   if(!admin())return '';
@@ -462,20 +480,23 @@ function field(label,name,type='text',value='',required=true) {return `<div clas
 function area(label,name,value='') {return `<div class="field"><label for="${name}">${esc(label)}</label><textarea id="${name}" name="${name}" required>${esc(value)}</textarea></div>`;}
 function select(label,name,options,current='') {return `<div class="field"><label for="${name}">${esc(label)}</label><select id="${name}" name="${name}">${options.map(x=>`<option value="${esc(x)}" ${x===current?'selected':''}>${esc(x)}</option>`).join('')}</select></div>`;}
 function form(title,description,kind,fields) {modal(`<span class="eyebrow">INNOVATEX WORKSPACE</span><h2>${title}</h2><p class="muted">${description}</p><form id="editor" data-kind="${kind}" class="form-stack">${fields}<button class="button" type="submit">Save ${title.toLowerCase()}</button></form>`);}
-function signInDialog() {
+function signInDialog(mode='signin') {
   if(!configured) return show('Add your Supabase URL and publishable key to config.js first.');
   if(pendingEmail) return codeDialog();
-  modal(`<span class="eyebrow">INNOVATEX ENGINEERING CLUB</span><h2>Join or sign in</h2><p class="muted">Choose the type of account you are applying for and verify your email with a one-time code. Existing approved accounts keep their assigned role.</p><form id="editor" data-kind="login" class="form-stack">${select('I am applying as','application_type',['member','teacher','founder','investor'],pendingType)}${field('Email address','email','email')}<button class="button" type="submit">Send verification code</button></form><p class="hint">A club administrator reviews new applications before access is granted.</p>`);
+  pendingAuthMode=mode==='signup'?'signup':'signin';
+  modal(`<span class="eyebrow">INNOVATEX ENGINEERING CLUB</span><h2>${pendingAuthMode==='signup'?'Create your account':'Sign in'}</h2><div class="auth-switch"><button type="button" class="${pendingAuthMode==='signin'?'selected':''}" data-action="signin">I have an account</button><button type="button" class="${pendingAuthMode==='signup'?'selected':''}" data-action="signup">Create an account</button></div><p class="muted">${pendingAuthMode==='signup'?'Choose the type of account you are applying for. Verify your email once to create the account; an administrator will review the application.':'Enter the email for your existing account. We’ll send a fresh one-time sign-in code.'}</p><form id="editor" data-kind="login" class="form-stack">${pendingAuthMode==='signup'?select('I am applying as','application_type',['member','teacher','founder','investor'],pendingType):''}${field('Email address','email','email')}<button class="button" type="submit">${pendingAuthMode==='signup'?'Create account and send code':'Send sign-in code'}</button></form>`);
 }
 function codeDialog() {
-  modal(`<span class="eyebrow">INNOVATEX ENGINEERING CLUB</span><h2>Verify your email</h2><p class="muted">Enter the code sent to <strong>${esc(pendingEmail)}</strong>.</p><form id="editor" data-kind="verify" class="form-stack"><div class="field"><label for="code">Verification code</label><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" maxlength="10" placeholder="Your code" required></div><button class="button" type="submit">Verify and enter</button></form><div class="otp-actions"><button class="text-button" data-action="resendCode">Resend code</button><button class="text-button" data-action="changeEmail">Use another email</button></div><p class="hint">Only the latest code will work. Check your spam folder if you don't see the email.</p>`);
+  modal(`<span class="eyebrow">INNOVATEX ENGINEERING CLUB</span><h2>${pendingAuthMode==='signup'?'Verify your new account':'Enter your sign-in code'}</h2><p class="muted">Enter the one-time code sent to <strong>${esc(pendingEmail)}</strong>.</p><form id="editor" data-kind="verify" class="form-stack"><div class="field"><label for="code">One-time code</label><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" maxlength="10" placeholder="Your code" required></div><button class="button" type="submit">${pendingAuthMode==='signup'?'Verify account':'Sign in'}</button></form><div class="otp-actions"><button class="text-button" data-action="resendCode">Resend code</button><button class="text-button" data-action="changeEmail">Use another email</button></div><p class="hint">Only the latest code will work. Check your spam folder if you don't see the email.</p>`);
   $('#code').focus();
 }
-async function requestCode(email,type=pendingType) {
-  const {error}=await db.auth.signInWithOtp({email,options:{shouldCreateUser:true,emailRedirectTo:location.origin+location.pathname}});
+async function requestCode(email,type=pendingType,mode=pendingAuthMode) {
+  mode=mode==='signup'?'signup':'signin';
+  const {error}=await db.auth.signInWithOtp({email,options:{shouldCreateUser:mode==='signup',emailRedirectTo:location.origin+location.pathname}});
   if(error) throw error;
-  pendingEmail=email;pendingType=['member','teacher','founder','investor'].includes(type)?type:'member';
-  sessionStorage.setItem('innovatex.pendingEmail',email);sessionStorage.setItem('innovatex.pendingType',pendingType);
+  pendingEmail=email;pendingAuthMode=mode;pendingType=['member','teacher','founder','investor'].includes(type)?type:'member';
+  sessionStorage.setItem('innovatex.pendingEmail',email);sessionStorage.setItem('innovatex.pendingAuthMode',mode);
+  if(mode==='signup')sessionStorage.setItem('innovatex.pendingType',pendingType);else sessionStorage.removeItem('innovatex.pendingType');
   codeDialog();
   show('Verification code sent. Check your email.');
 }
@@ -498,7 +519,8 @@ async function signOut() {try{await touchPresence(false);const {error}=await db.
 
 function actions(e) {
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
-  if(action==='login')return signInDialog();
+  if(action==='login'||action==='signup')return signInDialog('signup');
+  if(action==='signin')return signInDialog('signin');
   if(action==='memberProfile')return memberProfile(id);
   if(action==='openDm'){if(!dmReady)return;activePeerId=id;if($('#modal').open)close();location.hash='#messages';render();markDmRead(id);return;}
   if(action==='feedPostForm'){
@@ -556,6 +578,15 @@ function actions(e) {
     const options='<option value="">Library only</option>'+(cache.channels||[]).map(c=>`<option value="${esc(c.id)}" ${c.id===activeChannelId&&page==='channels'?'selected':''}># ${esc(c.name)}</option>`).join('');
     return modal(`<span class="eyebrow">CLUB LIBRARY</span><h2>Share a document</h2><p class="muted">Files are private to signed-in club members. Maximum size: 10 MB.</p><form id="editor" data-kind="document" class="form-stack"><div class="field"><label for="upload">Choose a file</label><input id="upload" name="upload" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.zip,.png,.jpg,.jpeg,.stl" required></div><div class="field"><label for="channel_id">Share in channel</label><select id="channel_id" name="channel_id">${options}</select></div><button class="button" type="submit">Upload document</button></form>`);
   }
+  if(action==='learningForm'){
+    if(!teacher()||!learningReady)return show('Teacher access and the learning materials migration are required.');
+    const options='<option value="">General learning library</option>'+(cache.courses||[]).map(c=>`<option value="${esc(c.id)}">${esc(c.title)}</option>`).join('');
+    return modal(`<span class="eyebrow">TEACHING STUDIO</span><h2>Upload learning material</h2><p class="muted">Share presentations, notes and guides with approved members. Maximum 20 MB per file.</p><form id="editor" data-kind="learningMaterial" class="form-stack">${field('Title','title')}${select('Type','kind',['slides','notes','worksheet','guide'])}<div class="field"><label for="course_id">Related course</label><select id="course_id" name="course_id">${options}</select></div><div class="field"><label for="description">Description (optional)</label><textarea id="description" name="description" maxlength="1500"></textarea></div><div class="field"><label for="learning_file">PDF, PPT, PPTX, DOC or DOCX</label><input id="learning_file" name="learning_file" type="file" accept=".pdf,.ppt,.pptx,.doc,.docx" required></div><button class="button" type="submit">Publish material</button></form>`);
+  }
+  if(action==='downloadLearning')return downloadLearning(id);
+  if(action==='toggleLearning'&&admin()){
+    const m=(cache.learning_materials||[]).find(x=>x.id===id);if(m)return mutate(()=>db.from('learning_materials').update({hidden_at:m.hidden_at?null:new Date().toISOString()}).eq('id',id));return;
+  }
   if(action==='downloadDoc')return downloadDocument(id);
   if(action==='documentVersions')return documentVersions(id);
   if(action==='downloadVersion')return downloadVersion(id);
@@ -567,7 +598,7 @@ function actions(e) {
   if(action==='acceptFounder')return acceptFounder();
   if(action==='founderMeetingForm')return form('Founder meeting','Add the Google Meet link and an agenda for accepted founders.','founderMeeting',field('Meeting title','title')+area('Agenda','agenda')+field('Start','starts_at','datetime-local')+field('End','ends_at','datetime-local')+field('Google Meet URL','meet_url','url','',false));
   if(action==='founderCalendar'||action==='founderIcs'){const m=(cache.founder_meetings||[]).find(x=>x.id===id);if(m)calendar({...m,description:m.agenda,location:'Online'},action==='founderIcs');return;}
-  if(action==='changeEmail'){pendingEmail='';sessionStorage.removeItem('innovatex.pendingEmail');sessionStorage.removeItem('innovatex.pendingType');return signInDialog();}
+  if(action==='changeEmail'){pendingEmail='';sessionStorage.removeItem('innovatex.pendingEmail');sessionStorage.removeItem('innovatex.pendingType');sessionStorage.removeItem('innovatex.pendingAuthMode');return signInDialog(pendingAuthMode);}
   if(action==='resendCode')return requestCode(pendingEmail).catch(fail);
   if(action==='avatarForm'){
     if(!avatarReady)return show('Run the Supabase profile photo migration first.');
@@ -708,6 +739,15 @@ async function downloadDocument(id) {
   const doc=(cache.documents||[]).find(d=>d.id===id);if(!doc)return;
   try {const {data,error}=await db.storage.from('club-documents').createSignedUrl(doc.storage_path,120);if(error)throw error;const a=document.createElement('a');a.href=data.signedUrl;a.target='_blank';a.rel='noopener noreferrer';document.body.appendChild(a);a.click();a.remove();}catch(e){fail(e);}
 }
+async function downloadLearning(id){
+  if(!clubAccess()||!learningReady)return;
+  const m=(cache.learning_materials||[]).find(x=>x.id===id&&!x.hidden_at);if(!m)return;
+  try{
+    const {data,error}=await db.storage.from('club-learning').createSignedUrl(m.storage_path,120);
+    if(error)throw error;
+    const a=document.createElement('a');a.href=data.signedUrl;a.target='_blank';a.rel='noopener noreferrer';document.body.appendChild(a);a.click();a.remove();
+  }catch(e){fail(e);}
+}
 function documentVersions(id) {
   const doc=(cache.documents||[]).find(d=>d.id===id);if(!doc)return;
   const versions=(cache.document_versions||[]).filter(v=>v.document_id===id).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
@@ -744,7 +784,7 @@ async function submit(e) {
   const formEl=e.target,kind=formEl.dataset.kind,values=Object.fromEntries(new FormData(formEl));
   const submitBtn=formEl.querySelector('[type=submit]'); submitBtn.disabled=true;
   try {
-    if(kind==='login'){await requestCode(String(values.email).trim().toLowerCase(),String(values.application_type));return;}
+    if(kind==='login'){await requestCode(String(values.email).trim().toLowerCase(),String(values.application_type),pendingAuthMode);return;}
     if(kind==='verify'){
       const token=String(values.code).trim();
       if(!/^[0-9]{6,10}$/.test(token))throw Error('Enter the numeric code from your email.');
@@ -789,6 +829,22 @@ async function submit(e) {
         if(old&&old!==path){const removed=await db.storage.from('club-media').remove([old]);if(removed.error)console.error(removed.error);}
         show('Profile photo updated.');return;
       }catch(error){if(path&&me?.avatar_path!==path)await db.storage.from('club-media').remove([path]);throw error;}
+    }
+    if(kind==='learningMaterial'){
+      if(!teacher()||!learningReady)throw Error('Approved teacher access is required.');
+      const file=formEl.querySelector('[name=learning_file]')?.files?.[0];
+      const ext=file?.name.split('.').pop()?.toLowerCase();
+      const mime={pdf:'application/pdf',ppt:'application/vnd.ms-powerpoint',pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation',doc:'application/msword',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}[ext];
+      if(!file||!mime||file.size<1||file.size>20971520||file.name.length>240)throw Error('Choose a PDF, PPT, PPTX, DOC or DOCX file up to 20 MB.');
+      if(file.type&&file.type!=='application/octet-stream'&&file.type!==mime)throw Error('The selected file type does not match its extension.');
+      const path=`${session.user.id}/${crypto.randomUUID()}.${ext}`;
+      const {error:uploadError}=await db.storage.from('club-learning').upload(path,file,{upsert:false,contentType:mime});
+      if(uploadError)throw uploadError;
+      const record={course_id:payload.course_id||null,uploaded_by:session.user.id,title:String(payload.title).trim(),description:String(payload.description||'').trim(),kind:payload.kind,file_name:file.name,storage_path:path,file_size:file.size};
+      try{
+        const {error}=await db.from('learning_materials').insert(record);if(error)throw error;
+      }catch(error){const removed=await db.storage.from('club-learning').remove([path]);if(removed.error)console.error(removed.error);throw error;}
+      close();await refresh();show('Learning material published.');return;
     }
     if(kind==='feedPost'){
       if(!feedReady)throw Error('Activate the activity feed migration first.');
