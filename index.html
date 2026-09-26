@@ -49,10 +49,28 @@
       <div class="sidebar-bottom"><div class="signal"><span class="pulse"></span><span id="connectionLabel">Public preview</span></div><p>Learn. Build. Innovate. Compete.</p></div>
     </aside>
     <main class="main">
-      <header class="topbar"><button id="menuBtn" class="icon-button mobile-only" aria-label="Open menu">☰</button><div class="crumb">INNOVATEX <span>/</span> <strong id="pageCrumb">Overview</strong></div><div class="top-actions"><button id="themeButton" class="icon-button theme-toggle" aria-label="Switch to dark theme" title="Change theme">◐</button><span id="todayLabel"></span><span id="accountBadge" hidden></span><button id="authButton" class="button button-outline">Sign in</button></div></header>
+      <header class="topbar">
+        <button id="menuBtn" class="icon-button mobile-only" aria-label="Open menu">☰</button>
+        <div class="crumb">INNOVATEX <span>/</span> <strong id="pageCrumb">Overview</strong></div>
+        <div class="top-actions">
+          <button id="adminBell" class="admin-top-button admin-bell" type="button" data-action="openAdminApplications" aria-label="Review membership applications" title="Review membership applications" hidden>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></svg>
+            <span id="adminBellCount" class="admin-bell-count" hidden>0</span>
+          </button>
+          <button id="adminSoundButton" class="admin-top-button admin-sound-button" type="button" data-action="toggleAdminSound" aria-label="Enable application alert sounds" aria-pressed="false" title="Enable application alert sounds" hidden><span aria-hidden="true">♫</span></button>
+          <button id="themeButton" class="icon-button theme-toggle" aria-label="Switch to dark theme" title="Change theme">◐</button>
+          <span id="todayLabel"></span><span id="accountBadge" hidden></span>
+          <button id="authButton" class="button button-outline">Sign in</button>
+        </div>
+      </header>
       <div class="content" id="content"></div>
     </main>
   </div>
+  <section id="adminAlert" class="admin-alert" role="status" aria-live="polite" aria-atomic="true" hidden>
+    <span class="admin-alert-icon" aria-hidden="true">✦</span>
+    <div class="admin-alert-copy"><strong id="adminAlertTitle">New membership application</strong><p id="adminAlertMessage">A new applicant is waiting for your review.</p><button class="admin-alert-link" type="button" data-action="openAdminApplications">Review applications <span aria-hidden="true">→</span></button></div>
+    <button class="admin-alert-close" type="button" data-action="dismissAdminAlert" aria-label="Dismiss application alert" title="Dismiss">×</button>
+  </section>
   <dialog id="modal"><button class="modal-close" aria-label="Close">×</button><div id="modalContent"></div></dialog>
   <script src="config.js"></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
