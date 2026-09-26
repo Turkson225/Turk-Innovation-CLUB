@@ -5,7 +5,7 @@ A responsive club workspace for a TTU engineering community. The site is static 
 ## What is included
 
 - Public home and founders pages. Founder names remain placeholders until approved profiles are added.
-- Email magic-link sign-in and sign-out, member profiles and an online indicator based on a recent heartbeat. Sign-out clears the member's presence; disconnected users disappear from "online" after about 65 seconds.
+- Email one-time-code signup, sign-in and sign-out, member profiles and an online indicator based on a recent heartbeat. Sign-out clears the member's presence; disconnected users disappear from "online" after about 65 seconds.
 - Project cards, progress, tasks and discussion threads.
 - Administrator-published courses, alerts and events. Events can include Google Meet links and open in Google Calendar or download as an ICS file.
 - Phone, tablet and desktop layouts. Untrusted member text is escaped before display.
@@ -13,7 +13,7 @@ A responsive club workspace for a TTU engineering community. The site is static 
 ## Set up Supabase
 
 1. Create a Supabase project and open **SQL Editor**. Run [`supabase/schema.sql`](supabase/schema.sql) once. Use a new project or review existing schema before running it.
-2. In **Authentication → Providers → Email**, enable email sign-in. For magic links, use Supabase's magic-link email template. Configure production SMTP when you are ready for wider membership; the built-in email sender is limited.
+2. In **Authentication → Providers → Email**, enable email sign-in and leave email confirmation enabled. Under **Authentication → Email Templates**, edit **Magic Link / OTP**: set the subject to `Your InnovateX verification code` and replace the HTML body with [`supabase/email-otp-template.html`](supabase/email-otp-template.html). Because a new user can receive the **Confirm Signup** template, set its subject to `Verify your InnovateX account` and use the same HTML body there too. Both templates must contain `{{ .Token }}` rather than an authentication link for the site's code entry screen to work. Save each template. To email club members beyond your Supabase team's authorized addresses, configure **Authentication → SMTP Settings** with a verified sender and set the sender name to `InnovateX Engineering Club`; Supabase's built-in sender is restricted.
 3. In **Authentication → URL Configuration**, set the Site URL to `https://turkson225.github.io/Turk-Innovation-CLUB/`. Add that exact URL to Redirect URLs. For local testing, add `http://localhost:8000/` as another Redirect URL.
 4. In the project's **Connect** dialog, copy the Project URL and **publishable** key into [`config.js`](config.js). These values are designed for browser use. **Never paste a service_role or secret key** into the repository. This repository is configured with the project's public values.
 5. Sign in at least once. Then, in SQL Editor, promote your specific user to an administrator using the authenticated user's UUID from **Authentication → Users**:
@@ -51,6 +51,8 @@ For a local preview, run `python3 -m http.server 8000` from the repository root 
 
 ## References
 
-- [Supabase email sign-in](https://supabase.com/docs/reference/javascript/auth-signinwithotp)
+- [Supabase passwordless email OTP](https://supabase.com/docs/guides/auth/auth-email-passwordless)
+- [Supabase email templates](https://supabase.com/docs/guides/auth/auth-email-templates)
+- [Supabase SMTP](https://supabase.com/docs/guides/auth/auth-smtp)
 - [Supabase redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls)
 - [GitHub Pages publishing source](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
