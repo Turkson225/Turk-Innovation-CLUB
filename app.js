@@ -11,6 +11,14 @@ const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'med
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
 let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, activePeerId = null, lastRenderedPage = '';
 let calendarMonth = new Date(new Date().getFullYear(),new Date().getMonth(),1), calendarSelected = new Date();
+let courseTrack = 'all';
+const courseTracks = [
+  {name:'Controls and Automation',example:'Build a sensor-driven controller, PLC sequence or motor control system.'},
+  {name:'Software and Programming',example:'Code a working app, dashboard, embedded interface or automation tool.'},
+  {name:'Electronics and Robotics',example:'Assemble and test a circuit, mobile robot or connected device.'},
+  {name:'AI & Machine Learning',example:'Train and evaluate a model using real data and a usable prototype.'}
+];
+const courseTrackFor = c => ({Automation:'Controls and Automation',Electronics:'Electronics and Robotics','Embedded systems':'Electronics and Robotics',Robotics:'Electronics and Robotics',CAD:'Software and Programming',Software:'Software and Programming'}[c.category]||c.category);
 const mediaUrls = new Map();
 const mediaUrl = path => path && mediaUrls.get(path)?.url || '';
 async function hydrateMedia() {
@@ -290,8 +298,11 @@ function discussions() {
 function courses() {
   const list=cache.courses||[];
   const materials=learningReady?(cache.learning_materials||[]).filter(m=>!m.hidden_at):[];
-  return `${head('LEARN BY DOING','Courses','Workshops, learning materials and slides for approved club members.',teacher()?`<div class="profile-buttons">${button('+ Publish course','courseForm')}${button('+ Upload material','learningForm','button-outline')}</div>`:'')}
-  <div class="grid grid-3">${list.length?list.map(c=>`<div class="card"><span class="tag blue">${esc(c.level)}</span><h3 style="margin-top:18px">${esc(c.title)}</h3><p>${esc(c.description||'Details coming soon.')}</p><div class="pill-row"><span class="subtle">${esc(c.category)}</span></div>${materials.filter(m=>m.course_id===c.id).map(materialRow).join('')}<div class="card-footer"><span>${date(c.starts_at)}</span>${c.resource_url?`<a class="link" href="${esc(cleanUrl(c.resource_url))}" target="_blank" rel="noopener noreferrer">Resource link ↗</a>`:''}</div></div>`).join(''):empty('Courses are being prepared','The teaching team will publish workshops here.')}</div>
+  const visible=courseTrack==='all'?list:list.filter(c=>courseTrackFor(c)===courseTrack);
+  return `${head('LEARN BY BUILDING','Practical courses','Choose a learning track, build a real project and share what works.',teacher()?`<div class="profile-buttons">${button('+ Publish workshop','courseForm')}${button('+ Upload material','learningForm','button-outline')}</div>`:'')}
+  <div class="course-tracks">${courseTracks.map((t,i)=>`<button class="course-track ${courseTrack===t.name?'selected':''}" data-action="courseTrack" data-track="${esc(t.name)}" aria-pressed="${courseTrack===t.name}"><span>0${i+1} / LEARNING TRACK</span><strong>${esc(t.name)}</strong><small>${esc(t.example)}</small><em>${list.filter(c=>courseTrackFor(c)===t.name).length} ${list.filter(c=>courseTrackFor(c)===t.name).length===1?'workshop':'workshops'} ↗</em></button>`).join('')}</div>
+  <div class="section-heading"><div><span class="eyebrow">HANDS-ON WORKSHOPS</span><h2>${courseTrack==='all'?'All practical workshops':esc(courseTrack)}</h2></div>${courseTrack!=='all'?`<button class="text-button" data-action="courseTrack" data-track="all">Show all tracks</button>`:''}</div>
+  <div class="grid grid-3">${visible.length?visible.map(c=>`<div class="card course-card"><span class="tag blue">${esc(c.level)}</span><h3 style="margin-top:18px">${esc(c.title)}</h3><p>${esc(c.description||'Practical workshop details coming soon.')}</p><div class="pill-row"><span class="subtle">${esc(courseTrackFor(c))}</span></div>${materials.filter(m=>m.course_id===c.id).map(materialRow).join('')}<div class="card-footer"><span>${date(c.starts_at)}</span>${c.resource_url?`<a class="link" href="${esc(cleanUrl(c.resource_url))}" target="_blank" rel="noopener noreferrer">Resource link ↗</a>`:''}</div></div>`).join(''):empty('No workshops published yet','Approved teachers can publish a practical session in this track.')}</div>
   ${materials.some(m=>!m.course_id)?`<div class="section-heading"><h2>Club learning library</h2></div><div class="grid grid-2">${materials.filter(m=>!m.course_id).map(m=>`<div class="card">${materialRow(m)}</div>`).join('')}</div>`:''}`;
 }
 function materialRow(m){return `<div class="learning-row"><span class="tag blue">${esc(m.kind)}</span><div><strong>${esc(m.title)}</strong><small>${esc(m.file_name)} · ${fileSize(m.file_size)} · ${date(m.created_at)}</small>${m.description?`<p>${esc(m.description)}</p>`:''}</div>${m.hidden_at?'<span class="tag gold">Hidden</span>':`<button class="text-button" data-action="downloadLearning" data-id="${esc(m.id)}">Download ↓</button>`}</div>`;}
@@ -559,6 +570,7 @@ function actions(e) {
   if(action==='calendarDay'){const [y,m,d]=(el.dataset.date||'').split('-').map(Number);if(!y||m<1||m>12||d<1||d>31)return;calendarSelected=new Date(y,m-1,d);render();return;}
   if(action==='calendarItem')return calendarItem(el.dataset.kind,id);
   if(action==='calendarProject'){close();location.hash='#projects';projectDetail(id);return;}
+  if(action==='courseTrack'){const track=el.dataset.track;if(track==='all'||courseTracks.some(t=>t.name===track)){courseTrack=track;render();}return;}
   if(action==='login'||action==='signup')return signInDialog('signup');
   if(action==='signin')return signInDialog('signin');
   if(action==='memberProfile')return memberProfile(id);
@@ -665,7 +677,7 @@ function actions(e) {
     return form('New discussion','Ask a focused question or share a decision.','topic',field('Title','title')+`<div class="field"><label for="project_id">Project</label><select id="project_id" name="project_id">${options}</select></div>`+select('Category','category',['General','Project idea','Technical help','Competition','Workshop'])+area('Your message','body'));
   }
   if(action==='topicDetail'){activeProject=id;return topicDetail(id);}
-  if(action==='courseForm'&&teacher())return form('Course','Publish a workshop or learning resource.','course',field('Title','title')+select('Category','category',['Automation','Electronics','Embedded systems','Robotics','CAD','Software'])+select('Level','level',['Beginner','Intermediate','Advanced'])+area('Description','description')+field('Start date','starts_at','date','',false)+field('Resource URL','resource_url','url','',false));
+  if(action==='courseForm'&&teacher())return form('Practical workshop','Choose one of the four tracks and describe the project learners will complete.','course',field('Workshop title','title')+select('Learning track','category',courseTracks.map(t=>t.name))+select('Level','level',['Beginner','Intermediate','Advanced'])+area('What will learners build?','build_goal')+area('Hands-on activities and tests','practice_steps')+field('Tools and materials','tools')+field('Start date','starts_at','date','',false)+field('Resource URL (optional)','resource_url','url','',false));
   if(action==='eventForm')return form('Event','The calendar and meeting link stay together.','event',field('Title','title')+area('Description','description')+field('Start','starts_at','datetime-local')+field('End','ends_at','datetime-local')+field('Location','location','text','',false)+field('Google Meet URL','meet_url','url','',false));
   if(action==='announcementForm')return form('Alert','Important updates appear on the home page.','announcement',field('Title','title')+select('Priority','priority',['normal','urgent'])+area('Message','body'));
   if(action==='founderForm')return form('Founder','Publish only approved biographical details.','founder',field('Name','name')+field('Role','role')+area('Short bio','bio')+field('Profile URL','link_url','url','',false)+field('Order','sort_order','number','1'));
@@ -980,7 +992,16 @@ async function submit(e) {
     if(kind==='topic'){payload.author_id=session.user.id;payload.project_id=payload.project_id||null;return await mutate(()=>db.from('topics').insert(payload));}
     if(kind==='reply'){payload.author_id=session.user.id;payload.topic_id=activeProject;return await mutate(()=>db.from('replies').insert(payload));}
     if(kind==='course'||kind==='event'||kind==='announcement'||kind==='founder'){
-      if(!admin())throw Error('Only an administrator can publish this item.');
+      if(kind==='course'){
+        if(!teacher())throw Error('Only approved teachers and administrators can publish courses.');
+        if(!courseTracks.some(t=>t.name===payload.category))throw Error('Choose one of the four learning tracks.');
+        payload.description=`Build: ${String(payload.build_goal).trim()}\n\nPractice: ${String(payload.practice_steps).trim()}\n\nTools: ${String(payload.tools).trim()}`;
+        delete payload.build_goal;delete payload.practice_steps;delete payload.tools;
+        payload.starts_at=payload.starts_at||null;
+        payload.resource_url=payload.resource_url?cleanUrl(payload.resource_url):null;
+        if(formEl.querySelector('[name=resource_url]').value&&!payload.resource_url)throw Error('Enter a valid HTTPS resource URL.');
+        courseTrack=payload.category;
+      }else if(!admin())throw Error('Only an administrator can publish this item.');
       if(kind==='event'&&new Date(payload.ends_at)<=new Date(payload.starts_at))throw Error('End time must be after start time.');
       if(kind==='founder')payload.sort_order=Number(payload.sort_order)||1;
       const table={course:'courses',event:'events',announcement:'announcements',founder:'founders'}[kind];
