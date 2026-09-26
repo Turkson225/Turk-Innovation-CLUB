@@ -29,7 +29,7 @@ A responsive club workspace for a TTU engineering community. The site is static 
 
 ## Publish on GitHub Pages
 
-This repository is ready to publish from its root folder. In **Settings → Pages → Build and deployment**, select **Deploy from a branch**, branch **main**, folder **/(root)**, then save. The site address will be `https://turkson225.github.io/Turk-Innovation-CLUB/`. Publishing can take a few minutes. The site's shell works before Supabase is configured; member actions become available after steps 1–4.
+The included GitHub Actions workflow publishes the static site on each push to `main`. In **Settings → Pages**, use **GitHub Actions** as the publishing source if GitHub asks you to select one. The expected address is `https://turkson225.github.io/Turk-Innovation-CLUB/`. Check the **Actions** tab for the deployment result. The public site shell works before Supabase is configured; member actions become available after steps 1–4. If Actions deployment is unavailable in your repository, set **Deploy from a branch → main → /(root)** as a fallback.
 
 For a local preview, run `python3 -m http.server 8000` from the repository root and open `http://localhost:8000/`.
 
