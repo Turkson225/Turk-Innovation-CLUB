@@ -11,6 +11,7 @@ A responsive club workspace for a TTU engineering community. The site is static 
 - Technology news submitted by members and reviewed by administrators before appearing in the feed.
 - Founder invitations, verified-email acceptance, and a private founders' meeting room with Google Meet and calendar links.
 - Administrator-approved member applications, threaded channel replies, reactions, mentions, unread counts, search and in-app notifications.
+- Three-column member activity feed with project updates, resource links, shared club documents, comments, likes, recent stories and active members.
 - Project collaborators, milestones and task assignments; meeting RSVPs, document versions, reports and moderation actions.
 - Administrator-published courses, alerts and events. Events can include Google Meet links and open in Google Calendar or download as an ICS file.
 - Phone, tablet and desktop layouts. Untrusted member text is escaped before display.
@@ -38,6 +39,8 @@ After the original schema is in place, open your project's **SQL Editor** and ru
 
 Next run [`supabase/upgrade_membership_collaboration.sql`](supabase/upgrade_membership_collaboration.sql) **once**. It adds member applications and approval rules, project teams, chat replies and notifications, RSVPs, report handling and document versions. Existing email-confirmed accounts remain approved; newly verified email accounts become **pending** and only see their own application page until an administrator approves them. A signed-in administrator reviews applications under **Applications**. Review access with a new pending account, an approved member, a founder and an administrator before inviting the wider club.
 
+Finally, run [`supabase/upgrade_activity_feed.sql`](supabase/upgrade_activity_feed.sql) **once**. It adds private member posts, comments, likes and moderation support. The activity feed displays a setup notice until this migration runs. Feed posts accept a link or an existing club document; they do not copy external article text or upload new files. Member comments generate an in-app notification to the post author.
+
 Once the first administrator has been promoted using step 5 above:
 
 1. Members can use **Channels**, share files up to 10 MB in **Document library**, and submit external stories through **Technology news**. Administrators review submitted news before publication and can create new channels. The news feed is curated by members; it does not automatically ingest third-party articles.
@@ -60,7 +63,7 @@ Members respond to events using **Going**, **Maybe** or **Can't go**. Accepted f
 
 ## Operations and data protection
 
-- **Moderation:** Administrators can approve accounts, inspect reports, remove reported content and see recent admin actions. Suspended accounts cannot access the member workspace. Club leaders should decide who reviews applications and reports.
+- **Moderation:** Administrators can approve accounts, inspect reports, remove reported messages, posts, documents and news, and see recent admin actions. Suspended accounts cannot access the member workspace. Club leaders should decide who reviews applications and reports.
 - **Content export:** The administrator's **Export content JSON** button downloads content currently loaded in the browser. It omits authentication users and file bytes and may be limited by Supabase query limits; it is **not a complete backup**. Use Supabase database backups or CLI dumps, and independently preserve important Storage files. See [Supabase database backups](https://supabase.com/docs/guides/platform/backups).
 - **Verification:** Test access from separate accounts for pending, approved, founder and admin roles; test a direct database request as a pending user and verify it cannot read channels, documents or meetings. Then test upload, version download, reported content and meeting RSVPs. Keep the SQL migrations in the repository for review.
 
@@ -84,7 +87,7 @@ For a local preview, run `python3 -m http.server 8000` from the repository root 
 | --- | --- |
 | Visitor | Public home, founders, privacy and conduct pages |
 | Applicant | Own application and privacy pages while approval is pending |
-| Member | Directory, channels, documents, news, projects and assigned tasks, discussions, events, RSVPs and inbox |
+| Member | Directory, activity posts and comments, channels, documents, news, projects and assigned tasks, discussions, events, RSVPs and inbox |
 | Founder | Member abilities plus private founder meetings after accepting an invitation |
 | Administrator | Member abilities plus account reviews, moderation, content export, publishing, channel creation and founder invitations |
 
