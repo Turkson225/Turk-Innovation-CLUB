@@ -9,10 +9,10 @@ const cleanUrl = (s) => { try { const u = new URL(s); return u.protocol === 'htt
 const date = (s) => s ? new Date(s).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : 'TBD';
 const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'TBD';
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
-let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false;
+let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false;
 let pendingEmail = sessionStorage.getItem('innovatex.pendingEmail') || '';
 let toastTimer;
-const pages = ['home','founders','privacy','application','applications','moderation','notifications','members','channels','library','news','projects','discussions','courses','events','announcements','founder-room'];
+const pages = ['home','founders','privacy','application','applications','moderation','notifications','members','feed','channels','library','news','projects','discussions','courses','events','announcements','founder-room'];
 const approved = () => !!me && (!('membership_status' in me) || me.membership_status==='approved');
 const admin = () => approved() && me?.role === 'admin';
 const founder = () => approved() && ['founder','admin'].includes(me?.role);
@@ -28,13 +28,14 @@ const read = async (table,query=q=>q) => { const {data,error}=await query(db.fro
 
 async function refresh() {
   if (!db || !session) return;
-  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;render();return;}
-  const names=['profiles','projects','project_tasks','topics','replies','courses','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events'];
+  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;render();return;}
+  const names=['profiles','projects','project_tasks','topics','replies','courses','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes'];
   const unordered=new Set(['channel_reads','project_members','event_rsvps','founder_meeting_rsvps']);
   const results=await Promise.allSettled(names.map(n=>read(n,q=>unordered.has(n)?q:q.order('created_at',{ascending:false}))));
   results.forEach((r,i)=>{ if(r.status==='fulfilled') cache[names[i]]=r.value; else console.error(names[i],r.reason); });
   communityReady=results[names.indexOf('channels')].status==='fulfilled';
   enhancedReady=results[names.indexOf('channel_reads')].status==='fulfilled';
+  feedReady=results[names.indexOf('activity_posts')].status==='fulfilled';
   if(page==='notifications' && document.activeElement?.closest('#content')) { render(); return; }
   if(page==='channels' && document.activeElement?.closest('#chatComposer')) { renderChatMessages(); return; }
   render();
@@ -117,7 +118,7 @@ function render() {
   const online=(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length;
   $('#onlineBadge').textContent=online;
   $('#notificationBadge').textContent=(cache.notifications||[]).filter(n=>!n.read_at).length;
-  const views={home,founders,privacy,application,applications,moderation,notifications,members,channels,library,news,projects,discussions,courses,events,announcements,'founder-room':founderRoom};
+  const views={home,founders,privacy,application,applications,moderation,notifications,members,feed,channels,library,news,projects,discussions,courses,events,announcements,'founder-room':founderRoom};
   $('#content').innerHTML=views[page]();
   if(page==='channels'){const stream=$('#messageStream');if(stream)stream.scrollTop=stream.scrollHeight;if(activeChannelId&&enhancedReady)markChannelRead(activeChannelId);}
 }
@@ -129,7 +130,7 @@ function home() {
   <div class="section-heading"><div><span class="eyebrow">CLUB PULSE</span><h2>${session?'Your workspace at a glance':'Built for makers and innovators'}</h2></div><p>${session?`Welcome back, ${esc(me?.full_name||session.user.email)}.`:'An alumni initiated, student led engineering community.'}</p></div>
   <div class="grid grid-4"><div class="stat"><small>Members</small><b>${session?count('profiles'):'—'}</b><span>Across disciplines</span></div><div class="stat"><small>Online now</small><b>${session?(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length:'—'}</b><span>Active in the last minute</span></div><div class="stat"><small>Active projects</small><b>${session?count('projects'):'—'}</b><span>Ideas in motion</span></div><div class="stat"><small>Upcoming events</small><b>${session?upcoming.length:'—'}</b><span>Sessions and meetups</span></div></div>
   <div class="section-heading"><div><span class="eyebrow">OUR MISSION</span><h2>From the workbench to the world.</h2></div></div><div class="grid grid-3">${[['▤','Learn','Hands-on courses in Arduino, Proteus, CAD, OpenPLC and electrical systems.'],['▥','Build','Plan and test real prototypes with multidisciplinary teams and mentors.'],['✧','Compete','Turn the strongest projects into competition-ready demonstrations.']].map(x=>`<div class="card"><div class="icon-box">${x[0]}</div><h3>${x[1]}</h3><p>${x[2]}</p></div>`).join('')}</div>
-  ${session?`<div class="section-heading"><h2>Your community</h2><p>Find a conversation or share what you’re learning.</p></div><div class="grid grid-3"><a class="card feature-card" href="#channels"><span class="feature-icon">▣</span><h3>Member channels</h3><p>Get help and work through ideas together.</p><span class="link">Open channels →</span></a><a class="card feature-card" href="#library"><span class="feature-icon">▤</span><h3>Document library</h3><p>Notes, schematics and useful resources in one place.</p><span class="link">Browse files →</span></a><a class="card feature-card" href="#news"><span class="feature-icon">◈</span><h3>Technology news</h3><p>Discover engineering stories worth discussing.</p><span class="link">Read stories →</span></a></div>`:''}
+  ${session?`<div class="section-heading"><h2>Your community</h2><p>Find a conversation or share what you’re learning.</p></div><div class="grid grid-4"><a class="card feature-card" href="#feed"><span class="feature-icon">▧</span><h3>Activity feed</h3><p>Share progress and hear from club members.</p><span class="link">Open feed →</span></a><a class="card feature-card" href="#channels"><span class="feature-icon">▣</span><h3>Member channels</h3><p>Get help and work through ideas together.</p><span class="link">Open channels →</span></a><a class="card feature-card" href="#library"><span class="feature-icon">▤</span><h3>Document library</h3><p>Notes, schematics and useful resources in one place.</p><span class="link">Browse files →</span></a><a class="card feature-card" href="#news"><span class="feature-icon">◈</span><h3>Technology news</h3><p>Discover engineering stories worth discussing.</p><span class="link">Read stories →</span></a></div>`:''}
   ${session?`<div class="section-heading"><h2>What’s happening</h2><a class="link" href="#events">View calendar →</a></div><div class="split"><div class="panel"><h3>Latest alerts</h3>${latest.length?latest.map(a=>`<div class="list-item"><span class="icon-box" style="margin:0">◈</span><div><strong>${esc(a.title)}</strong><small>${date(a.created_at)}</small><p class="subtle">${esc(a.body)}</p></div></div>`).join(''):empty('No alerts yet','Official club updates will appear here.')}</div><div class="panel"><h3>Coming up</h3>${upcoming.length?upcoming.map(e=>eventRow(e)).join(''):empty('Nothing scheduled','The next club event will appear here.')}</div></div>`:''}`;
 }
 function founders() {
@@ -186,6 +187,32 @@ function privacy() {
   <div class="card"><h3>What can you share?</h3><p>Share work you have permission to distribute. Do not upload passwords, private student records, personal contact lists or copyrighted files without permission. Files in the club library are available to all approved members.</p></div>
   <div class="card"><h3>Community conduct</h3><p>Keep feedback constructive and relevant to engineering work. Credit sources and collaborators. Use the Report button when a message, article or document needs administrator review.</p></div>
   <div class="card"><h3>Accounts and decisions</h3><p>New members apply for approval after verifying their email. Administrators can approve, reject or suspend membership. For account or data removal, contact a club administrator; an automated deletion request flow is not yet available.</p></div></div>`;
+}
+function feed() {
+  if(!feedReady)return head('CLUB COMMUNITY','Activity feed','Member projects, questions and progress.')+communityNotice();
+  const posts=(cache.activity_posts||[]).slice().sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+  const updates=[...(cache.announcements||[]).map(a=>({title:a.title,at:a.created_at,kind:'Alert',page:'announcements'})),...posts.map(p=>({title:memberName(p.author_id)+' shared an update',at:p.created_at,kind:'Post',id:p.id}))].sort((a,b)=>new Date(b.at)-new Date(a.at)).slice(0,6);
+  const recentNews=(cache.news_posts||[]).filter(n=>n.status==='published').slice(0,5);
+  const people=(cache.profiles||[]).filter(p=>p.membership_status==='approved'&&p.last_seen_at).sort((a,b)=>new Date(b.last_seen_at)-new Date(a.last_seen_at)).slice(0,10);
+  return `${head('COMMUNITY PULSE','Activity feed','Share builds, ask for feedback and follow what members are creating.')}
+  <div class="feed-layout">
+    <aside class="feed-rail"><section class="card feed-side"><div class="row"><h2>Recent stories</h2><a class="link" href="#news">See all</a></div>${recentNews.length?recentNews.map(n=>`<a class="feed-story" href="${esc(cleanUrl(n.url))}" target="_blank" rel="noopener noreferrer"><span class="feed-story-icon">◈</span><span><strong>${esc(n.title)}</strong><small>${esc(n.category)}</small></span></a>`).join(''):empty('No stories yet','Share a technology article for review.')}</section><section class="card feed-side"><h2>Explore together</h2><p>Find the right space for a deeper discussion.</p><a class="feed-shortcut" href="#projects">▥ &nbsp; Project plans →</a><a class="feed-shortcut" href="#channels">▣ &nbsp; Member channels →</a><a class="feed-shortcut" href="#events">▦ &nbsp; Club events →</a></section></aside>
+    <section class="feed-main" aria-label="Member posts"><div class="card feed-composer">${avatar(me?.full_name)}<button class="feed-composer-prompt" data-action="feedPostForm">What are you building, ${esc(me?.full_name?.split(' ')[0]||'member')}?</button>${button('Share update','feedPostForm','button-sm')}</div><div class="feed-posts">${posts.length?posts.map(feedPostCard).join(''):empty('Start the conversation','Share a project milestone, question or useful resource with the club.')}</div></section>
+    <aside class="feed-rail"><section class="card feed-side"><h2>Latest updates</h2>${updates.length?updates.map(u=>`<div class="feed-update"><span class="feed-update-mark">${u.kind==='Alert'?'◈':'▧'}</span><div>${u.id?`<button class="text-button" data-action="jumpPost" data-id="${esc(u.id)}">${esc(u.title)}</button>`:`<a class="link" href="#${esc(u.page)}">${esc(u.title)}</a>`}<small>${dateTime(u.at)} · ${esc(u.kind)}</small></div></div>`).join(''):empty('No updates yet','New activity appears here.')}</section><section class="card feed-side"><h2>Recently active members</h2><div class="feed-people">${people.length?people.map(p=>`<div class="feed-person" title="${esc(p.full_name)}">${avatar(p.full_name)}<span>${esc(p.full_name)}</span>${Date.now()-new Date(p.last_seen_at)<65000?'<i class="online-dot"></i>':''}</div>`).join(''):empty('No recent activity','Members appear here after signing in.')}</div><a class="link" href="#members">View directory →</a></section></aside>
+  </div>`;
+}
+function feedPostCard(p) {
+  const comments=(cache.activity_comments||[]).filter(c=>c.post_id===p.id).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+  const likes=(cache.activity_likes||[]).filter(l=>l.post_id===p.id);
+  const liked=likes.some(l=>l.user_id===session?.user.id);
+  const doc=(cache.documents||[]).find(d=>d.id===p.document_id);
+  let domain='';try{domain=p.link_url?new URL(p.link_url).hostname.replace(/^www\./,''):'';}catch{}
+  return `<article class="card feed-post" id="post-${esc(p.id)}"><div class="feed-post-head">${avatar(memberName(p.author_id))}<div><strong>${esc(memberName(p.author_id))}</strong><small>shared an update · ${dateTime(p.created_at)}${p.edited_at?' · edited':''}</small></div>${p.author_id===session?.user.id||admin()?`<div class="feed-post-menu">${p.author_id===session?.user.id?`<button class="text-button" data-action="editFeedPost" data-id="${esc(p.id)}">Edit</button>`:''}<button class="text-button" data-action="removeFeedPost" data-id="${esc(p.id)}">Remove</button></div>`:''}</div><p class="feed-body">${esc(p.body)}</p>
+    ${p.link_url?`<a class="feed-link" href="${esc(cleanUrl(p.link_url))}" target="_blank" rel="noopener noreferrer"><span class="feed-link-art">↗</span><span><small>${esc(domain)}</small><strong>${esc(p.link_url)}</strong></span></a>`:''}
+    ${doc?`<button class="feed-file" data-action="downloadDoc" data-id="${esc(doc.id)}">▤ &nbsp; ${esc(doc.title)} <small>Open document ↗</small></button>`:''}
+    <div class="feed-post-actions"><button class="feed-action ${liked?'selected':''}" data-action="likeFeedPost" data-id="${esc(p.id)}" aria-label="${liked?'Unlike':'Like'} post">${liked?'♥':'♡'} ${likes.length} Likes</button><span>◌ ${comments.length} Comments</span><button class="feed-action" data-action="report" data-type="post" data-id="${esc(p.id)}">Report</button></div>
+    <div class="feed-comments">${comments.slice(-3).map(c=>`<div class="feed-comment">${avatar(memberName(c.author_id))}<div><strong>${esc(memberName(c.author_id))}</strong><span>${esc(c.body)}</span><small>${dateTime(c.created_at)}</small></div></div>`).join('')}${comments.length>3?`<button class="text-button" data-action="allFeedComments" data-id="${esc(p.id)}">View all ${comments.length} comments</button>`:''}</div>
+    <form class="feed-comment-form" data-post="${esc(p.id)}">${avatar(me?.full_name)}<label class="sr-only" for="comment-${esc(p.id)}">Comment on post</label><input id="comment-${esc(p.id)}" name="body" maxlength="1000" placeholder="Add a helpful comment…" required><button class="button button-sm" type="submit">Reply</button></form></article>`;
 }
 function application() {
   if(!session)return head('JOIN INNOVATEX','Membership application','Sign in to apply.')+button('Member sign in','login');
@@ -327,6 +354,16 @@ async function signOut() {try{await touchPresence(false);const {error}=await db.
 function actions(e) {
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
   if(action==='login')return signInDialog();
+  if(action==='feedPostForm'){
+    if(!feedReady)return show('Activate the Supabase activity feed migration first.');
+    const options='<option value="">No document attached</option>'+(cache.documents||[]).map(d=>`<option value="${esc(d.id)}">${esc(d.title)}</option>`).join('');
+    return form('Share an update','Tell members about a build, question or opportunity.','feedPost',area('Your update','body')+field('Link to a resource (optional)','link_url','url','',false)+`<div class="field"><label for="document_id">Club document (optional)</label><select id="document_id" name="document_id">${options}</select></div>`);
+  }
+  if(action==='editFeedPost'){const p=(cache.activity_posts||[]).find(x=>x.id===id);if(p?.author_id===session?.user.id)return form('Edit update','Revise the text of your post.','feedEdit',area('Your update','body',p.body)+`<input type="hidden" name="post_id" value="${esc(id)}">`);return;}
+  if(action==='removeFeedPost')return removeFeedPost(id);
+  if(action==='likeFeedPost')return toggleFeedLike(id);
+  if(action==='jumpPost')return document.getElementById(`post-${id}`)?.scrollIntoView({behavior:'smooth',block:'center'});
+  if(action==='allFeedComments')return allFeedComments(id);
   if(action==='selectChannel'){activeChannelId=id;render();markChannelRead(id);return;}
   if(action==='thread')return threadDialog(id);
   if(action==='react')return toggleReaction(id,el.dataset.emoji);
@@ -411,6 +448,7 @@ async function openNotification(id) {
   else if(n.target_type==='meeting')location.hash='#founder-room';
   else if(n.target_type==='event')location.hash='#events';
   else if(n.target_type==='application')location.hash=admin()?'#applications':'#application';
+  else if(n.target_type==='post'){location.hash='#feed';setTimeout(()=>document.getElementById(`post-${n.target_id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),80);}
 }
 async function resolveReport(id) {
   if(!admin())return;
@@ -423,7 +461,7 @@ async function moderateReportedContent(id) {
 }
 function exportClubContent() {
   if(!admin())return;
-  const names=['profiles','projects','project_tasks','project_members','project_milestones','topics','replies','channels','channel_messages','documents','document_versions','news_posts','events','event_rsvps','founder_meetings','founder_meeting_rsvps','announcements','courses','reports','audit_events'];
+  const names=['profiles','projects','project_tasks','project_members','project_milestones','topics','replies','channels','channel_messages','documents','document_versions','news_posts','events','event_rsvps','founder_meetings','founder_meeting_rsvps','announcements','courses','reports','audit_events','activity_posts','activity_comments','activity_likes'];
   const data=Object.fromEntries(names.map(n=>[n,cache[n]||[]]));
   const blob=new Blob([JSON.stringify({exported_at:new Date().toISOString(),note:'Content export; excludes authentication records and file bytes.',data},null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`innovatex-content-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -442,6 +480,20 @@ async function toggleReaction(id,emoji) {
     cache.message_reactions=await read('message_reactions');if(page==='channels')renderChatMessages();
     if(activeThreadId&&$('#modal').open)threadDialog(activeThreadId);
   }catch(e){fail(e);}
+}
+async function toggleFeedLike(id) {
+  if(!feedReady||!(cache.activity_posts||[]).some(p=>p.id===id))return;
+  const liked=(cache.activity_likes||[]).some(l=>l.post_id===id&&l.user_id===session.user.id);
+  try{const q=db.from('activity_likes');const {error}=liked?await q.delete().eq('post_id',id).eq('user_id',session.user.id):await q.insert({post_id:id,user_id:session.user.id});if(error)throw error;await refresh();}catch(e){fail(e);}
+}
+async function removeFeedPost(id) {
+  if(!confirm('Remove this update and its comments from the feed?'))return;
+  try{const {error}=await db.rpc('remove_activity_post',{p_id:id});if(error)throw error;await refresh();show('Update removed.');}catch(e){fail(e);}
+}
+function allFeedComments(id) {
+  const post=(cache.activity_posts||[]).find(p=>p.id===id);if(!post)return;
+  const comments=(cache.activity_comments||[]).filter(c=>c.post_id===id).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+  modal(`<span class="eyebrow">CLUB DISCUSSION</span><h2>Comments</h2><p>${esc(post.body)}</p><div class="thread-scroll">${comments.map(c=>`<div class="feed-comment">${avatar(memberName(c.author_id))}<div><strong>${esc(memberName(c.author_id))}</strong><span>${esc(c.body)}</span><small>${dateTime(c.created_at)}</small></div></div>`).join('')}</div>`);
 }
 async function removeMessage(id) {
   if(!confirm('Remove this message?'))return;
@@ -478,6 +530,12 @@ function uploadRevisionDialog(id) {
   modal(`<span class="eyebrow">DOCUMENT HISTORY</span><h2>Upload a revision</h2><p class="muted">The current file stays in the version history.</p><form id="editor" data-kind="revision" class="form-stack"><input type="hidden" name="document_id" value="${esc(id)}"><div class="field"><label for="revision_file">New file (max 10 MB)</label><input id="revision_file" name="revision_file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.zip,.png,.jpg,.jpeg,.stl" required></div><button class="button" type="submit">Upload revision</button></form>`);
 }
 async function submit(e) {
+  if(e.target.classList.contains('feed-comment-form')){
+    e.preventDefault();const formEl=e.target,body=formEl.elements.body.value.trim(),post_id=formEl.dataset.post,send=formEl.querySelector('[type=submit]');
+    if(!feedReady||!body||!post_id)return;send.disabled=true;
+    try{const {error}=await db.from('activity_comments').insert({post_id,author_id:session.user.id,body});if(error)throw error;formEl.reset();await refresh();}
+    catch(error){fail(error);}finally{send.disabled=false;}return;
+  }
   if(e.target.id==='chatComposer'){
     e.preventDefault(); if(!session||!activeChannelId)return;
     const input=e.target.querySelector('[name=body]'),body=input.value.trim(),send=e.target.querySelector('[type=submit]');
@@ -509,6 +567,17 @@ async function submit(e) {
       if('handle' in payload){payload.handle=String(payload.handle).trim().toLowerCase();if(!/^[a-z0-9_]{3,30}$/.test(payload.handle))throw Error('Use 3–30 lowercase letters, numbers or underscores for your handle.');}
       const {error}=await db.from('profiles').update(payload).eq('id',session.user.id);if(error)throw error;
       me={...me,...payload};close();await refresh();show('Profile saved.');return;
+    }
+    if(kind==='feedPost'){
+      if(!feedReady)throw Error('Activate the activity feed migration first.');
+      payload.body=String(payload.body).trim();payload.link_url=payload.link_url?cleanUrl(payload.link_url):null;
+      if(values.link_url&&!payload.link_url)throw Error('Enter a valid HTTPS link.');
+      payload.document_id=payload.document_id||null;payload.author_id=session.user.id;
+      return await mutate(()=>db.from('activity_posts').insert(payload));
+    }
+    if(kind==='feedEdit'){
+      const {error}=await db.rpc('edit_activity_post',{p_id:payload.post_id,p_body:String(payload.body).trim()});if(error)throw error;
+      close();await refresh();show('Update edited.');return;
     }
     if(kind==='editMessage'){
       const {error}=await db.rpc('edit_channel_message',{p_id:payload.message_id,p_body:String(payload.body).trim()});if(error)throw error;
