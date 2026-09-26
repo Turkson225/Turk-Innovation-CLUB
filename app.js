@@ -9,8 +9,8 @@ const cleanUrl = (s) => { try { const u = new URL(s); return u.protocol === 'htt
 const date = (s) => s ? new Date(s).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : 'TBD';
 const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'TBD';
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
-let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, inventoryReady = false, financeReady = false, activePeerId = null, lastRenderedPage = '';
-let inventoryFilter = 'all', financeFilter = 'all', inventoryLogPage = 0, financePage = 0;
+let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, inventoryReady = false, inventoryCatalogReady = false, financeReady = false, financeApprovalsReady = false, activePeerId = null, lastRenderedPage = '';
+let inventoryFilter = 'all', inventorySearchTerm = '', financeFilter = 'all', inventoryLogPage = 0, financePage = 0, financeReviewPage = 0;
 let calendarMonth = new Date(new Date().getFullYear(),new Date().getMonth(),1), calendarSelected = new Date();
 let courseTrack = 'all';
 const courseTracks = [
@@ -53,13 +53,14 @@ let pendingEmail = sessionStorage.getItem('innovatex.pendingEmail') || '';
 let pendingType = sessionStorage.getItem('innovatex.pendingType') || 'member';
 let pendingAuthMode = sessionStorage.getItem('innovatex.pendingAuthMode') === 'signup' ? 'signup' : 'signin';
 let toastTimer;
-const pages = ['home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','discussions','courses','teaching','events','calendar','announcements','founder-room'];
+const pages = ['home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','discussions','courses','teaching','events','calendar','announcements','founder-room'];
 const approved = () => !!me && (!('membership_status' in me) || me.membership_status==='approved');
 const investor = () => approved() && me?.role==='investor';
 const clubAccess = () => approved() && !investor();
 const teacher = () => clubAccess() && ['teacher','admin'].includes(me?.role);
 const admin = () => approved() && me?.role === 'admin';
 const founder = () => approved() && ['founder','admin'].includes(me?.role);
+const founderOnly = () => approved() && me?.role === 'founder';
 const show = (message) => { $('#toast').textContent=message; $('#toast').classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),4200); };
 const button = (label,action,extra='') => `<button class="button ${extra}" data-action="${action}">${label}</button>`;
 const empty = (title,body) => `<div class="empty"><strong>${esc(title)}</strong>${esc(body)}</div>`;
@@ -73,6 +74,8 @@ iconPaths.about='<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>';
 iconPaths['investor-portal']='<path d="M3 20h18M5 16l5-5 4 3 5-7M16 7h3v3"/>';
 iconPaths.admin='<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="5" rx="1"/><rect x="13" y="10" width="8" height="11" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/>';
 iconPaths.teaching='<path d="M3 5h18v13H3zM7 22h10M12 18v4M7 10h10M7 13h6"/>';
+iconPaths.finance='<path d="M3 6h18v14H3zM3 10h18M7 15h4M16 15h2"/>';
+iconPaths['finance-review']='<path d="M4 3h16v18H4zM8 8h8M8 12h8M8 16l2 2 5-5"/>';
 const iconSvg = name => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconPaths[name]||iconPaths.home}</svg>`;
 iconPaths.calendar=iconPaths.events;
 const modal = (html) => { if($('#modal').open) $('#modal').close(); $('#modalContent').innerHTML=html; $('#modal').showModal(); };
@@ -96,18 +99,18 @@ async function refresh() {
   if(!self.error&&self.data)me=self.data;
   roleReady=!!me&&'application_type' in me;
   if(previous!==`${me?.membership_status}:${me?.role}`)return signedIn(session);
-  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;inventoryReady=false;financeReady=false;mediaUrls.clear();route();return;}
+  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();route();return;}
   if(investor()){
     const results=await Promise.allSettled(['investor_updates','investor_inquiries'].map(n=>read(n,q=>q.order('created_at',{ascending:false}))));
     cache={profiles:[me],investor_updates:results[0].status==='fulfilled'?results[0].value:[],investor_inquiries:results[1].status==='fulfilled'?results[1].value:[]};
-    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;inventoryReady=false;financeReady=false;mediaUrls.clear();
+    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
     if(previous!==`${me.membership_status}:${me.role}`||!['home','about','founders','investors','investor-portal','privacy'].includes(page)) {route();return;}
     render();return;
   }
   const names=['profiles','projects','project_tasks','topics','replies','courses','learning_materials','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes','direct_messages','direct_message_reads','investor_updates','investor_inquiries','inventory_items'];
-  if(founder())names.push('inventory_movements','finance_entries');
+  if(founder())names.push('inventory_movements','finance_entries','finance_reviews');
   const unordered=new Set(['channel_reads','project_members','event_rsvps','founder_meeting_rsvps']);
-  const records=new Set(['inventory_items','inventory_movements','finance_entries']);
+  const records=new Set(['inventory_items','inventory_movements','finance_entries','finance_reviews']);
   const results=await Promise.allSettled(names.map(n=>records.has(n)?readRecords(n):read(n,q=>unordered.has(n)?q:q.order('created_at',{ascending:false}))));
   results.forEach((r,i)=>{ if(r.status==='fulfilled') cache[names[i]]=r.value; else {cache[names[i]]=[];console.error(names[i],r.reason);} });
   communityReady=results[names.indexOf('channels')].status==='fulfilled';
@@ -117,6 +120,9 @@ async function refresh() {
   learningReady=results[names.indexOf('learning_materials')].status==='fulfilled';
   inventoryReady=results[names.indexOf('inventory_items')].status==='fulfilled'&&(!founder()||results[names.indexOf('inventory_movements')].status==='fulfilled');
   financeReady=founder()&&results[names.indexOf('finance_entries')].status==='fulfilled';
+  const {error:catalogError}=inventoryReady?await db.from('inventory_items').select('item_type').limit(1):{error:true};
+  inventoryCatalogReady=!catalogError;
+  financeApprovalsReady=financeReady&&results[names.indexOf('finance_reviews')].status==='fulfilled';
   const {error:mediaError}=feedReady?await db.from('activity_posts').select('image_path').limit(1):{error:true};
   mediaReady=!mediaError;
   const {error:avatarError}=mediaReady?await db.from('profiles').select('avatar_path').eq('id',session.user.id).limit(1):{error:true};
@@ -172,11 +178,12 @@ async function signedIn(newSession) {
     }
     if(communityReady && clubAccess()) chatRealtime=db.channel('innovatex-chat')
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'channel_messages'},refreshChat).subscribe();
-  } else { me=null;roleReady=false;inventoryReady=false;financeReady=false;cache={};mediaUrls.clear(); if(!['home','about','founders','investors'].includes(page)) page='home'; await loadPublic(); }
+  } else { me=null;roleReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); if(!['home','about','founders','investors'].includes(page)) page='home'; await loadPublic(); }
   if(session&&!approved()&&!['about','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
   if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='founder-room'&&!founder()) {page='founders';history.replaceState(null,'','#founders');}
-  if(page==='finance'&&!founder()){page=clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
+  if(page==='finance'&&!admin()){page=founderOnly()?'finance-review':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
+  if(page==='finance-review'&&!founderOnly()){page=admin()?'finance':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
   render();
 }
 async function init() {
@@ -193,9 +200,11 @@ async function init() {
   $('#authButton').onclick=()=>session ? signOut() : signInDialog();
   document.addEventListener('click',actions);
   document.addEventListener('submit',submit);
-  document.addEventListener('input',e=>{if(e.target.id==='dmFilter'){const term=e.target.value.toLowerCase();document.querySelectorAll('.dm-peer').forEach(b=>b.hidden=!b.textContent.toLowerCase().includes(term));}});
+  document.addEventListener('input',e=>{if(e.target.id==='dmFilter'){const term=e.target.value.toLowerCase();document.querySelectorAll('.dm-peer').forEach(b=>b.hidden=!b.textContent.toLowerCase().includes(term));}
+    if(e.target.id==='inventorySearch'){inventorySearchTerm=e.target.value;applyInventorySearch();}
+  });
   document.addEventListener('change',e=>{if(['chat_image','dm_image'].includes(e.target.name)){const label=$(e.target.name==='chat_image'?'#chatImageName':'#dmImageName');if(label){label.textContent=e.target.files?.[0]?.name||'';label.hidden=!e.target.files?.length;}}
-    if(e.target.name==='movement_kind'&&e.target.closest('form[data-kind="inventoryMovement"]')){const member=$('#movementMember'),input=member?.querySelector('select'),needsMember=['check_out','return'].includes(e.target.value);if(member&&input){member.hidden=!needsMember;input.disabled=!needsMember;input.required=needsMember;if(needsMember)input.innerHTML=movementMemberOptions(e.target.form.elements.item_id.value,e.target.value);}}
+    if(e.target.name==='movement_kind'&&e.target.closest('form[data-kind="inventoryMovement"]')){const member=$('#movementMember'),input=member?.querySelector('select'),needsMember=['check_out','return','issue_stock'].includes(e.target.value);if(member&&input){member.hidden=!needsMember;input.disabled=!needsMember;input.required=needsMember;if(needsMember)input.innerHTML=movementMemberOptions(e.target.form.elements.item_id.value,e.target.value);}}
   });
   route();
   if(!db) return;
@@ -213,7 +222,8 @@ function route() {
   if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='investor-portal'&&authReady&&!investor()&&!admin()){page='investors';history.replaceState(null,'','#investors');}
   if(page==='teaching'&&authReady&&!teacher()){page=clubAccess()?'courses':'home';history.replaceState(null,'','#'+page);}
-  if(page==='finance'&&authReady&&!founder()){page=clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
+  if(page==='finance'&&authReady&&!admin()){page=founderOnly()?'finance-review':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
+  if(page==='finance-review'&&authReady&&!founderOnly()){page=admin()?'finance':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
   if(page==='founder-room'&&authReady&&!founder()){page='founders';history.replaceState(null,'','#founders');show('Founder access required.');}
   if(['admin','applications','moderation'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   $('#sidebar').classList.remove('open');render();
@@ -226,6 +236,7 @@ function render() {
   document.querySelectorAll('#nav a').forEach(a=>{a.classList.toggle('active',a.dataset.page===page);a.hidden=!!a.dataset.private&&!clubAccess();});
   document.querySelectorAll('#nav [data-founder]').forEach(a=>a.hidden=!founder());
   document.querySelectorAll('#nav [data-leadership]').forEach(a=>a.hidden=!founder());
+  document.querySelectorAll('#nav [data-founder-only]').forEach(a=>a.hidden=!founderOnly());
   document.querySelectorAll('#nav [data-investors-nav]').forEach(a=>a.hidden=!founder());
   document.querySelectorAll('#nav [data-teacher]').forEach(a=>a.hidden=!teacher());
   document.querySelectorAll('#nav [data-investor]').forEach(a=>a.hidden=!investor()&&!admin());
@@ -235,10 +246,13 @@ function render() {
   const online=(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length;
   $('#onlineBadge').textContent=online;
   $('#notificationBadge').textContent=(cache.notifications||[]).filter(n=>!n.read_at).length;
+  const pendingFinance=founderOnly()&&financeApprovalsReady?(cache.finance_entries||[]).filter(x=>financeStatus(x)==='pending').length:0;
+  const financeBadge=$('#financeReviewBadge');if(financeBadge){financeBadge.textContent=pendingFinance;financeBadge.hidden=!pendingFinance;}
   const unreadDm=(cache.direct_messages||[]).filter(m=>m.recipient_id===session?.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;
   $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
-  const views={home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
+  const views={home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').innerHTML=views[page]();
+  if(page==='inventory')applyInventorySearch();
   $('#content').classList.toggle('view-enter',page!==lastRenderedPage);lastRenderedPage=page;
   if(page==='channels'){const stream=$('#messageStream');if(stream)stream.scrollTop=stream.scrollHeight;if(activeChannelId&&enhancedReady)markChannelRead(activeChannelId);}
   if(page==='messages'){const stream=$('#dmStream');if(stream)stream.scrollTop=stream.scrollHeight;if(activePeerId&&dmReady)markDmRead(activePeerId);}
@@ -379,37 +393,65 @@ function movementMemberOptions(itemId,kind){
   const eligible=(cache.profiles||[]).filter(p=>kind==='return'?outstanding.get(p.id)>0:p.membership_status==='approved'&&['member','teacher','founder','admin'].includes(p.role));
   return '<option value="">Choose a member</option>'+eligible.map(p=>`<option value="${esc(p.id)}">${esc(p.full_name||'Member')}${kind==='return'?` · ${outstanding.get(p.id)} outstanding`:''}</option>`).join('');
 }
+const itemLow = x => x.condition==='good'&&Number(x.quantity_available)<=Number(x.reorder_level||0);
+const financeReviewFor = entry => (cache.finance_reviews||[]).find(r=>r.entry_id===entry.id);
+const financeStatus = entry => financeReviewFor(entry)?.decision||'pending';
+const financeEffective = entry => financeStatus(entry)==='approved';
+function applyInventorySearch(){
+  const term=inventorySearchTerm.trim().toLowerCase();
+  document.querySelectorAll('[data-inventory-card]').forEach(card=>{card.style.display=card.textContent.toLowerCase().includes(term)?'':'none';});
+}
 function inventory(){
   if(!clubAccess())return '';
   if(!inventoryReady)return `${head('CLUB RECORDS','Inventory','Track shared equipment and supplies.')}<div class="notice">To activate inventory, run <code>supabase/upgrade_inventory_finance.sql</code> in your Supabase SQL Editor, then refresh this page.</div>`;
+  if(!inventoryCatalogReady)return `${head('CLUB RECORDS','Inventory','Track components, tools and supplies.')}<div class="notice">Run <code>supabase/upgrade_inventory_finance_approvals.sql</code> after the first inventory migration to activate item types, units and stock alerts.</div>`;
   const items=cache.inventory_items||[],movements=founder()?cache.inventory_movements||[]:[];
-  const total=items.reduce((n,x)=>n+Number(x.quantity_total||0),0),available=items.reduce((n,x)=>n+Number(x.quantity_available||0),0);
-  const usable=items.filter(x=>x.condition==='good').reduce((n,x)=>n+Number(x.quantity_available||0),0);
-  const visible=items.filter(x=>inventoryFilter==='all'||(inventoryFilter==='available'&&x.quantity_available>0&&x.condition==='good')||(inventoryFilter==='checked_out'&&x.quantity_total>x.quantity_available)||(inventoryFilter==='needs_repair'&&x.condition==='needs_repair')||(inventoryFilter==='retired'&&x.condition==='retired'));
-  const tabs=[['all','All items'],['available','Available'],['checked_out','Checked out'],['needs_repair','Needs repair'],['retired','Retired']];
+  const visible=items.filter(x=>inventoryFilter==='all'||x.item_type===inventoryFilter||(inventoryFilter==='low_stock'&&itemLow(x))||(inventoryFilter==='checked_out'&&x.quantity_total>x.quantity_available)||(inventoryFilter==='needs_repair'&&x.condition==='needs_repair')||(inventoryFilter==='retired'&&x.condition==='retired'));
+  const tabs=[['all','All'],['component','Components'],['tool','Tools'],['equipment','Equipment'],['consumable','Supplies'],['other','Other'],['low_stock','Low stock'],['checked_out','Checked out'],['needs_repair','Needs repair'],['retired','Retired']];
   const pageMoves=movements.slice(inventoryLogPage*50,(inventoryLogPage+1)*50);
-  return `${head('CLUB RECORDS','Inventory','Know what the club owns, where it is, and what is currently available.',admin()?button('+ Register item','inventoryAddForm'):'')}
-    <div class="records-stats">${recordsStat('Items',items.length,'Distinct asset records')}${recordsStat('Total units',total,'Registered stock')}${recordsStat('Ready to use',usable,'Good condition and in stock')}${recordsStat('Checked out',total-available,'Units held by members')}</div>
-    <div class="records-toolbar"><div><h2>Club assets</h2><p class="subtle">Stock quantities update when an administrator records a movement.</p></div>${founder()?`<div class="records-actions"><button class="button button-outline button-sm" data-action="exportCsv" data-table="inventory_items">Download inventory CSV ↓</button><button class="button button-outline button-sm" data-action="exportCsv" data-table="inventory_movements">Download movement CSV ↓</button></div>`:''}</div>
+  return `${head('CLUB RECORDS','Inventory','A practical register for components, tools, equipment and supplies.',admin()?button('+ Add stock item','inventoryAddForm'):'')}
+    <div class="records-stats">${recordsStat('Stock records',items.length,'Types of items tracked')}${recordsStat('Ready to use',items.filter(x=>x.condition==='good'&&x.quantity_available>0).length,'Items with usable stock')}${recordsStat('Low stock',items.filter(itemLow).length,'At or below reorder level')}${recordsStat('Checked out',items.filter(x=>x.quantity_total>x.quantity_available).length,'Item types held by members')}</div>
+    <div class="notice">Use <strong>Check out</strong> for returnable tools and equipment. Use <strong>Issue / consume</strong> when components or supplies are used up; this records the recipient and reduces the stock total.</div>
+    <div class="records-toolbar"><div><h2>Club stock</h2><p class="subtle">${items.length} item types, each counted in its own unit.</p></div><div class="records-actions"><input class="records-filter" id="inventorySearch" type="search" value="${esc(inventorySearchTerm)}" placeholder="Search items or locations" aria-label="Search inventory">${founder()?`<button class="button button-outline button-sm" data-action="exportCsv" data-table="inventory_items">Inventory CSV ↓</button><button class="button button-outline button-sm" data-action="exportCsv" data-table="inventory_movements">History CSV ↓</button>`:''}</div></div>
     <div class="records-tabs" role="group" aria-label="Filter inventory">${tabs.map(([key,label])=>`<button data-action="inventoryFilter" data-filter="${key}" class="${inventoryFilter===key?'active':''}" aria-pressed="${inventoryFilter===key}">${label}</button>`).join('')}</div>
-    <div class="records-panel">${visible.length?`<div class="records-table-wrap"><table class="records-table"><thead><tr><th>Item</th><th>Category</th><th>Stock</th><th>Location</th><th>Condition</th>${admin()?'<th>Action</th>':''}</tr></thead><tbody>${visible.map(x=>`<tr><td>${esc(x.name)}${x.serial_number?`<small>Serial: ${esc(x.serial_number)}</small>`:''}</td><td>${esc(x.category)}</td><td><span class="record-pill ${x.quantity_available===0?'out':x.quantity_available<x.quantity_total||x.condition!=='good'?'low':''}">${esc(x.quantity_available)} / ${esc(x.quantity_total)} in stock</span></td><td>${esc(x.location||'—')}</td><td>${esc(x.condition.replaceAll('_',' '))}</td>${admin()?`<td><button class="text-button" data-action="inventoryMoveForm" data-id="${esc(x.id)}">Movement</button> · <button class="text-button" data-action="inventoryEditForm" data-id="${esc(x.id)}">Edit details</button></td>`:''}</tr>`).join('')}</tbody></table></div>`:`<div class="records-empty"><strong>${items.length?'No matching items':'No items registered yet'}</strong>${items.length?'Choose another filter.':'An administrator can register the first asset.'}</div>`}</div>
-    ${founder()?`<div class="records-toolbar"><div><h2>Movement history</h2><p class="subtle">Permanent checkout, return and item change records · founders and administrators only.</p></div></div><div class="records-panel">${movements.length?`<div class="records-table-wrap"><table class="records-table"><thead><tr><th>Recorded</th><th>Item</th><th>Movement</th><th>Member</th><th>Handled by</th><th>Note</th></tr></thead><tbody>${pageMoves.map(m=>`<tr><td>${esc(dateTime(m.created_at))}</td><td>${esc(items.find(x=>x.id===m.item_id)?.name||m.old_details?.name||'Unknown item')}</td><td><span class="record-pill">${esc(m.kind.replaceAll('_',' '))}${m.kind==='update_details'?'':` · ${esc(m.quantity)}`}</span></td><td>${m.member_id?esc(memberName(m.member_id)):'—'}</td><td>${esc(memberName(m.handled_by))}</td><td>${esc(m.note||'—')}${m.old_details&&m.new_details?`<small>${esc(['name','category','condition','location','serial_number'].filter(k=>m.old_details[k]!==m.new_details[k]).map(k=>`${k.replaceAll('_',' ')}: ${m.old_details[k]||'—'} → ${m.new_details[k]||'—'}`).join(' · '))}</small>`:''}</td></tr>`).join('')}</tbody></table></div>`:`<div class="records-empty"><strong>No movements yet</strong>Checkouts, returns and item changes will appear here.</div>`}${recordsPager('inventoryLog',inventoryLogPage,movements.length)}</div>`:''}`;
+    ${visible.length?`<div class="inventory-grid">${visible.map(x=>`<article class="inventory-card ${itemLow(x)?'stock-low':''}" data-inventory-card><div class="inventory-card-head"><div><h3>${esc(x.name)}</h3><p>${esc(x.category)}${x.serial_number?` · ${esc(x.serial_number)}`:''}</p></div><span class="inventory-kind ${esc(x.item_type)}">${esc(x.item_type)}</span></div><div class="inventory-stock ${itemLow(x)?'stock-low':''}"><strong>${esc(x.quantity_available)} ${esc(x.unit)}</strong><small>in stock<br>of ${esc(x.quantity_total)} ${esc(x.unit)}</small></div><div class="inventory-card-meta"><span>Reorder at <strong>${esc(x.reorder_level)} ${esc(x.unit)}</strong></span><span>${itemLow(x)?'<span class="record-pill stock-low">Low stock</span>':esc(x.condition.replaceAll('_',' '))}</span></div><div class="inventory-card-meta"><span>Location: <strong>${esc(x.location||'Not set')}</strong></span>${x.quantity_total>x.quantity_available?`<span>${esc(x.quantity_total-x.quantity_available)} checked out</span>`:''}</div>${admin()?`<div class="inventory-card-actions"><button class="text-button" data-action="inventoryMoveForm" data-id="${esc(x.id)}">Record movement →</button><button class="text-button" data-action="inventoryEditForm" data-id="${esc(x.id)}">Edit details</button></div>`:''}</article>`).join('')}</div>`:`<div class="records-empty"><strong>${items.length?'No matching items':'No items registered yet'}</strong>${items.length?'Choose another filter.':'An administrator can add the first stock item.'}</div>`}
+    ${founder()?`<div class="records-toolbar"><div><h2>Stock history</h2><p class="subtle">Permanent checkout, issue, return, adjustment and item change records · founders and administrators.</p></div></div><div class="records-panel">${movements.length?`<div class="records-table-wrap"><table class="records-table"><thead><tr><th>Recorded</th><th>Item</th><th>Movement</th><th>Member</th><th>Handled by</th><th>Reason / change</th></tr></thead><tbody>${pageMoves.map(m=>`<tr><td>${esc(dateTime(m.created_at))}</td><td>${esc(items.find(x=>x.id===m.item_id)?.name||m.old_details?.name||'Unknown item')}</td><td><span class="record-pill">${esc(m.kind.replaceAll('_',' '))}${m.kind==='update_details'?'':` · ${esc(m.quantity)} ${esc(items.find(x=>x.id===m.item_id)?.unit||'units')}`}</span></td><td>${m.member_id?esc(memberName(m.member_id)):'—'}</td><td>${esc(memberName(m.handled_by))}</td><td>${esc(m.note||'—')}${m.old_details&&m.new_details?`<small>${esc(['name','category','item_type','unit','reorder_level','condition','location','serial_number'].filter(k=>m.old_details[k]!==m.new_details[k]).map(k=>`${k.replaceAll('_',' ')}: ${m.old_details[k]??'—'} → ${m.new_details[k]??'—'}`).join(' · '))}</small>`:''}</td></tr>`).join('')}</tbody></table></div>`:`<div class="records-empty"><strong>No movements yet</strong>Checkouts, issues, returns and item changes will appear here.</div>`}${recordsPager('inventoryLog',inventoryLogPage,movements.length)}</div>`:''}`;
 }
 function finance(){
-  if(!founder())return '';
+  if(!admin())return '';
   if(!financeReady)return `${head('LEADERSHIP RECORDS','Finance','Review the club ledger.')}<div class="notice">To activate finance, run <code>supabase/upgrade_inventory_finance.sql</code> in your Supabase SQL Editor, then refresh this page.</div>`;
+  if(!financeApprovalsReady)return `${head('ADMIN RECORDS','Finance','Record income and expenses.')}<div class="notice">Run <code>supabase/upgrade_inventory_finance_approvals.sql</code> to activate founder approvals and the accountable balance.</div>`;
   const entries=cache.finance_entries||[];
-  const income=entries.filter(x=>x.entry_type==='income').reduce((n,x)=>n+Math.round(Number(x.amount)*100),0);
-  const expense=entries.filter(x=>x.entry_type==='expense').reduce((n,x)=>n+Math.round(Number(x.amount)*100),0);
-  const month=new Date().toISOString().slice(0,7),thisMonth=entries.filter(x=>x.occurred_on?.slice(0,7)===month);
-  const visible=entries.filter(x=>financeFilter==='all'||x.entry_type===financeFilter).sort((a,b)=>b.occurred_on.localeCompare(a.occurred_on)||b.created_at.localeCompare(a.created_at));
+  const effective=entries.filter(financeEffective);
+  const income=effective.filter(x=>x.entry_type==='income').reduce((n,x)=>n+Math.round(Number(x.amount)*100),0);
+  const expense=effective.filter(x=>x.entry_type==='expense').reduce((n,x)=>n+Math.round(Number(x.amount)*100),0);
+  const pending=entries.filter(x=>financeStatus(x)==='pending').length;
+  const visible=entries.filter(x=>financeFilter==='all'||x.entry_type===financeFilter||financeStatus(x)===financeFilter).sort((a,b)=>b.occurred_on.localeCompare(a.occurred_on)||b.created_at.localeCompare(a.created_at));
   const pageEntries=visible.slice(financePage*50,(financePage+1)*50);
-  return `${head('LEADERSHIP RECORDS','Finance','A transparent record of club income and spending for founders and administrators.',admin()?button('+ Record transaction','financeEntryForm'):'')}
-    <div class="records-stats">${recordsStat('Recorded income',recordMoney(income),'All ledger entries','finance-income')}${recordsStat('Recorded expenses',recordMoney(expense),'All ledger entries','finance-expense')}${recordsStat('Recorded balance',recordMoney(income-expense),'Income less expenses','finance-total')}${recordsStat('This month',thisMonth.length,'Transactions recorded')}</div>
-    <div class="notice">Amounts are shown in Ghana cedis (GHS). This ledger starts with the entries recorded here; enter any opening balance as an income entry with a clear reference. Entries cannot be edited or deleted. Record a new correcting entry if needed.</div>
-    <div class="records-toolbar"><div><h2>Transaction ledger</h2><p class="subtle">Every entry includes the date, amount, reason, recorder and optional reference.</p></div><div class="records-actions"><button class="button button-outline button-sm" data-action="exportCsv" data-table="finance_entries">Download ledger CSV ↓</button></div></div>
-    <div class="records-tabs" role="group" aria-label="Filter transactions">${[['all','All transactions'],['income','Income'],['expense','Expenses']].map(([key,label])=>`<button data-action="financeFilter" data-filter="${key}" class="${financeFilter===key?'active':''}" aria-pressed="${financeFilter===key}">${label}</button>`).join('')}</div>
-    <div class="records-panel">${visible.length?`<div class="records-table-wrap"><table class="records-table"><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Category / reason</th><th>Counterparty</th><th>Reference</th><th>Recorded by</th></tr></thead><tbody>${pageEntries.map(x=>`<tr><td>${esc(recordDate(x.occurred_on))}<small>Entered ${esc(dateTime(x.created_at))}</small></td><td><span class="record-pill ${x.entry_type==='expense'?'expense':''}">${esc(x.entry_type)}</span></td><td class="${x.entry_type==='income'?'finance-income':'finance-expense'}">${esc(recordMoney(Math.round(Number(x.amount)*100)))}</td><td>${esc(x.category)}<small>${esc(x.description||'—')}</small></td><td>${esc(x.counterparty||'—')}</td><td>${esc(x.reference||'—')}</td><td>${esc(memberName(x.created_by))}</td></tr>`).join('')}</tbody></table></div>`:`<div class="records-empty"><strong>${entries.length?'No matching transactions':'No transactions yet'}</strong>${entries.length?'Choose another filter.':'An administrator can record the first income or expense.'}</div>`}${recordsPager('finance',financePage,visible.length)}</div>`;
+  return `${head('ADMIN RECORDS','Finance','Record the club’s funds and track founder decisions.',button('+ Submit transaction','financeEntryForm'))}
+    <div class="records-stats">${recordsStat('Approved income',recordMoney(income),'Founder approved entries','finance-income')}${recordsStat('Approved expenses',recordMoney(expense),'Founder approved entries','finance-expense')}${recordsStat('Recorded balance',recordMoney(income-expense),'Approved income less expenses','finance-total')}${recordsStat('Awaiting review',pending,'Founder approval needed')}</div>
+    <div class="notice">Amounts are in Ghana cedis (GHS). All entries, including ones recorded before this approval upgrade, need a founder decision. Pending and rejected amounts do not affect the balance. Corrections require a new entry and founder review.</div>
+    <div class="records-toolbar"><div><h2>Transaction ledger</h2><p class="subtle">Admin entries retain the purpose, date, reference and founder decision.</p></div><div class="records-actions"><button class="button button-outline button-sm" data-action="exportCsv" data-table="finance_entries">Download ledger CSV ↓</button></div></div>
+    <div class="records-tabs" role="group" aria-label="Filter transactions">${[['all','All'],['pending','Pending'],['approved','Approved'],['rejected','Rejected'],['income','Income'],['expense','Expenses']].map(([key,label])=>`<button data-action="financeFilter" data-filter="${key}" class="${financeFilter===key?'active':''}" aria-pressed="${financeFilter===key}">${label}</button>`).join('')}</div>
+    <div class="records-panel">${visible.length?`<div class="records-table-wrap"><table class="records-table"><thead><tr><th>Date</th><th>Type / amount</th><th>Category / purpose</th><th>Counterparty / reference</th><th>Status</th><th>Entered by</th><th>Founder review</th></tr></thead><tbody>${pageEntries.map(financeEntryRow).join('')}</tbody></table></div>`:`<div class="records-empty"><strong>${entries.length?'No matching transactions':'No transactions yet'}</strong>${entries.length?'Choose another filter.':'Record the first income or expense to begin.'}</div>`}${recordsPager('finance',financePage,visible.length)}</div>`;
+}
+function financeEntryRow(x){
+  const review=financeReviewFor(x),status=financeStatus(x);
+  return `<tr><td>${esc(recordDate(x.occurred_on))}<small>Entered ${esc(dateTime(x.created_at))}</small></td><td><span class="record-pill ${x.entry_type==='expense'?'expense':''}">${esc(x.entry_type)}</span><small class="${x.entry_type==='income'?'finance-income':'finance-expense'}">${esc(recordMoney(Math.round(Number(x.amount)*100)))}</small></td><td>${esc(x.category)}<small>${esc(x.description)}</small></td><td>${esc(x.counterparty||'—')}<small>${esc(x.reference||'No reference')}</small></td><td><span class="finance-status ${status}">${esc(status)}</span></td><td>${esc(memberName(x.created_by))}</td><td>${review?`${esc(memberName(review.reviewer_id))}<small>${esc(dateTime(review.created_at))}${review.note?` · ${esc(review.note)}`:''}</small>`:'—'}</td></tr>`;
+}
+function financeReview(){
+  if(!founderOnly())return '';
+  if(!financeReady)return `${head('FOUNDER REVIEW','Finance approvals','Review the club’s transactions.')}<div class="notice">First run <code>supabase/upgrade_inventory_finance.sql</code> in Supabase SQL Editor.</div>`;
+  if(!financeApprovalsReady)return `${head('FOUNDER REVIEW','Finance approvals','Review the club’s transactions.')}<div class="notice">Run <code>supabase/upgrade_inventory_finance_approvals.sql</code> after the first inventory and finance migration.</div>`;
+  const entries=cache.finance_entries||[],pending=entries.filter(x=>financeStatus(x)==='pending').sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+  const history=entries.filter(x=>financeStatus(x)!=='pending').sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+  const pageHistory=history.slice(financeReviewPage*50,(financeReviewPage+1)*50);
+  return `${head('FOUNDER REVIEW','Finance approvals','Review new transactions and keep a visible record of decisions.')}
+    <div class="records-stats">${recordsStat('Waiting for review',pending.length,'Founder decision needed')}${recordsStat('Approved',history.filter(x=>financeStatus(x)==='approved').length,'Included in balance')}${recordsStat('Rejected',history.filter(x=>financeStatus(x)==='rejected').length,'Excluded from balance')}${recordsStat('All records',entries.length,'Earlier and new entries')}</div>
+    <div class="notice">Only approved founders can approve or reject new entries. The administrator records the transactions; approval determines whether they count in the club balance. Rejection needs a reason.</div>
+    <div class="section-heading"><div><h2>Awaiting your review</h2><p>Check the amount, purpose and reference before deciding.</p></div></div>
+    ${pending.length?`<div class="finance-review-grid">${pending.map(x=>`<article class="finance-review-card"><header><span class="finance-status pending">Pending</span><strong class="${x.entry_type==='income'?'finance-income':'finance-expense'}">${esc(recordMoney(Math.round(Number(x.amount)*100)))}</strong></header><h3>${esc(x.category)} · ${esc(x.entry_type)}</h3><p>${esc(x.description)}</p><small>${esc(recordDate(x.occurred_on))} · Entered by ${esc(memberName(x.created_by))}</small><small>${x.counterparty?`From / to: ${esc(x.counterparty)} · `:''}Reference: ${esc(x.reference||'Not supplied')}</small><div class="finance-review-actions"><button class="button button-sm" data-action="reviewFinance" data-id="${esc(x.id)}" data-decision="approved">Review to approve</button><button class="button button-outline button-sm" data-action="reviewFinance" data-id="${esc(x.id)}" data-decision="rejected">Reject</button></div></article>`).join('')}</div>`:`<div class="records-empty"><strong>All caught up</strong>No finance entries are awaiting a founder decision.</div>`}
+    <div class="finance-history"><div class="section-heading"><div><h2>Decision history</h2><p>Approved and rejected transactions remain visible with their reviewers and reasons.</p></div></div><div class="records-panel">${history.length?`<div class="records-table-wrap"><table class="records-table"><thead><tr><th>Date</th><th>Type / amount</th><th>Category / purpose</th><th>Counterparty / reference</th><th>Status</th><th>Entered by</th><th>Founder review</th></tr></thead><tbody>${pageHistory.map(financeEntryRow).join('')}</tbody></table></div>`:`<div class="records-empty"><strong>No decisions yet</strong>Approved and rejected transactions will appear here.</div>`}${recordsPager('financeReview',financeReviewPage,history.length)}</div></div>`;
 }
 function eventRow(e) {return `<div class="list-item"><div class="event-date"><b>${new Date(e.starts_at).getDate()}</b><small>${new Date(e.starts_at).toLocaleString(undefined,{month:'short'})}</small></div><div><strong>${esc(e.title)}</strong><small>${dateTime(e.starts_at)} · ${esc(e.location||'Online')}</small></div></div>`;}
 function rsvpControls(kind,id) {
@@ -663,19 +705,28 @@ async function signOut() {try{await touchPresence(false);const {error}=await db.
 function actions(e) {
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
   if(action==='inventoryFilter'){if(!clubAccess())return;inventoryFilter=el.dataset.filter;render();return;}
-  if(action==='financeFilter'){if(!founder())return;financeFilter=el.dataset.filter;financePage=0;render();return;}
+  if(action==='financeFilter'){if(!admin())return;financeFilter=el.dataset.filter;financePage=0;render();return;}
   if(action==='inventoryLogPrev'||action==='inventoryLogNext'){if(!founder())return;inventoryLogPage=Math.max(0,inventoryLogPage+(action==='inventoryLogNext'?1:-1));render();return;}
-  if(action==='financePrev'||action==='financeNext'){if(!founder())return;financePage=Math.max(0,financePage+(action==='financeNext'?1:-1));render();return;}
-  if(action==='inventoryAddForm'&&admin()&&inventoryReady)return form('Register asset','Add an item and its starting quantity to the club inventory.','inventoryItem',field('Item name','name')+field('Category','category')+`<div class="field"><label for="quantity_total">Starting quantity</label><input id="quantity_total" name="quantity_total" type="number" min="0" max="2147483647" step="1" value="1" required></div>`+select('Condition','condition',['good','needs_repair','retired'])+field('Storage location','location','text','',false)+field('Serial or asset number (optional)','serial_number','text','',false));
-  if(action==='inventoryEditForm'&&admin()&&inventoryReady){
-    const item=(cache.inventory_items||[]).find(x=>x.id===id);if(!item)return;
-    return form('Edit asset details','Record the reason for this change. The before and after details remain in the movement history.','inventoryDetails',`<input type="hidden" name="item_id" value="${esc(item.id)}">`+field('Item name','name','text',item.name)+field('Category','category','text',item.category)+select('Condition','condition',['good','needs_repair','retired'],item.condition)+field('Storage location','location','text',item.location||'',false)+field('Serial or asset number (optional)','serial_number','text',item.serial_number||'',false)+`<div class="field"><label for="change_note">Reason for change</label><textarea id="change_note" name="note" maxlength="2000" required></textarea></div>`);
+  if(action==='financePrev'||action==='financeNext'){if(!admin())return;financePage=Math.max(0,financePage+(action==='financeNext'?1:-1));render();return;}
+  if(action==='financeReviewPrev'||action==='financeReviewNext'){if(!founderOnly())return;financeReviewPage=Math.max(0,financeReviewPage+(action==='financeReviewNext'?1:-1));render();return;}
+  if(action==='reviewFinance'&&founderOnly()&&financeApprovalsReady){
+    const entry=(cache.finance_entries||[]).find(x=>x.id===id),decision=el.dataset.decision;
+    if(!entry||financeStatus(entry)!=='pending'||!['approved','rejected'].includes(decision))return;
+    return modal(`<span class="eyebrow">FOUNDER DECISION</span><h2>${decision==='approved'?'Approve':'Reject'} transaction</h2><p class="muted">${esc(entry.entry_type)} · ${esc(recordMoney(Math.round(Number(entry.amount)*100)))} · ${esc(entry.category)} · ${esc(recordDate(entry.occurred_on))}</p><p>${esc(entry.description)}</p><p class="subtle">Reference: ${esc(entry.reference||'Not supplied')} · Entered by ${esc(memberName(entry.created_by))}</p><form id="editor" data-kind="financeReview" class="form-stack"><input type="hidden" name="entry_id" value="${esc(id)}"><input type="hidden" name="decision" value="${decision}"><div class="field"><label for="review_note">${decision==='rejected'?'Reason for rejection':'Review note (optional)'}</label><textarea id="review_note" name="note" maxlength="2000" ${decision==='rejected'?'required':''}></textarea></div><button class="button" type="submit">Confirm ${decision==='approved'?'approval':'rejection'}</button></form>`);
   }
-  if(action==='inventoryMoveForm'&&admin()&&inventoryReady){
+  if(action==='inventoryAddForm'&&admin()&&inventoryCatalogReady)return form('Add stock item','Record a component, tool, supply or other club asset. Quantities are whole numbers; use cm for wire or g for small weights.','inventoryItem',field('Item name','name')+select('Item type','item_type',['component','tool','equipment','consumable','other'])+field('Category (e.g. Sensors, Hand tools)','category')+field('Unit (pcs, cm, g, rolls, sets)','unit','text','pcs')+`<div class="field"><label for="quantity_total">Starting quantity</label><input id="quantity_total" name="quantity_total" type="number" min="0" max="2147483647" step="1" value="1" required></div><div class="field"><label for="reorder_level">Low-stock level</label><input id="reorder_level" name="reorder_level" type="number" min="0" max="2147483647" step="1" value="0" required></div>`+select('Condition','condition',['good','needs_repair','retired'])+field('Storage location','location','text','',false)+field('Serial or asset number (optional)','serial_number','text','',false));
+  if(action==='inventoryEditForm'&&admin()&&inventoryCatalogReady){
     const item=(cache.inventory_items||[]).find(x=>x.id===id);if(!item)return;
-    return form('Record movement',`${esc(item.name)} · ${item.quantity_available} of ${item.quantity_total} in stock.`,'inventoryMovement',`<input type="hidden" name="item_id" value="${esc(item.id)}">`+select('Movement','movement_kind',['check_out','return','add_stock','remove_stock'])+`<div class="field"><label for="movement_quantity">Quantity</label><input id="movement_quantity" name="quantity" type="number" min="1" max="2147483647" step="1" value="1" required></div><div class="field" id="movementMember"><label for="member_id">Member receiving or returning it</label><select id="member_id" name="member_id" required>${movementMemberOptions(item.id,'check_out')}</select></div><div class="field"><label for="movement_note">Reason / details</label><textarea id="movement_note" name="note" maxlength="2000" required></textarea></div>`);
+    const unitLocked=Number(item.quantity_total)>0||(cache.inventory_movements||[]).some(m=>m.item_id===id);
+    return form('Edit item details','The reason and before/after values stay in stock history.','inventoryDetails',`<input type="hidden" name="item_id" value="${esc(item.id)}">`+field('Item name','name','text',item.name)+select('Item type','item_type',['component','tool','equipment','consumable','other'],item.item_type)+field('Category','category','text',item.category)+`<div class="field"><label for="unit">Unit${unitLocked?' (locked)':''}</label><input id="unit" name="unit" value="${esc(item.unit)}" ${unitLocked?'readonly':''} required>${unitLocked?'<small class="hint">Unit stays fixed once stock or movement history exists. Create a new item for a different unit.</small>':''}</div>`+`<div class="field"><label for="reorder_level">Low-stock level</label><input id="reorder_level" name="reorder_level" type="number" min="0" max="2147483647" step="1" value="${esc(item.reorder_level)}" required></div>`+select('Condition','condition',['good','needs_repair','retired'],item.condition)+field('Storage location','location','text',item.location||'',false)+field('Serial or asset number (optional)','serial_number','text',item.serial_number||'',false)+`<div class="field"><label for="change_note">Reason for change</label><textarea id="change_note" name="note" maxlength="2000" required></textarea></div>`);
   }
-  if(action==='financeEntryForm'&&admin()&&financeReady)return form('Record transaction','Enter a permanent income or expense record in Ghana cedis.','financeEntry',select('Type','entry_type',['income','expense'])+select('Category','category',['Opening balance','Membership dues','Donation','Sponsorship','Event','Equipment','Transport','Training','Operations','Other'])+`<div class="field"><label for="amount">Amount (GHS)</label><input id="amount" name="amount" type="number" min="0.01" max="9999999999.99" step="0.01" required></div>`+field('Transaction date','occurred_on','date',new Date().toISOString().slice(0,10))+area('Purpose / explanation','description')+field('From / paid to (optional)','counterparty','text','',false)+field('Receipt or transfer reference (optional)','reference','text','',false));
+  if(action==='inventoryMoveForm'&&admin()&&inventoryCatalogReady){
+    const item=(cache.inventory_items||[]).find(x=>x.id===id);if(!item)return;
+    const first=['component','consumable'].includes(item.item_type)?'issue_stock':'check_out';
+    const kinds=first==='issue_stock'?['issue_stock','add_stock','remove_stock','check_out','return']:['check_out','return','add_stock','remove_stock','issue_stock'];
+    return form('Record movement',`${esc(item.name)} · ${item.quantity_available} of ${item.quantity_total} ${esc(item.unit)} in stock.`,'inventoryMovement',`<input type="hidden" name="item_id" value="${esc(item.id)}">`+select('Movement','movement_kind',kinds)+`<div class="field"><label for="movement_quantity">Quantity (${esc(item.unit)})</label><input id="movement_quantity" name="quantity" type="number" min="1" max="2147483647" step="1" value="1" required></div><div class="field" id="movementMember"><label for="member_id">Member receiving or returning it</label><select id="member_id" name="member_id" required>${movementMemberOptions(item.id,first)}</select></div><div class="field"><label for="movement_note">Purpose / project / reason</label><textarea id="movement_note" name="note" maxlength="2000" required></textarea></div>`);
+  }
+  if(action==='financeEntryForm'&&admin()&&financeApprovalsReady)return form('Submit transaction','Enter income or spending in GHS. An approved founder must review it before it changes the balance.','financeEntry',select('Type','entry_type',['income','expense'])+select('Category','category',['Opening balance','Membership dues','Donation','Sponsorship','Event','Equipment','Transport','Training','Operations','Other'])+`<div class="field"><label for="amount">Amount (GHS)</label><input id="amount" name="amount" type="number" min="0.01" max="9999999999.99" step="0.01" required></div>`+field('Transaction date','occurred_on','date',new Date().toISOString().slice(0,10))+area('Purpose / explanation','description')+field('From / paid to (optional)','counterparty','text','',false)+field('Receipt or transfer reference (optional)','reference','text','',false));
   if(action==='calendarPrev'||action==='calendarNext'){calendarMonth=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth()+(action==='calendarNext'?1:-1),1);calendarSelected=new Date(calendarMonth);render();return;}
   if(action==='calendarToday'){calendarSelected=new Date();calendarMonth=new Date(calendarSelected.getFullYear(),calendarSelected.getMonth(),1);render();return;}
   if(action==='calendarDay'){const [y,m,d]=(el.dataset.date||'').split('-').map(Number);if(!y||m<1||m>12||d<1||d>31)return;calendarSelected=new Date(y,m-1,d);render();return;}
@@ -830,7 +881,7 @@ function exportClubContent() {
   const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`innovatex-content-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 function exportCsv(table){
-  if(!admin()&&!(founder()&&['inventory_items','inventory_movements','finance_entries'].includes(table)))return;
+  if(!admin()&&!(founderOnly()&&['inventory_items','inventory_movements'].includes(table)))return;
   const columns={
     profiles:['id','full_name','application_type','role','membership_status','programme','skills','application_reason','created_at'],
     projects:['id','title','summary','status','progress','owner_id','created_at'],
@@ -839,9 +890,9 @@ function exportCsv(table){
     reports:['id','reporter_id','target_type','target_id','reason','status','created_at'],
     investor_inquiries:['id','investor_id','subject','message','status','created_at'],
     audit_events:['id','actor_id','action','target_type','target_id','created_at'],
-    inventory_items:['id','name','category','quantity_total','quantity_available','condition','location','serial_number','created_by','created_at','updated_at'],
+    inventory_items:['id','name','category','item_type','unit','reorder_level','quantity_total','quantity_available','condition','location','serial_number','created_by','created_at','updated_at'],
     inventory_movements:['id','item_id','kind','quantity','member_id','note','old_details','new_details','handled_by','created_at'],
-    finance_entries:['id','entry_type','category','amount','occurred_on','description','counterparty','reference','created_by','created_at']
+    finance_entries:['id','entry_type','category','amount','occurred_on','description','counterparty','reference','created_by','created_at','approval_status','reviewed_by','reviewed_at','review_note']
   };
   if(!Object.hasOwn(columns,table))return;
   const safe=value=>{
@@ -850,7 +901,11 @@ function exportCsv(table){
     return `"${cell.replaceAll('"','""')}"`;
   };
   const headers=columns[table];
-  const rows=(cache[table]||[]).map(row=>headers.map(key=>safe(row[key])).join(','));
+  const rows=(cache[table]||[]).map(row=>{
+    const review=table==='finance_entries'?financeReviewFor(row):null;
+    const record=table==='finance_entries'?{...row,approval_status:financeStatus(row),reviewed_by:review?.reviewer_id,reviewed_at:review?.created_at,review_note:review?.note}:row;
+    return headers.map(key=>safe(record[key])).join(',');
+  });
   const csv='\ufeff'+headers.join(',')+'\r\n'+rows.join('\r\n')+'\r\n';
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
   const a=document.createElement('a');a.href=url;a.download=`innovatex-${table}-${new Date().toISOString().slice(0,10)}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -963,42 +1018,55 @@ async function submit(e) {
     for(const key of ['starts_at','ends_at','due_at']) if(key in payload) payload[key]=payload[key]?new Date(payload[key]).toISOString():null;
     for(const key of ['link_url','resource_url','meet_url']) if(key in payload) payload[key]=payload[key]?cleanUrl(payload[key]):null;
     if(kind==='inventoryItem'){
-      if(!admin()||!inventoryReady)throw Error('Administrator access and the inventory migration are required.');
-      const count=Number(payload.quantity_total);
-      if(!Number.isInteger(count)||count<0||count>2147483647)throw Error('Enter a valid starting quantity.');
-      const name=String(payload.name||'').trim(),category=String(payload.category||'').trim();
+      if(!admin()||!inventoryCatalogReady)throw Error('Administrator access and the stock catalog migration are required.');
+      const count=Number(payload.quantity_total),reorder=Number(payload.reorder_level);
+      if(!Number.isInteger(count)||count<0||count>2147483647||!Number.isInteger(reorder)||reorder<0||reorder>2147483647)throw Error('Enter valid stock and low-stock quantities.');
+      const name=String(payload.name||'').trim(),category=String(payload.category||'').trim(),unit=String(payload.unit||'').trim();
       if(name.length<2||name.length>160||category.length<2||category.length>80)throw Error('Enter an item name and category.');
+      if(unit.length<1||unit.length>30)throw Error('Enter a unit such as pcs, metres or rolls.');
+      if(!['component','tool','equipment','consumable','other'].includes(payload.item_type))throw Error('Choose an item type.');
       if(!['good','needs_repair','retired'].includes(payload.condition))throw Error('Choose a valid item condition.');
-      return await mutate(()=>db.from('inventory_items').insert({name,category,quantity_total:count,quantity_available:count,condition:payload.condition,location:String(payload.location||'').trim(),serial_number:String(payload.serial_number||'').trim()||null}));
+      return await mutate(()=>db.from('inventory_items').insert({name,category,item_type:payload.item_type,unit,reorder_level:reorder,quantity_total:count,quantity_available:count,condition:payload.condition,location:String(payload.location||'').trim(),serial_number:String(payload.serial_number||'').trim()||null}));
     }
     if(kind==='inventoryMovement'){
-      if(!admin()||!inventoryReady)throw Error('Administrator access and the inventory migration are required.');
+      if(!admin()||!inventoryCatalogReady)throw Error('Administrator access and the stock catalog migration are required.');
       if(!(cache.inventory_items||[]).some(x=>x.id===payload.item_id))throw Error('Choose an inventory item.');
       const quantity=Number(payload.quantity),movement=payload.movement_kind;
       if(!Number.isInteger(quantity)||quantity<1||quantity>2147483647)throw Error('Enter a positive whole number of units.');
-      if(!['check_out','return','add_stock','remove_stock'].includes(movement))throw Error('Choose a valid movement.');
-      const member=['check_out','return'].includes(movement)?payload.member_id||null:null;
-      if(['check_out','return'].includes(movement)&&!member)throw Error('Choose the member receiving or returning this item.');
+      if(!['check_out','return','add_stock','remove_stock','issue_stock'].includes(movement))throw Error('Choose a valid movement.');
+      const member=['check_out','return','issue_stock'].includes(movement)?payload.member_id||null:null;
+      if(['check_out','return','issue_stock'].includes(movement)&&!member)throw Error('Choose the member receiving or returning this item.');
       const note=String(payload.note||'').trim();if(!note||note.length>2000)throw Error('Explain the movement in the reason field.');
       return await mutate(()=>db.rpc('record_inventory_movement',{p_item:payload.item_id,p_kind:movement,p_quantity:quantity,p_member:member,p_note:note}));
     }
     if(kind==='inventoryDetails'){
-      if(!admin()||!inventoryReady)throw Error('Administrator access and the inventory migration are required.');
+      if(!admin()||!inventoryCatalogReady)throw Error('Administrator access and the stock catalog migration are required.');
       if(!(cache.inventory_items||[]).some(x=>x.id===payload.item_id))throw Error('Choose an inventory item.');
-      const name=String(payload.name||'').trim(),category=String(payload.category||'').trim(),note=String(payload.note||'').trim();
+      const name=String(payload.name||'').trim(),category=String(payload.category||'').trim(),unit=String(payload.unit||'').trim(),note=String(payload.note||'').trim(),reorder=Number(payload.reorder_level);
       if(name.length<2||name.length>160||category.length<2||category.length>80||!note||note.length>2000)throw Error('Enter an item name, category and reason for the change.');
+      if(!['component','tool','equipment','consumable','other'].includes(payload.item_type)||unit.length<1||unit.length>30||!Number.isInteger(reorder)||reorder<0||reorder>2147483647)throw Error('Choose a valid type, unit and low-stock level.');
       if(!['good','needs_repair','retired'].includes(payload.condition))throw Error('Choose a valid item condition.');
-      return await mutate(()=>db.rpc('update_inventory_item_details',{p_item:payload.item_id,p_name:name,p_category:category,p_condition:payload.condition,p_location:String(payload.location||'').trim(),p_serial_number:String(payload.serial_number||'').trim()||null,p_note:note}));
+      return await mutate(()=>db.rpc('update_inventory_item_catalog',{p_item:payload.item_id,p_name:name,p_category:category,p_item_type:payload.item_type,p_unit:unit,p_reorder_level:reorder,p_condition:payload.condition,p_location:String(payload.location||'').trim(),p_serial_number:String(payload.serial_number||'').trim()||null,p_note:note}));
+    }
+    if(kind==='financeReview'){
+      if(!founderOnly()||!financeApprovalsReady)throw Error('Approved founder access and the finance review migration are required.');
+      const entry=(cache.finance_entries||[]).find(x=>x.id===payload.entry_id),note=String(payload.note||'').trim();
+      if(!entry||financeStatus(entry)!=='pending'||!['approved','rejected'].includes(payload.decision))throw Error('This transaction is no longer pending review.');
+      if(payload.decision==='rejected'&&!note)throw Error('Explain why this transaction is rejected.');
+      const {error}=await db.rpc('review_finance_entry',{p_entry:entry.id,p_decision:payload.decision,p_note:note});
+      if(error)throw error;
+      close();await refresh();show(`Transaction ${payload.decision}.`);return;
     }
     if(kind==='financeEntry'){
-      if(!admin()||!financeReady)throw Error('Administrator access and the finance migration are required.');
+      if(!admin()||!financeApprovalsReady)throw Error('Administrator access and the finance review migration are required.');
       if(!['income','expense'].includes(payload.entry_type))throw Error('Choose income or expense.');
       const amount=Number(payload.amount),description=String(payload.description||'').trim();
       if(!Number.isFinite(amount)||amount<=0||amount>9999999999.99||Math.abs(amount*100-Math.round(amount*100))>0.000001)throw Error('Enter a positive amount with no more than two decimal places.');
       if(!description||description.length>2000)throw Error('Explain this transaction.');
       if(!/^\d{4}-\d{2}-\d{2}$/.test(payload.occurred_on)||Number.isNaN(Date.parse(`${payload.occurred_on}T12:00:00Z`)))throw Error('Choose a valid transaction date.');
       const record={entry_type:payload.entry_type,category:String(payload.category||'').trim(),amount:amount.toFixed(2),occurred_on:payload.occurred_on,description,counterparty:String(payload.counterparty||'').trim(),reference:String(payload.reference||'').trim()};
-      return await mutate(()=>db.from('finance_entries').insert(record));
+      const {error}=await db.from('finance_entries').insert(record);if(error)throw error;
+      close();await refresh();show('Transaction submitted for founder review.');return;
     }
     if(kind==='application'){
       if('application_type' in payload){
