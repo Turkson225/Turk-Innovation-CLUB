@@ -13,6 +13,7 @@ A responsive club workspace for a TTU engineering community. The site is static 
 - Administrator-approved member applications, threaded channel replies, reactions, mentions, unread counts, search and in-app notifications.
 - Three-column member activity feed with project updates, resource links, shared club documents, comments, likes, recent stories and active members.
 - Member profiles with a headline, bio and availability, plus private one-to-one messaging and unread counts. Optional dark theme is saved in the browser.
+- Blog-style engineering posts with an optional headline, topic, cover image, links and document attachments; comments support one level of replies. Channel messages can include an image selected from the member's gallery.
 - Project collaborators, milestones and task assignments; meeting RSVPs, document versions, reports and moderation actions.
 - Administrator-published courses, alerts and events. Events can include Google Meet links and open in Google Calendar or download as an ICS file.
 - Phone, tablet and desktop layouts. Untrusted member text is escaped before display.
@@ -44,6 +45,8 @@ Finally, run [`supabase/upgrade_activity_feed.sql`](supabase/upgrade_activity_fe
 
 Then run [`supabase/upgrade_direct_messages.sql`](supabase/upgrade_direct_messages.sql) **once**. It adds optional member profile details and private messages. Only the sender and recipient can read a message; both must be approved members for a new message to be sent. Direct messages generate in-app notifications and unread counts. The message page displays a setup notice until this migration runs. The appearance switch in the top bar works independently of Supabase and remembers the choice in that browser.
 
+Run [`supabase/upgrade_media_threads.sql`](supabase/upgrade_media_threads.sql) **once**, after direct messages. This adds feed headlines and categories, photo attachments, threaded comment replies, and gallery images in channels and private direct messages. The `club-media` bucket is private and accepts JPG/PNG/WebP/GIF up to 5 MB. Approved members can open images in visible posts or channels; only the two direct message participants can open images shared in their conversation. The uploader retains access to their own uploads. Photos appear through temporary signed links. This upgrade does not enable video uploads or more than one level of comment replies. If you see an error such as `public.is_approved() does not exist`, an earlier migration has not completed: run the files in this section in the order listed.
+
 Once the first administrator has been promoted using step 5 above:
 
 1. Members can use **Channels**, share files up to 10 MB in **Document library**, and submit external stories through **Technology news**. Administrators review submitted news before publication and can create new channels. The news feed is curated by members; it does not automatically ingest third-party articles.
@@ -67,7 +70,7 @@ Members respond to events using **Going**, **Maybe** or **Can't go**. Accepted f
 ## Operations and data protection
 
 - **Moderation:** Administrators can approve accounts, inspect reports, remove reported messages, posts, documents and news, and see recent admin actions. Suspended accounts cannot access the member workspace. Club leaders should decide who reviews applications and reports.
-- **Content export:** The administrator's **Export content JSON** button downloads shared club content currently loaded in the browser. It deliberately excludes private direct messages, authentication users and file bytes and may be limited by Supabase query limits; it is **not a complete backup**. Use Supabase database backups or CLI dumps, and independently preserve important Storage files. See [Supabase database backups](https://supabase.com/docs/guides/platform/backups).
+- **Content export:** The administrator's **Export content JSON** button downloads shared club content currently loaded in the browser. It deliberately excludes private direct messages, authentication users and file bytes (including images) and may be limited by Supabase query limits; it is **not a complete backup**. Use Supabase database backups or CLI dumps, and independently preserve important Storage files. See [Supabase database backups](https://supabase.com/docs/guides/platform/backups).
 - **Verification:** Test access from separate accounts for pending, approved, founder and admin roles; test a direct database request as a pending user and verify it cannot read channels, documents or meetings. Then test upload, version download, reported content and meeting RSVPs. Keep the SQL migrations in the repository for review.
 
 ## Publish on GitHub Pages
