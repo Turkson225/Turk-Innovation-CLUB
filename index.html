@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101d2a">
+  <title>InnovateX Engineering Club</title>
+  <meta name="description" content="The home for InnovateX Engineering Club members, projects, courses and events.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="#home" aria-label="InnovateX home"><span class="brand-mark">IX<span>✦</span></span><span><strong>INNOVATEX</strong><small>ENGINEERING CLUB</small></span></a>
+      <div class="sidebar-caption">CLUB SPACE</div>
+      <nav id="nav" aria-label="Main navigation">
+        <a href="#home" data-page="home"><span>◫</span> Overview</a>
+        <a href="#founders" data-page="founders"><span>◇</span> Founders</a>
+        <a href="#members" data-page="members" data-private><span>◎</span> Members <i id="onlineBadge">—</i></a>
+        <a href="#projects" data-page="projects" data-private><span>▥</span> Projects</a>
+        <a href="#discussions" data-page="discussions" data-private><span>◌</span> Discussions</a>
+        <a href="#courses" data-page="courses" data-private><span>▤</span> Courses</a>
+        <a href="#events" data-page="events" data-private><span>▦</span> Events</a>
+        <a href="#announcements" data-page="announcements" data-private><span>◈</span> Alerts</a>
+      </nav>
+      <div class="sidebar-bottom"><div class="signal"><span class="pulse"></span><span id="connectionLabel">Public preview</span></div><p>Learn. Build. Innovate. Compete.</p></div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><button id="menuBtn" class="icon-button mobile-only" aria-label="Open menu">☰</button><div class="crumb">INNOVATEX <span>/</span> <strong id="pageCrumb">Overview</strong></div><div class="top-actions"><span id="todayLabel"></span><button id="authButton" class="button button-outline">Member sign in</button></div></header>
+      <div class="content" id="content"></div>
+    </main>
+  </div>
+  <dialog id="modal"><button class="modal-close" aria-label="Close">×</button><div id="modalContent"></div></dialog>
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
