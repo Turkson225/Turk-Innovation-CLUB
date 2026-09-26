@@ -9,11 +9,12 @@ const cleanUrl = (s) => { try { const u = new URL(s); return u.protocol === 'htt
 const date = (s) => s ? new Date(s).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : 'TBD';
 const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'TBD';
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
-let session = null, me = null, cache = {}, page = 'home', activeProject = null, pollTimer = null, presenceTimer = null, authReady = false;
+let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false;
 let pendingEmail = sessionStorage.getItem('innovatex.pendingEmail') || '';
 let toastTimer;
-const pages = ['home','founders','members','projects','discussions','courses','events','announcements'];
+const pages = ['home','founders','members','channels','library','news','projects','discussions','courses','events','announcements','founder-room'];
 const admin = () => me?.role === 'admin';
+const founder = () => ['founder','admin'].includes(me?.role);
 const show = (message) => { $('#toast').textContent=message; $('#toast').classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),4200); };
 const button = (label,action,extra='') => `<button class="button ${extra}" data-action="${action}">${label}</button>`;
 const empty = (title,body) => `<div class="empty"><strong>${esc(title)}</strong>${esc(body)}</div>`;
@@ -26,10 +27,18 @@ const read = async (table,query=q=>q) => { const {data,error}=await query(db.fro
 
 async function refresh() {
   if (!db || !session) return;
-  const names=['profiles','projects','project_tasks','topics','replies','courses','events','announcements','founders'];
+  const names=['profiles','projects','project_tasks','topics','replies','courses','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings'];
   const results=await Promise.allSettled(names.map(n=>read(n,q=>q.order('created_at',{ascending:false}))));
   results.forEach((r,i)=>{ if(r.status==='fulfilled') cache[names[i]]=r.value; else console.error(names[i],r.reason); });
+  communityReady=results[names.indexOf('channels')].status==='fulfilled';
+  if(page==='channels' && document.activeElement?.closest('#chatComposer')) { renderChatMessages(); return; }
   render();
+}
+async function refreshChat() {
+  if(!session || !communityReady) return;
+  try { cache.channel_messages=await read('channel_messages',q=>q.order('created_at',{ascending:false}).limit(250));
+    if(page==='channels') renderChatMessages();
+  } catch(e) { console.error(e); }
 }
 async function loadPublic() {
   if (!db) return;
@@ -45,6 +54,8 @@ async function signedIn(newSession) {
   session=newSession;
   authReady=true;
   clearInterval(pollTimer); clearInterval(presenceTimer);
+  clearInterval(chatTimer);
+  if(chatRealtime) { await db.removeChannel(chatRealtime); chatRealtime=null; }
   if(session) {
     pendingEmail=''; sessionStorage.removeItem('innovatex.pendingEmail');
     const {data,error}=await db.from('profiles').select('*').eq('id',session.user.id).single();
@@ -54,7 +65,11 @@ async function signedIn(newSession) {
     await refresh();
     pollTimer=setInterval(refresh,30000);
     presenceTimer=setInterval(()=>touchPresence(),20000);
+    chatTimer=setInterval(refreshChat,9000);
+    if(communityReady) chatRealtime=db.channel('innovatex-chat')
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'channel_messages'},refreshChat).subscribe();
   } else { me=null; cache={}; if(!['home','founders'].includes(page)) page='home'; await loadPublic(); }
+  if(page==='founder-room'&&!founder()) {page='founders';history.replaceState(null,'','#founders');}
   render();
 }
 async function init() {
@@ -74,16 +89,19 @@ async function init() {
   document.addEventListener('visibilitychange',()=>{ if(!document.hidden && session) {touchPresence();refresh();} });
   window.addEventListener('pagehide',()=>{ if(session) touchPresence(false); });
 }
-function route() { const requested=location.hash.slice(1).split('/')[0] || 'home'; page=pages.includes(requested)?requested:'home'; if(!session && (authReady||!configured) && !['home','founders'].includes(page)) { page='home'; history.replaceState(null,'','#home'); show('Sign in to open the member workspace.'); } $('#sidebar').classList.remove('open'); render(); }
+function route() { const requested=location.hash.slice(1).split('/')[0] || 'home'; page=pages.includes(requested)?requested:'home'; if(!session && (authReady||!configured) && !['home','founders'].includes(page)) { page='home'; history.replaceState(null,'','#home'); show('Sign in to open the member workspace.'); } if(page==='founder-room'&&authReady&&!founder()) {page='founders';history.replaceState(null,'','#founders');show('The founder room is for accepted founders.');} $('#sidebar').classList.remove('open'); render(); }
 function render() {
   $('#authButton').textContent=session?'Sign out':'Member sign in';
   $('#connectionLabel').textContent=!configured?'Setup required':session?'Member workspace live':'Public preview';
-  $('#pageCrumb').textContent=page[0].toUpperCase()+page.slice(1);
+  $('#pageCrumb').textContent=page==='founder-room'?'Founder room':page[0].toUpperCase()+page.slice(1);
   document.querySelectorAll('#nav a').forEach(a=>{a.classList.toggle('active',a.dataset.page===page);a.hidden=!!a.dataset.private&&!session;});
+  document.querySelectorAll('#nav [data-founder]').forEach(a=>a.hidden=!founder());
+  document.querySelectorAll('#nav .nav-group').forEach(a=>a.hidden=!session);
   const online=(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length;
   $('#onlineBadge').textContent=online;
-  const views={home,founders,members,projects,discussions,courses,events,announcements};
+  const views={home,founders,members,channels,library,news,projects,discussions,courses,events,announcements,'founder-room':founderRoom};
   $('#content').innerHTML=views[page]();
+  if(page==='channels'){const stream=$('#messageStream');if(stream)stream.scrollTop=stream.scrollHeight;}
 }
 function home() {
   const count=n=>(cache[n]||[]).length;
@@ -93,17 +111,21 @@ function home() {
   <div class="section-heading"><div><span class="eyebrow">CLUB PULSE</span><h2>${session?'Your workspace at a glance':'Built for makers and innovators'}</h2></div><p>${session?`Welcome back, ${esc(me?.full_name||session.user.email)}.`:'An alumni initiated, student led engineering community.'}</p></div>
   <div class="grid grid-4"><div class="stat"><small>Members</small><b>${session?count('profiles'):'—'}</b><span>Across disciplines</span></div><div class="stat"><small>Online now</small><b>${session?(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length:'—'}</b><span>Active in the last minute</span></div><div class="stat"><small>Active projects</small><b>${session?count('projects'):'—'}</b><span>Ideas in motion</span></div><div class="stat"><small>Upcoming events</small><b>${session?upcoming.length:'—'}</b><span>Sessions and meetups</span></div></div>
   <div class="section-heading"><div><span class="eyebrow">OUR MISSION</span><h2>From the workbench to the world.</h2></div></div><div class="grid grid-3">${[['▤','Learn','Hands-on courses in Arduino, Proteus, CAD, OpenPLC and electrical systems.'],['▥','Build','Plan and test real prototypes with multidisciplinary teams and mentors.'],['✧','Compete','Turn the strongest projects into competition-ready demonstrations.']].map(x=>`<div class="card"><div class="icon-box">${x[0]}</div><h3>${x[1]}</h3><p>${x[2]}</p></div>`).join('')}</div>
+  ${session?`<div class="section-heading"><h2>Your community</h2><p>Find a conversation or share what you’re learning.</p></div><div class="grid grid-3"><a class="card feature-card" href="#channels"><span class="feature-icon">▣</span><h3>Member channels</h3><p>Get help and work through ideas together.</p><span class="link">Open channels →</span></a><a class="card feature-card" href="#library"><span class="feature-icon">▤</span><h3>Document library</h3><p>Notes, schematics and useful resources in one place.</p><span class="link">Browse files →</span></a><a class="card feature-card" href="#news"><span class="feature-icon">◈</span><h3>Technology news</h3><p>Discover engineering stories worth discussing.</p><span class="link">Read stories →</span></a></div>`:''}
   ${session?`<div class="section-heading"><h2>What’s happening</h2><a class="link" href="#events">View calendar →</a></div><div class="split"><div class="panel"><h3>Latest alerts</h3>${latest.length?latest.map(a=>`<div class="list-item"><span class="icon-box" style="margin:0">◈</span><div><strong>${esc(a.title)}</strong><small>${date(a.created_at)}</small><p class="subtle">${esc(a.body)}</p></div></div>`).join(''):empty('No alerts yet','Official club updates will appear here.')}</div><div class="panel"><h3>Coming up</h3>${upcoming.length?upcoming.map(e=>eventRow(e)).join(''):empty('Nothing scheduled','The next club event will appear here.')}</div></div>`:''}`;
 }
 function founders() {
   const list=cache.founders||[];
   return `${head('THE PEOPLE BEHIND THE IDEA','Founding team','A four-person team shaping InnovateX with student leaders and university guidance.',admin()?button('+ Add founder','founderForm'):'')}
   <div class="notice">Founder profiles are added only after each person agrees to be listed. The Dean of Students’ Affairs has been invited to serve as patron; patronage is pending acceptance.</div>
+  <div class="founder-invite-banner"><div><span class="eyebrow">FOUNDER ACCESS</span><h3>Build the club together.</h3><p>Accepted founders sign in with their invited email, accept the invitation, and meet in a private founder room.</p></div>${session?`<a class="button" href="${founder()?'#founder-room':'#members'}">${founder()?'Open founder room':'View my invitation'} →</a>`:button('Founder sign in','login')}</div>
   <div class="section-heading"><h2>Meet the founders</h2></div><div class="grid grid-4">${list.length?list.map(f=>`<div class="card founder-card">${avatar(f.name,true)}<div class="role">${esc(f.role)}</div><h3>${esc(f.name)}</h3><p>${esc(f.bio||'Founding team member')}</p>${f.link_url?`<a class="link" target="_blank" rel="noopener noreferrer" href="${esc(cleanUrl(f.link_url))}">Profile ↗</a>`:''}</div>`).join(''):[1,2,3,4].map((n)=>`<div class="card founder-card">${avatar('IX',true)}<div class="role">Founding member ${n}</div><h3>Profile coming soon</h3><p>We’ll introduce each founder after the team confirms their details.</p></div>`).join('')}</div><div class="section-heading"><h2>How the club is led</h2></div><div class="grid grid-3"><div class="card"><h3>Student executive</h3><p>Elected students lead training, projects, communications and finance.</p></div><div class="card"><h3>Founding advisers</h3><p>Founders help with continuity, mentoring and partnerships.</p></div><div class="card"><h3>Proposed patron</h3><p>The Dean of Students’ Affairs has been invited to guide the club, subject to acceptance.</p></div></div>`;
 }
 function members() {
   const people=cache.profiles||[]; const online=p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000;
+  const invite=(cache.founder_invites||[]).find(i=>i.email===session?.user.email?.toLowerCase()&&!i.accepted_at);
   return `${head('COMMUNITY','Members','See who is around and connect with the people building InnovateX.',button('Edit my profile','profileForm'))}
+  ${invite?`<div class="founder-invite-banner"><div><span class="eyebrow">FOUNDER INVITATION</span><h3>You’ve been invited to join the founding team.</h3><p>Accept with your verified account to open founder meetings and planning.</p></div>${button('Accept invitation','acceptFounder')}</div>`:''}
   <div class="grid grid-4"><div class="stat"><small>Registered members</small><b>${people.length}</b><span>Club workspace</span></div><div class="stat"><small>Online now</small><b>${people.filter(online).length}</b><span>Seen within 65 seconds</span></div></div><div class="section-heading"><h2>Member directory</h2><p>Presence updates while the workspace is open.</p></div><div class="profile-grid">${people.length?people.sort((a,b)=>Number(online(b))-Number(online(a))).map(p=>`<div class="card person">${avatar(p.full_name||p.email)}<div><h3>${esc(p.full_name||'New member')}</h3><p class="subtle">${esc(p.programme||'Member')} ${p.skills?'· '+esc(p.skills):''}</p></div>${online(p)?'<span class="online-dot" title="Online"></span>':''}</div>`).join(''):empty('No members yet','Member profiles will appear after signup.')}</div>`;
 }
 function projects() {
@@ -130,6 +152,57 @@ function announcements() {
   const list=cache.announcements||[];
   return `${head('STAY INFORMED','Club alerts','Important updates, deadlines and opportunities.',admin()?button('+ Post alert','announcementForm'):'')}
   <div class="grid">${list.length?list.map(a=>`<div class="card"><div class="row"><span class="tag ${a.priority==='urgent'?'gold':''}">${esc(a.priority)}</span><span class="subtle">${date(a.created_at)}</span></div><h3 style="margin-top:15px">${esc(a.title)}</h3><p class="detail">${esc(a.body)}</p></div>`).join(''):empty('No alerts yet','Official updates will appear here.')}</div>`;
+}
+
+const communityNotice = () => `<div class="notice">Community features are ready in the site. An administrator needs to run the Supabase community upgrade before they can be used.</div>`;
+const memberName = id => (cache.profiles||[]).find(p=>p.id===id)?.full_name || 'Member';
+const fileSize = bytes => bytes >= 1048576 ? `${(bytes/1048576).toFixed(1)} MB` : `${Math.ceil(bytes/1024)} KB`;
+function channels() {
+  if(!communityReady) return head('COMMUNITY','Channels','Talk and build together.')+communityNotice();
+  const list=(cache.channels||[]).slice().sort((a,b)=>a.name.localeCompare(b.name));
+  if(!list.some(c=>c.id===activeChannelId)) activeChannelId=list[0]?.id||null;
+  const selected=list.find(c=>c.id===activeChannelId);
+  return `${head('CLUB CONVERSATIONS','Channels','Focused spaces for ideas, help and project updates.',admin()?button('+ Create channel','channelForm'):'')}
+    <div class="chat-layout"><div class="channel-list"><div class="channel-label">YOUR CHANNELS</div>${list.map(c=>`<button class="channel-button ${c.id===activeChannelId?'selected':''}" data-action="selectChannel" data-id="${esc(c.id)}"><strong># ${esc(c.name)}</strong><small>${esc(c.description)}</small></button>`).join('')}</div>
+    <div class="chat-panel">${selected?`<div class="chat-head"><div><h2># ${esc(selected.name)}</h2><p>${esc(selected.description)}</p></div>${button('Share file','shareDoc','button-outline button-sm')}</div><div id="messageStream" class="message-stream" aria-live="polite">${messageList()}</div><form id="chatComposer" class="chat-composer"><label class="sr-only" for="chatBody">Message</label><input id="chatBody" name="body" maxlength="3000" placeholder="Message #${esc(selected.name)}" required autocomplete="off"><button class="button" type="submit">Send ↗</button></form>`:empty('No channels yet','An administrator can add the first channel.')}</div></div>`;
+}
+function messageList() {
+  const list=(cache.channel_messages||[]).filter(m=>m.channel_id===activeChannelId).slice().sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)).slice(-100);
+  return list.length?list.map(m=>{const doc=(cache.documents||[]).find(d=>d.id===m.document_id);return `<div class="chat-message">${avatar(memberName(m.author_id))}<div><div class="message-meta"><strong>${esc(memberName(m.author_id))}</strong><time>${dateTime(m.created_at)}</time></div><p>${esc(m.body)}</p>${doc?`<button class="attachment" data-action="downloadDoc" data-id="${esc(doc.id)}">▤ ${esc(doc.title)} <small>${fileSize(doc.file_size)}</small></button>`:''}</div></div>`}).join(''):empty('No messages yet','Be the first to start the conversation.');
+}
+function renderChatMessages() {
+  const stream=$('#messageStream'); if(!stream) return;
+  const atBottom=stream.scrollHeight-stream.scrollTop-stream.clientHeight<100;
+  stream.innerHTML=messageList();
+  if(atBottom) stream.scrollTop=stream.scrollHeight;
+}
+function library() {
+  if(!communityReady) return head('SHARED KNOWLEDGE','Document library','Files for the club.')+communityNotice();
+  const docs=cache.documents||[];
+  return `${head('SHARED KNOWLEDGE','Document library','Project notes, design files, workshop material and research shared by members.',button('+ Share document','shareDoc'))}
+  <div class="notice">Files are available only to signed-in members. Maximum size: 10 MB. Share only files you have permission to distribute.</div>
+  <div class="grid grid-3" style="margin-top:22px">${docs.length?docs.map(d=>`<div class="card document-card"><span class="feature-icon">▤</span><h3>${esc(d.title)}</h3><p>Shared by ${esc(memberName(d.author_id))} · ${date(d.created_at)}</p><div class="meta">${d.channel_id?`<span># ${esc((cache.channels||[]).find(c=>c.id===d.channel_id)?.name||'Channel')}</span>`:''}<span>${fileSize(d.file_size)}</span></div><div class="card-footer"><span>${esc(d.file_type||'Document')}</span><button class="text-button" data-action="downloadDoc" data-id="${esc(d.id)}">Open file ↗</button></div></div>`).join(''):empty('No files shared yet','Upload the first project note or useful resource.')}</div>`;
+}
+function news() {
+  if(!communityReady) return head('DISCOVER','Technology news','Curated engineering stories.')+communityNotice();
+  const items=cache.news_posts||[];
+  const published=items.filter(n=>n.status==='published');
+  const review=items.filter(n=>n.status==='pending'&&(admin()||n.submitted_by===session?.user.id));
+  return `${head('DISCOVER','Technology news','Member-curated articles on engineering, robotics, energy and emerging technology.',button('+ Share an article','newsForm'))}
+  <div class="notice">Members recommend articles from external sources. A club administrator reviews each submission before it appears in the feed.</div>
+  ${review.length?`<div class="section-heading"><h2>${admin()?'Awaiting review':'Your submissions'}</h2></div><div class="grid grid-2">${review.map(n=>newsCard(n,true)).join('')}</div>`:''}
+  <div class="section-heading"><h2>Latest from the community</h2><p>Open the source to read the full story.</p></div><div class="grid grid-3">${published.length?published.map(n=>newsCard(n)).join(''):empty('No articles yet','Share an important technology story to start this feed.')}</div>`;
+}
+function newsCard(n,pending=false) {return `<div class="card news-card"><div class="row"><span class="tag ${pending?'gold':'blue'}">${pending?'Pending review':esc(n.category)}</span><span class="subtle">${date(n.created_at)}</span></div><h3>${esc(n.title)}</h3><p>${esc(n.summary)}</p><div class="card-footer"><span>By ${esc(memberName(n.submitted_by))}</span>${pending&&admin()?`<div><button class="text-button" data-action="reviewNews" data-status="published" data-id="${esc(n.id)}">Publish</button> · <button class="text-button" data-action="reviewNews" data-status="rejected" data-id="${esc(n.id)}">Reject</button></div>`:pending?'<span>Awaiting approval</span>':`<a class="link" href="${esc(cleanUrl(n.url))}" target="_blank" rel="noopener noreferrer">Read source ↗</a>`}</div></div>`;}
+function founderRoom() {
+  if(!founder()) return head('FOUNDING TEAM','Founder room','For accepted founders.')+empty('Founder access required','Accept an invitation to enter this room.');
+  if(!communityReady) return head('FOUNDING TEAM','Founder room','Private planning and meetings.')+communityNotice();
+  const meetings=(cache.founder_meetings||[]).slice().sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));
+  const invites=cache.founder_invites||[];
+  return `${head('FOUNDING TEAM','Founder room','A private place for accepted founders to plan and meet.',button('+ Schedule meeting','founderMeetingForm'))}
+  <div class="founder-invite-banner"><div><span class="eyebrow">PRIVATE SPACE</span><h3>Keep the founding team aligned.</h3><p>Schedule a Google Meet, share an agenda and add meetings to your calendar. Only accepted founders and administrators can view this space.</p></div><span class="founder-mark">IX✦</span></div>
+  ${admin()?`<div class="section-heading"><h2>Founder invitations</h2>${button('+ Invite founder','inviteFounder','button-outline button-sm')}</div><div class="card"><div class="invite-list">${invites.length?invites.map(i=>`<div class="list-item"><div><strong>${esc(i.email)}</strong><small>${i.accepted_at?'Accepted '+date(i.accepted_at):'Waiting for founder to sign in and accept'}</small></div><span class="tag ${i.accepted_at?'':'gold'}">${i.accepted_at?'Accepted':'Pending'}</span></div>`).join(''):empty('No invitations yet','Invite founders using the email they will sign in with.')}</div></div>`:''}
+  <div class="section-heading"><h2>Meetings</h2><p>Private meeting links are shown only in this room.</p></div><div class="grid grid-2">${meetings.length?meetings.map(m=>`<div class="card"><div class="row"><span class="tag ${new Date(m.starts_at)<new Date()?'gold':''}">${new Date(m.starts_at)<new Date()?'Past meeting':'Upcoming'}</span><span class="subtle">${dateTime(m.starts_at)}</span></div><h3 style="margin-top:17px">${esc(m.title)}</h3><p>${esc(m.agenda||'Agenda to follow.')}</p><div class="meta"><span>◷ ${dateTime(m.starts_at)}</span><span>Hosted by ${esc(memberName(m.host_id))}</span></div><div class="card-footer"><div>${m.meet_url?`<a class="link" href="${esc(cleanUrl(m.meet_url))}" target="_blank" rel="noopener noreferrer">Join Google Meet ↗</a>`:'Meet link to follow'}</div><div><button class="text-button" data-action="founderCalendar" data-id="${esc(m.id)}">Calendar</button> · <button class="text-button" data-action="founderIcs" data-id="${esc(m.id)}">ICS</button></div></div></div>`).join(''):empty('No founder meetings yet','Schedule a planning call for the founding team.')}</div>`;
 }
 
 function field(label,name,type='text',value='',required=true) {return `<div class="field"><label for="${name}">${esc(label)}</label><input id="${name}" name="${name}" type="${type}" value="${esc(value)}" ${required?'required':''}></div>`;}
@@ -165,6 +238,20 @@ async function signOut() {try{await touchPresence(false);const {error}=await db.
 function actions(e) {
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
   if(action==='login')return signInDialog();
+  if(action==='selectChannel'){activeChannelId=id;render();const stream=$('#messageStream');if(stream)stream.scrollTop=stream.scrollHeight;return;}
+  if(action==='shareDoc'){
+    if(!communityReady)return show('Run the Supabase community upgrade first.');
+    const options='<option value="">Library only</option>'+(cache.channels||[]).map(c=>`<option value="${esc(c.id)}" ${c.id===activeChannelId&&page==='channels'?'selected':''}># ${esc(c.name)}</option>`).join('');
+    return modal(`<span class="eyebrow">CLUB LIBRARY</span><h2>Share a document</h2><p class="muted">Files are private to signed-in club members. Maximum size: 10 MB.</p><form id="editor" data-kind="document" class="form-stack"><div class="field"><label for="upload">Choose a file</label><input id="upload" name="upload" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.zip,.png,.jpg,.jpeg,.stl" required></div><div class="field"><label for="channel_id">Share in channel</label><select id="channel_id" name="channel_id">${options}</select></div><button class="button" type="submit">Upload document</button></form>`);
+  }
+  if(action==='downloadDoc')return downloadDocument(id);
+  if(action==='channelForm')return form('Channel','Create a focused place for members to collaborate.','channel',field('Channel name','name')+field('Short description','description'));
+  if(action==='newsForm')return form('Technology article','Share the source and explain why it matters to the club. Administrators review submissions.','news',field('Headline','title')+field('Article link','url','url')+select('Topic','category',['Technology','Robotics','AI','Energy','Electronics','Software','Research'])+area('Why it matters','summary'));
+  if(action==='reviewNews')return reviewNews(id,el.dataset.status);
+  if(action==='inviteFounder')return form('Founder invitation','Use the email address this founder will use to sign in.','founderInvite',field('Founder email','email','email'));
+  if(action==='acceptFounder')return acceptFounder();
+  if(action==='founderMeetingForm')return form('Founder meeting','Add the Google Meet link and an agenda for accepted founders.','founderMeeting',field('Meeting title','title')+area('Agenda','agenda')+field('Start','starts_at','datetime-local')+field('End','ends_at','datetime-local')+field('Google Meet URL','meet_url','url','',false));
+  if(action==='founderCalendar'||action==='founderIcs'){const m=(cache.founder_meetings||[]).find(x=>x.id===id);if(m)calendar({...m,description:m.agenda,location:'Online'},action==='founderIcs');return;}
   if(action==='changeEmail'){pendingEmail='';sessionStorage.removeItem('innovatex.pendingEmail');return signInDialog();}
   if(action==='resendCode')return requestCode(pendingEmail).catch(fail);
   if(action==='profileForm')return form('My profile','Help other members recognize your work.','profile',field('Full name','full_name','text',me?.full_name||'')+field('Programme / department','programme','text',me?.programme||'',false)+field('Skills / interests','skills','text',me?.skills||'',false));
@@ -185,7 +272,25 @@ function actions(e) {
   if(action==='calendar'||action==='ics'){const item=(cache.events||[]).find(x=>x.id===id);if(item)calendar(item,action==='ics');}
 }
 async function mutate(fn) {try{const {error}=await fn();if(error)throw error;close();await refresh();show('Saved successfully.');}catch(e){fail(e);}}
+async function reviewNews(id,status) {
+  if(!admin()||!['published','rejected'].includes(status))return;
+  try {const {error}=await db.from('news_posts').update({status}).eq('id',id);if(error)throw error;await refresh();show(status==='published'?'Article published.':'Article rejected.');}catch(e){fail(e);}
+}
+async function acceptFounder() {
+  try {const {error}=await db.rpc('accept_founder_invitation');if(error)throw error;await signedIn(session);location.hash='#founder-room';show('Founder invitation accepted.');}catch(e){fail(e);}
+}
+async function downloadDocument(id) {
+  const doc=(cache.documents||[]).find(d=>d.id===id);if(!doc)return;
+  try {const {data,error}=await db.storage.from('club-documents').createSignedUrl(doc.storage_path,120);if(error)throw error;const a=document.createElement('a');a.href=data.signedUrl;a.target='_blank';a.rel='noopener noreferrer';document.body.appendChild(a);a.click();a.remove();}catch(e){fail(e);}
+}
 async function submit(e) {
+  if(e.target.id==='chatComposer'){
+    e.preventDefault(); if(!session||!activeChannelId)return;
+    const input=e.target.querySelector('[name=body]'),body=input.value.trim(),send=e.target.querySelector('[type=submit]');
+    if(!body)return;send.disabled=true;
+    try {const {error}=await db.from('channel_messages').insert({channel_id:activeChannelId,author_id:session.user.id,body});if(error)throw error;input.value='';await refreshChat();}
+    catch(error){fail(error);}finally{send.disabled=false;}return;
+  }
   if(e.target.id!=='editor')return; e.preventDefault(); if(!db)return;
   const formEl=e.target,kind=formEl.dataset.kind,values=Object.fromEntries(new FormData(formEl));
   const submitBtn=formEl.querySelector('[type=submit]'); submitBtn.disabled=true;
@@ -203,6 +308,42 @@ async function submit(e) {
     for(const key of ['starts_at','ends_at','due_at']) if(key in payload) payload[key]=payload[key]?new Date(payload[key]).toISOString():null;
     for(const key of ['link_url','resource_url','meet_url']) if(key in payload) payload[key]=payload[key]?cleanUrl(payload[key]):null;
     if(kind==='profile')return await mutate(()=>db.from('profiles').update(payload).eq('id',session.user.id));
+    if(kind==='channel'){
+      if(!admin())throw Error('Only an administrator can create channels.');
+      payload.slug=String(payload.name).toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+      if(payload.slug.length<2)throw Error('Choose a channel name with at least two letters or numbers.');
+      return await mutate(()=>db.from('channels').insert(payload));
+    }
+    if(kind==='news'){
+      payload.url=cleanUrl(payload.url);
+      if(!payload.url)throw Error('Enter a valid HTTPS article URL.');
+      payload.submitted_by=session.user.id;payload.status='pending';
+      return await mutate(()=>db.from('news_posts').insert(payload));
+    }
+    if(kind==='founderInvite'){
+      if(!admin())throw Error('Only an administrator can invite founders.');
+      return await mutate(()=>db.from('founder_invites').insert({email:String(payload.email).trim().toLowerCase(),invited_by:session.user.id}));
+    }
+    if(kind==='founderMeeting'){
+      if(!founder())throw Error('Founder access is required.');
+      if(new Date(payload.ends_at)<=new Date(payload.starts_at))throw Error('End time must be after start time.');
+      if(payload.meet_url && !cleanUrl(payload.meet_url))throw Error('Enter a valid HTTPS Google Meet URL.');
+      payload.meet_url=payload.meet_url||null;payload.host_id=session.user.id;
+      return await mutate(()=>db.from('founder_meetings').insert(payload));
+    }
+    if(kind==='document'){
+      const file=formEl.querySelector('[name=upload]').files[0];
+      const ext=file?.name.split('.').pop().toLowerCase();
+      if(!file||file.size<1||file.size>10485760||!['pdf','doc','docx','ppt','pptx','xls','xlsx','txt','csv','zip','png','jpg','jpeg','stl'].includes(ext))throw Error('Choose a supported file up to 10 MB.');
+      const path=`${session.user.id}/${crypto.randomUUID()}.${ext}`;
+      const {error:uploadError}=await db.storage.from('club-documents').upload(path,file,{upsert:false,contentType:file.type||'application/octet-stream'});
+      if(uploadError)throw uploadError;
+      const channel_id=payload.channel_id||null;
+      const {data:doc,error:docError}=await db.from('documents').insert({channel_id,author_id:session.user.id,title:file.name,storage_path:path,file_type:ext.toUpperCase(),file_size:file.size}).select('id').single();
+      if(docError){await db.storage.from('club-documents').remove([path]);throw docError;}
+      if(channel_id){const {error:messageError}=await db.from('channel_messages').insert({channel_id,author_id:session.user.id,body:`Shared a document: ${file.name}`,document_id:doc.id});if(messageError)fail(messageError);}
+      close();await refresh();show('Document shared with the club.');return;
+    }
     if(kind==='project'){payload.owner_id=session.user.id;return await mutate(()=>db.from('projects').insert(payload));}
     if(kind==='projectEdit'){payload.progress=Math.min(100,Math.max(0,Number(payload.progress)||0));return await mutate(()=>db.from('projects').update(payload).eq('id',activeProject));}
     if(kind==='task'){payload.project_id=activeProject;return await mutate(()=>db.from('project_tasks').insert(payload));}
