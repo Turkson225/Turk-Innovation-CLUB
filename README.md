@@ -10,6 +10,8 @@ A responsive club workspace for a TTU engineering community. The site is static 
 - Member channels with live message updates (and polling fallback), a private document library, and channel file sharing.
 - Technology news submitted by members and reviewed by administrators before appearing in the feed.
 - Founder invitations, verified-email acceptance, and a private founders' meeting room with Google Meet and calendar links.
+- Administrator-approved member applications, threaded channel replies, reactions, mentions, unread counts, search and in-app notifications.
+- Project collaborators, milestones and task assignments; meeting RSVPs, document versions, reports and moderation actions.
 - Administrator-published courses, alerts and events. Events can include Google Meet links and open in Google Calendar or download as an ICS file.
 - Phone, tablet and desktop layouts. Untrusted member text is escaped before display.
 
@@ -34,13 +36,33 @@ A responsive club workspace for a TTU engineering community. The site is static 
 
 After the original schema is in place, open your project's **SQL Editor** and run [`supabase/upgrade_community.sql`](supabase/upgrade_community.sql) **once**. This adds community tables, a private `club-documents` Storage bucket, founder invitation rules and access policies without removing existing member or project data. Until this migration runs, the new pages display a setup notice. The SQL Editor is required because the browser's public key cannot create database tables or change access policies.
 
+Next run [`supabase/upgrade_membership_collaboration.sql`](supabase/upgrade_membership_collaboration.sql) **once**. It adds member applications and approval rules, project teams, chat replies and notifications, RSVPs, report handling and document versions. Existing email-confirmed accounts remain approved; newly verified email accounts become **pending** and only see their own application page until an administrator approves them. A signed-in administrator reviews applications under **Applications**. Review access with a new pending account, an approved member, a founder and an administrator before inviting the wider club.
+
 Once the first administrator has been promoted using step 5 above:
 
 1. Members can use **Channels**, share files up to 10 MB in **Document library**, and submit external stories through **Technology news**. Administrators review submitted news before publication and can create new channels. The news feed is curated by members; it does not automatically ingest third-party articles.
 2. An administrator opens **Founder room → Invite founder** and enters the founder's sign-in email address. The founder signs in with that exact email, sees an invitation on **Members**, and clicks **Accept invitation**. The database checks that the email is confirmed before granting founder access. This in-app invitation does not send a separate email; the administrator should tell the founder that an invitation is waiting.
-3. Accepted founders and administrators can schedule private meetings with an agenda and an existing Google Meet URL. **Calendar** opens Google Calendar with the meeting details; **ICS** downloads a calendar event. The site does not create a Google Meet room or add the event to anyone's Google account automatically.
+3. Accepted founders and administrators can schedule private meetings with an agenda and an existing Google Meet URL. **Calendar** opens Google Calendar with the meeting details; **ICS** downloads a calendar event. Organizers can also create a Meet link through the optional Google Calendar connection below.
 
-The `club-documents` bucket is private. Downloads use short-lived signed links, and each uploader stores files under their own user ID. Every signed-in club member can access shared files; do not upload a file intended only for founders. The founder room and its meeting links are restricted by row level security to founders and administrators.
+The `club-documents` bucket is private. Downloads use short-lived signed links, and each uploader stores files under their own user ID. Approved club members can access shared files; do not upload a file intended only for founders. The founder room and its meeting links are restricted by row level security to founders and administrators.
+
+After the membership upgrade, only **approved** members can access the shared file bucket, channels and other private content. A document's previous versions remain available through the library. Members can report messages, news and documents; administrators review reports and can hide content. The **Privacy & conduct** page gives members a plain-language overview of the workspace.
+
+## Optional Google Calendar Meet creation
+
+Organizers can always paste an existing Google Meet URL. To enable **Create Meet** from an event or founder meeting:
+
+1. In Google Cloud, enable the **Google Calendar API**, configure the OAuth consent screen and create a **Web application** OAuth client. Add `https://turkson225.github.io` to **Authorized JavaScript origins** (the origin does not include the repository path). Add `http://localhost:8000` if testing locally. Grant or request the `https://www.googleapis.com/auth/calendar.events` scope for the organizer.
+2. Put the public **OAuth client ID** into `googleClientId` in [`config.js`](config.js). Never put the OAuth client secret or a Google access token in the repository.
+3. An authorized event organizer clicks **Create Meet**, grants Google Calendar access, and the site creates a unique calendar event with Google Meet in that organizer's primary Google Calendar, then saves its Meet URL in Supabase. The site asks for consent at the time of creation and does not store the access token. If Google has not yet produced a Meet link, check the newly created event in Google Calendar.
+
+Members respond to events using **Going**, **Maybe** or **Can't go**. Accepted founders can respond to founder meetings. The Inbox highlights events and assigned tasks due soon when members open the site; it does not send background email reminders. Google Calendar attendees are not automatically invited.
+
+## Operations and data protection
+
+- **Moderation:** Administrators can approve accounts, inspect reports, remove reported content and see recent admin actions. Suspended accounts cannot access the member workspace. Club leaders should decide who reviews applications and reports.
+- **Content export:** The administrator's **Export content JSON** button downloads content currently loaded in the browser. It omits authentication users and file bytes and may be limited by Supabase query limits; it is **not a complete backup**. Use Supabase database backups or CLI dumps, and independently preserve important Storage files. See [Supabase database backups](https://supabase.com/docs/guides/platform/backups).
+- **Verification:** Test access from separate accounts for pending, approved, founder and admin roles; test a direct database request as a pending user and verify it cannot read channels, documents or meetings. Then test upload, version download, reported content and meeting RSVPs. Keep the SQL migrations in the repository for review.
 
 ## Publish on GitHub Pages
 
@@ -51,19 +73,20 @@ For a local preview, run `python3 -m http.server 8000` from the repository root 
 ## Operational notes
 
 - The public repository exposes all static site code and `config.js`. Supabase RLS, not hidden JavaScript, controls database access. Verify RLS after any schema changes.
-- The members directory, project data, course content, events and alerts are accessible only to authenticated club members. Public founder cards are deliberately public.
+- The members directory, project data, course content, events and alerts are accessible only to approved club members after the membership migration. Public founder cards are deliberately public.
 - The online indicator is approximate, not a surveillance or attendance record. It means a member's open tab updated `last_seen_at` recently; background tabs, network loss and browser shutdowns can delay a change.
 - For invite-only membership, turn off public signup in Supabase Auth and invite members administratively; otherwise anyone able to receive an email can create an account. Before public launch, decide the membership admission process.
-- There are no push notifications, automatic news ingestion, Google Calendar account integration or built-in video meetings. Google Meet is an external link supplied by an organizer; "Add to calendar" prepares an event in the member's Google Calendar.
+- There are no push notifications, scheduled email reminders, automatic news ingestion or built-in video meetings. Google Meet links can be pasted manually or created through the optional organizer-authorized Google Calendar connection.
 
 ## Platform roles
 
 | Role | Abilities |
 | --- | --- |
-| Visitor | Public home and founders pages |
-| Member | Profile, directory and presence; projects and tasks on owned projects; discussions; read courses, events and alerts |
+| Visitor | Public home, founders, privacy and conduct pages |
+| Applicant | Own application and privacy pages while approval is pending |
+| Member | Directory, channels, documents, news, projects and assigned tasks, discussions, events, RSVPs and inbox |
 | Founder | Member abilities plus private founder meetings after accepting an invitation |
-| Administrator | Member abilities plus publish founders, courses, events and alerts; create channels, review news and invite founders |
+| Administrator | Member abilities plus account reviews, moderation, content export, publishing, channel creation and founder invitations |
 
 ## References
 
