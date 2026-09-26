@@ -47,3 +47,22 @@
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(max-width:900px){.chat-layout{grid-template-columns:190px minmax(0,1fr)}}
 @media(max-width:660px){.chat-layout{grid-template-columns:1fr}.channel-list{display:flex;gap:6px;overflow:auto;padding:10px}.channel-label{display:none}.channel-button{min-width:140px;width:auto}.channel-button small{display:none}.message-stream{height:350px}.chat-head{padding:15px}.chat-head h2{font-size:17px}.chat-composer{padding:12px}.founder-invite-banner{align-items:flex-start;flex-direction:column;padding:22px}.founder-mark{display:none}}
+
+/* Membership, conversations and planning */
+.application-form{max-width:680px}.application-form textarea{min-height:130px}
+.notification-item{display:flex;justify-content:space-between;align-items:center;gap:20px}
+.notification-item h3{margin:9px 0 5px}.notification-item p{font-size:12px;margin:0}
+.notification-item.unread{border-left:4px solid var(--teal);background:#fafffd}
+.unread-badge{font-style:normal;float:right;border-radius:20px;padding:1px 7px;background:#0cae99;color:#fff;font-size:10px}
+.chat-tools,.doc-actions,.message-actions,.rsvp-controls{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.message-actions{margin-top:8px}.message-actions .text-button{font-size:11px}
+.reaction{border:1px solid #e0e9e9;border-radius:15px;background:#fff;font-size:11px;padding:3px 7px;line-height:1.4}
+.reaction:hover,.reaction.selected{background:#e2f6ee;border-color:#a4ddc9}
+.thread-scroll{max-height:370px;overflow:auto;margin:15px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.thread-scroll .chat-message{padding:12px 0}
+.rsvp-controls{margin-top:16px}.rsvp-controls .subtle{margin-right:3px}
+.rsvp-button{border:1px solid #cbdcde;border-radius:18px;background:white;padding:5px 10px;font-size:11px;color:#5a7079;font-weight:700}
+.rsvp-button:hover,.rsvp-button.selected{background:#e4f7f1;border-color:#61c7b2;color:#0b766e}
+.document-card .doc-actions{justify-content:flex-end}.document-card .card-footer{align-items:flex-start}
+.profile-grid .person .text-button{margin-left:auto;font-size:11px}
+@media(max-width:660px){.notification-item{align-items:flex-start;flex-direction:column}.chat-tools{justify-content:flex-end}.chat-tools .button{padding:7px 9px;font-size:11px}.message-meta{flex-wrap:wrap}.rsvp-controls{gap:6px}}
