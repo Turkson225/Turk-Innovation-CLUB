@@ -142,7 +142,7 @@ function signInDialog() {
   modal(`<span class="eyebrow">INNOVATEX ENGINEERING CLUB</span><h2>Join or sign in</h2><p class="muted">Enter your email. We’ll send a one-time verification code to create your account or sign you in.</p><form id="editor" data-kind="login" class="form-stack">${field('Email address','email','email')}<button class="button" type="submit">Send verification code</button></form>`);
 }
 function codeDialog() {
-  modal(`<span class="eyebrow">INNOVATEX ENGINEERING CLUB</span><h2>Verify your email</h2><p class="muted">Enter the six-digit code sent to <strong>${esc(pendingEmail)}</strong>.</p><form id="editor" data-kind="verify" class="form-stack"><div class="field"><label for="code">Verification code</label><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required></div><button class="button" type="submit">Verify and enter</button></form><div class="otp-actions"><button class="text-button" data-action="resendCode">Resend code</button><button class="text-button" data-action="changeEmail">Use another email</button></div><p class="hint">Only the latest code will work. Check your spam folder if you don't see the email.</p>`);
+  modal(`<span class="eyebrow">INNOVATEX ENGINEERING CLUB</span><h2>Verify your email</h2><p class="muted">Enter the code sent to <strong>${esc(pendingEmail)}</strong>.</p><form id="editor" data-kind="verify" class="form-stack"><div class="field"><label for="code">Verification code</label><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" maxlength="10" placeholder="Your code" required></div><button class="button" type="submit">Verify and enter</button></form><div class="otp-actions"><button class="text-button" data-action="resendCode">Resend code</button><button class="text-button" data-action="changeEmail">Use another email</button></div><p class="hint">Only the latest code will work. Check your spam folder if you don't see the email.</p>`);
   $('#code').focus();
 }
 async function requestCode(email) {
@@ -193,7 +193,7 @@ async function submit(e) {
     if(kind==='login'){await requestCode(String(values.email).trim().toLowerCase());return;}
     if(kind==='verify'){
       const token=String(values.code).trim();
-      if(!/^[0-9]{6}$/.test(token))throw Error('Enter the six-digit code from your email.');
+      if(!/^[0-9]{6,10}$/.test(token))throw Error('Enter the numeric code from your email.');
       const {data,error}=await db.auth.verifyOtp({email:pendingEmail,token,type:'email'});
       if(error)throw error;
       if(!data.session)throw Error('Verification succeeded, but no session was returned. Please try signing in again.');
