@@ -37,7 +37,7 @@ A responsive club workspace for a TTU engineering community. The site is static 
 
    Check that exactly one row changed. The browser cannot promote accounts. An administrator can publish founder bios, courses, events and alerts. Other members can create projects and discussions.
 
-6. Add the founding team only after they agree to have their name and biography shown publicly. The Dean's patronage is an invitation pending acceptance, so the interface does not claim it has been granted.
+6. Add the founding team only after they agree to have their name and biography shown publicly. The Dean's patronage is proposed and subject to acceptance, so the interface does not claim it has been granted.
 
 ## Activate community pages
 
@@ -60,6 +60,8 @@ Run [`supabase/upgrade_roles_investors.sql`](supabase/upgrade_roles_investors.sq
 Then run [`supabase/upgrade_teacher_materials.sql`](supabase/upgrade_teacher_materials.sql) **once**. It creates a private `club-learning` bucket and learning materials table. Only approved teachers and administrators may upload PDF, PPT, PPTX, DOC and DOCX files, up to 20 MB each. Approved members can download published learning files from **Courses**. Teachers manage uploads in **Teaching studio**; administrators can hide or restore a material. This is separate from the collaborative **Document library**, where approved members may continue sharing general project files.
 
 Approved teachers and administrators can publish hands-on workshops under four learning tracks: Controls and Automation, Software and Programming, Electronics and Robotics, and AI & Machine Learning. The publishing form asks for the prototype learners will build, practical activities and tests, and the tools required. Older course categories are displayed in the closest current track. This uses the existing `courses` table and requires no additional migration.
+
+The public **About the club** page introduces InnovateX's vision, mission, practical learning tracks, team workflow, values and leadership. Its two original engineering workshop images in `assets/` are illustrative artwork and do not depict actual club members. Patronage remains a proposal until formally accepted.
 
 The entry screen has separate **Create an account** and **I have an account** choices. Creating an account verifies the email code once and creates a pending application. Returning users request a new one-time code for sign-in; that path does not create another account. Both flows require the custom Supabase OTP email templates from step 2 above. A successful code exchange creates a Supabase session; account approval and role permissions remain in the database.
 
