@@ -9,7 +9,8 @@ const cleanUrl = (s) => { try { const u = new URL(s); return u.protocol === 'htt
 const date = (s) => s ? new Date(s).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : 'TBD';
 const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'TBD';
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
-let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, activePeerId = null, lastRenderedPage = '';
+let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, inventoryReady = false, financeReady = false, activePeerId = null, lastRenderedPage = '';
+let inventoryFilter = 'all', financeFilter = 'all', inventoryLogPage = 0, financePage = 0;
 let calendarMonth = new Date(new Date().getFullYear(),new Date().getMonth(),1), calendarSelected = new Date();
 let courseTrack = 'all';
 const courseTracks = [
@@ -52,7 +53,7 @@ let pendingEmail = sessionStorage.getItem('innovatex.pendingEmail') || '';
 let pendingType = sessionStorage.getItem('innovatex.pendingType') || 'member';
 let pendingAuthMode = sessionStorage.getItem('innovatex.pendingAuthMode') === 'signup' ? 'signup' : 'signin';
 let toastTimer;
-const pages = ['home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','discussions','courses','teaching','events','calendar','announcements','founder-room'];
+const pages = ['home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','discussions','courses','teaching','events','calendar','announcements','founder-room'];
 const approved = () => !!me && (!('membership_status' in me) || me.membership_status==='approved');
 const investor = () => approved() && me?.role==='investor';
 const clubAccess = () => approved() && !investor();
@@ -78,6 +79,15 @@ const modal = (html) => { if($('#modal').open) $('#modal').close(); $('#modalCon
 const close = () => $('#modal').close();
 const fail = (error) => { console.error(error); show(error?.message || 'Something went wrong. Please try again.'); };
 const read = async (table,query=q=>q) => { const {data,error}=await query(db.from(table).select('*')); if(error) throw error; return data || []; };
+async function readRecords(table){
+  const rows=[];
+  for(;;){
+    const {data,error,count}=await db.from(table).select('*',{count:'exact'}).order('created_at',{ascending:false}).order('id',{ascending:false}).range(rows.length,rows.length+999);
+    if(error)throw error;
+    rows.push(...(data||[]));
+    if(!data?.length||rows.length>=count)return rows;
+  }
+}
 
 async function refresh() {
   if (!db || !session) return;
@@ -86,23 +96,27 @@ async function refresh() {
   if(!self.error&&self.data)me=self.data;
   roleReady=!!me&&'application_type' in me;
   if(previous!==`${me?.membership_status}:${me?.role}`)return signedIn(session);
-  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;mediaUrls.clear();route();return;}
+  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;inventoryReady=false;financeReady=false;mediaUrls.clear();route();return;}
   if(investor()){
     const results=await Promise.allSettled(['investor_updates','investor_inquiries'].map(n=>read(n,q=>q.order('created_at',{ascending:false}))));
     cache={profiles:[me],investor_updates:results[0].status==='fulfilled'?results[0].value:[],investor_inquiries:results[1].status==='fulfilled'?results[1].value:[]};
-    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;mediaUrls.clear();
+    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;inventoryReady=false;financeReady=false;mediaUrls.clear();
     if(previous!==`${me.membership_status}:${me.role}`||!['home','about','founders','investors','investor-portal','privacy'].includes(page)) {route();return;}
     render();return;
   }
-  const names=['profiles','projects','project_tasks','topics','replies','courses','learning_materials','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes','direct_messages','direct_message_reads','investor_updates','investor_inquiries'];
+  const names=['profiles','projects','project_tasks','topics','replies','courses','learning_materials','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes','direct_messages','direct_message_reads','investor_updates','investor_inquiries','inventory_items'];
+  if(founder())names.push('inventory_movements','finance_entries');
   const unordered=new Set(['channel_reads','project_members','event_rsvps','founder_meeting_rsvps']);
-  const results=await Promise.allSettled(names.map(n=>read(n,q=>unordered.has(n)?q:q.order('created_at',{ascending:false}))));
-  results.forEach((r,i)=>{ if(r.status==='fulfilled') cache[names[i]]=r.value; else console.error(names[i],r.reason); });
+  const records=new Set(['inventory_items','inventory_movements','finance_entries']);
+  const results=await Promise.allSettled(names.map(n=>records.has(n)?readRecords(n):read(n,q=>unordered.has(n)?q:q.order('created_at',{ascending:false}))));
+  results.forEach((r,i)=>{ if(r.status==='fulfilled') cache[names[i]]=r.value; else {cache[names[i]]=[];console.error(names[i],r.reason);} });
   communityReady=results[names.indexOf('channels')].status==='fulfilled';
   enhancedReady=results[names.indexOf('channel_reads')].status==='fulfilled';
   feedReady=results[names.indexOf('activity_posts')].status==='fulfilled';
   dmReady=results[names.indexOf('direct_messages')].status==='fulfilled';
   learningReady=results[names.indexOf('learning_materials')].status==='fulfilled';
+  inventoryReady=results[names.indexOf('inventory_items')].status==='fulfilled'&&(!founder()||results[names.indexOf('inventory_movements')].status==='fulfilled');
+  financeReady=founder()&&results[names.indexOf('finance_entries')].status==='fulfilled';
   const {error:mediaError}=feedReady?await db.from('activity_posts').select('image_path').limit(1):{error:true};
   mediaReady=!mediaError;
   const {error:avatarError}=mediaReady?await db.from('profiles').select('avatar_path').eq('id',session.user.id).limit(1):{error:true};
@@ -158,10 +172,11 @@ async function signedIn(newSession) {
     }
     if(communityReady && clubAccess()) chatRealtime=db.channel('innovatex-chat')
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'channel_messages'},refreshChat).subscribe();
-  } else { me=null;roleReady=false;cache={};mediaUrls.clear(); if(!['home','about','founders','investors'].includes(page)) page='home'; await loadPublic(); }
+  } else { me=null;roleReady=false;inventoryReady=false;financeReady=false;cache={};mediaUrls.clear(); if(!['home','about','founders','investors'].includes(page)) page='home'; await loadPublic(); }
   if(session&&!approved()&&!['about','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
   if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='founder-room'&&!founder()) {page='founders';history.replaceState(null,'','#founders');}
+  if(page==='finance'&&!founder()){page=clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
   render();
 }
 async function init() {
@@ -179,7 +194,9 @@ async function init() {
   document.addEventListener('click',actions);
   document.addEventListener('submit',submit);
   document.addEventListener('input',e=>{if(e.target.id==='dmFilter'){const term=e.target.value.toLowerCase();document.querySelectorAll('.dm-peer').forEach(b=>b.hidden=!b.textContent.toLowerCase().includes(term));}});
-  document.addEventListener('change',e=>{if(['chat_image','dm_image'].includes(e.target.name)){const label=$(e.target.name==='chat_image'?'#chatImageName':'#dmImageName');if(label){label.textContent=e.target.files?.[0]?.name||'';label.hidden=!e.target.files?.length;}}});
+  document.addEventListener('change',e=>{if(['chat_image','dm_image'].includes(e.target.name)){const label=$(e.target.name==='chat_image'?'#chatImageName':'#dmImageName');if(label){label.textContent=e.target.files?.[0]?.name||'';label.hidden=!e.target.files?.length;}}
+    if(e.target.name==='movement_kind'&&e.target.closest('form[data-kind="inventoryMovement"]')){const member=$('#movementMember'),input=member?.querySelector('select'),needsMember=['check_out','return'].includes(e.target.value);if(member&&input){member.hidden=!needsMember;input.disabled=!needsMember;input.required=needsMember;if(needsMember)input.innerHTML=movementMemberOptions(e.target.form.elements.item_id.value,e.target.value);}}
+  });
   route();
   if(!db) return;
   db.auth.onAuthStateChange((_event,s)=>{ if(s?.user.id !== session?.user.id) setTimeout(()=>signedIn(s),0); });
@@ -196,6 +213,7 @@ function route() {
   if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='investor-portal'&&authReady&&!investor()&&!admin()){page='investors';history.replaceState(null,'','#investors');}
   if(page==='teaching'&&authReady&&!teacher()){page=clubAccess()?'courses':'home';history.replaceState(null,'','#'+page);}
+  if(page==='finance'&&authReady&&!founder()){page=clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
   if(page==='founder-room'&&authReady&&!founder()){page='founders';history.replaceState(null,'','#founders');show('Founder access required.');}
   if(['admin','applications','moderation'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   $('#sidebar').classList.remove('open');render();
@@ -207,6 +225,7 @@ function render() {
   $('#pageCrumb').textContent=page==='founder-room'?'Founder room':page[0].toUpperCase()+page.slice(1);
   document.querySelectorAll('#nav a').forEach(a=>{a.classList.toggle('active',a.dataset.page===page);a.hidden=!!a.dataset.private&&!clubAccess();});
   document.querySelectorAll('#nav [data-founder]').forEach(a=>a.hidden=!founder());
+  document.querySelectorAll('#nav [data-leadership]').forEach(a=>a.hidden=!founder());
   document.querySelectorAll('#nav [data-investors-nav]').forEach(a=>a.hidden=!founder());
   document.querySelectorAll('#nav [data-teacher]').forEach(a=>a.hidden=!teacher());
   document.querySelectorAll('#nav [data-investor]').forEach(a=>a.hidden=!investor()&&!admin());
@@ -218,7 +237,7 @@ function render() {
   $('#notificationBadge').textContent=(cache.notifications||[]).filter(n=>!n.read_at).length;
   const unreadDm=(cache.direct_messages||[]).filter(m=>m.recipient_id===session?.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;
   $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
-  const views={home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
+  const views={home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').innerHTML=views[page]();
   $('#content').classList.toggle('view-enter',page!==lastRenderedPage);lastRenderedPage=page;
   if(page==='channels'){const stream=$('#messageStream');if(stream)stream.scrollTop=stream.scrollHeight;if(activeChannelId&&enhancedReady)markChannelRead(activeChannelId);}
@@ -349,6 +368,48 @@ function teaching(){
   return `${head('TEACHING','Teaching studio','Share notes, presentations and guides with approved club members.',button('+ Upload material','learningForm'))}
   <div class="notice">Only approved teachers and administrators can publish learning files. Approved club members can download visible materials.</div>
   <div class="section-heading"><h2>${admin()?'All learning materials':'Materials I uploaded'}</h2><p>PDF, PPT, PPTX, DOC or DOCX · up to 20 MB</p></div><div class="grid grid-2">${items.length?items.map(m=>`<div class="card teaching-card">${materialRow(m)}<div class="card-footer"><span>${m.course_id?esc((cache.courses||[]).find(c=>c.id===m.course_id)?.title||'Course'):'General learning library'} · ${esc(memberName(m.uploaded_by))}</span>${admin()?`<button class="text-button" data-action="toggleLearning" data-id="${esc(m.id)}">${m.hidden_at?'Restore':'Hide'}</button>`:''}</div></div>`).join(''):empty('No materials yet','Upload a presentation, lesson notes or a guide to begin.')}</div>`;
+}
+const recordMoney = cents => new Intl.NumberFormat('en-GH',{style:'currency',currency:'GHS'}).format(cents/100);
+const recordDate = value => value ? date(`${value}T12:00:00`) : '—';
+const recordsStat = (label,value,detail,extra='') => `<div class="records-stat"><small>${esc(label)}</small><strong class="${extra}">${esc(value)}</strong><span>${esc(detail)}</span></div>`;
+const recordsPager = (name,current,total) => total<=50?'':`<div class="records-toolbar"><small class="subtle">Showing ${current*50+1}–${Math.min(total,(current+1)*50)} of ${total}</small><div class="records-actions"><button class="button button-outline button-sm" data-action="${name}Prev" ${current===0?'disabled':''}>← Previous</button><button class="button button-outline button-sm" data-action="${name}Next" ${(current+1)*50>=total?'disabled':''}>Next →</button></div></div>`;
+function movementMemberOptions(itemId,kind){
+  const outstanding=new Map();
+  for(const m of cache.inventory_movements||[])if(m.item_id===itemId&&m.member_id&&['check_out','return'].includes(m.kind))outstanding.set(m.member_id,(outstanding.get(m.member_id)||0)+(m.kind==='check_out'?Number(m.quantity):-Number(m.quantity)));
+  const eligible=(cache.profiles||[]).filter(p=>kind==='return'?outstanding.get(p.id)>0:p.membership_status==='approved'&&['member','teacher','founder','admin'].includes(p.role));
+  return '<option value="">Choose a member</option>'+eligible.map(p=>`<option value="${esc(p.id)}">${esc(p.full_name||'Member')}${kind==='return'?` · ${outstanding.get(p.id)} outstanding`:''}</option>`).join('');
+}
+function inventory(){
+  if(!clubAccess())return '';
+  if(!inventoryReady)return `${head('CLUB RECORDS','Inventory','Track shared equipment and supplies.')}<div class="notice">To activate inventory, run <code>supabase/upgrade_inventory_finance.sql</code> in your Supabase SQL Editor, then refresh this page.</div>`;
+  const items=cache.inventory_items||[],movements=founder()?cache.inventory_movements||[]:[];
+  const total=items.reduce((n,x)=>n+Number(x.quantity_total||0),0),available=items.reduce((n,x)=>n+Number(x.quantity_available||0),0);
+  const usable=items.filter(x=>x.condition==='good').reduce((n,x)=>n+Number(x.quantity_available||0),0);
+  const visible=items.filter(x=>inventoryFilter==='all'||(inventoryFilter==='available'&&x.quantity_available>0&&x.condition==='good')||(inventoryFilter==='checked_out'&&x.quantity_total>x.quantity_available)||(inventoryFilter==='needs_repair'&&x.condition==='needs_repair')||(inventoryFilter==='retired'&&x.condition==='retired'));
+  const tabs=[['all','All items'],['available','Available'],['checked_out','Checked out'],['needs_repair','Needs repair'],['retired','Retired']];
+  const pageMoves=movements.slice(inventoryLogPage*50,(inventoryLogPage+1)*50);
+  return `${head('CLUB RECORDS','Inventory','Know what the club owns, where it is, and what is currently available.',admin()?button('+ Register item','inventoryAddForm'):'')}
+    <div class="records-stats">${recordsStat('Items',items.length,'Distinct asset records')}${recordsStat('Total units',total,'Registered stock')}${recordsStat('Ready to use',usable,'Good condition and in stock')}${recordsStat('Checked out',total-available,'Units held by members')}</div>
+    <div class="records-toolbar"><div><h2>Club assets</h2><p class="subtle">Stock quantities update when an administrator records a movement.</p></div>${founder()?`<div class="records-actions"><button class="button button-outline button-sm" data-action="exportCsv" data-table="inventory_items">Download inventory CSV ↓</button><button class="button button-outline button-sm" data-action="exportCsv" data-table="inventory_movements">Download movement CSV ↓</button></div>`:''}</div>
+    <div class="records-tabs" role="group" aria-label="Filter inventory">${tabs.map(([key,label])=>`<button data-action="inventoryFilter" data-filter="${key}" class="${inventoryFilter===key?'active':''}" aria-pressed="${inventoryFilter===key}">${label}</button>`).join('')}</div>
+    <div class="records-panel">${visible.length?`<div class="records-table-wrap"><table class="records-table"><thead><tr><th>Item</th><th>Category</th><th>Stock</th><th>Location</th><th>Condition</th>${admin()?'<th>Action</th>':''}</tr></thead><tbody>${visible.map(x=>`<tr><td>${esc(x.name)}${x.serial_number?`<small>Serial: ${esc(x.serial_number)}</small>`:''}</td><td>${esc(x.category)}</td><td><span class="record-pill ${x.quantity_available===0?'out':x.quantity_available<x.quantity_total||x.condition!=='good'?'low':''}">${esc(x.quantity_available)} / ${esc(x.quantity_total)} in stock</span></td><td>${esc(x.location||'—')}</td><td>${esc(x.condition.replaceAll('_',' '))}</td>${admin()?`<td><button class="text-button" data-action="inventoryMoveForm" data-id="${esc(x.id)}">Movement</button> · <button class="text-button" data-action="inventoryEditForm" data-id="${esc(x.id)}">Edit details</button></td>`:''}</tr>`).join('')}</tbody></table></div>`:`<div class="records-empty"><strong>${items.length?'No matching items':'No items registered yet'}</strong>${items.length?'Choose another filter.':'An administrator can register the first asset.'}</div>`}</div>
+    ${founder()?`<div class="records-toolbar"><div><h2>Movement history</h2><p class="subtle">Permanent checkout, return and item change records · founders and administrators only.</p></div></div><div class="records-panel">${movements.length?`<div class="records-table-wrap"><table class="records-table"><thead><tr><th>Recorded</th><th>Item</th><th>Movement</th><th>Member</th><th>Handled by</th><th>Note</th></tr></thead><tbody>${pageMoves.map(m=>`<tr><td>${esc(dateTime(m.created_at))}</td><td>${esc(items.find(x=>x.id===m.item_id)?.name||m.old_details?.name||'Unknown item')}</td><td><span class="record-pill">${esc(m.kind.replaceAll('_',' '))}${m.kind==='update_details'?'':` · ${esc(m.quantity)}`}</span></td><td>${m.member_id?esc(memberName(m.member_id)):'—'}</td><td>${esc(memberName(m.handled_by))}</td><td>${esc(m.note||'—')}${m.old_details&&m.new_details?`<small>${esc(['name','category','condition','location','serial_number'].filter(k=>m.old_details[k]!==m.new_details[k]).map(k=>`${k.replaceAll('_',' ')}: ${m.old_details[k]||'—'} → ${m.new_details[k]||'—'}`).join(' · '))}</small>`:''}</td></tr>`).join('')}</tbody></table></div>`:`<div class="records-empty"><strong>No movements yet</strong>Checkouts, returns and item changes will appear here.</div>`}${recordsPager('inventoryLog',inventoryLogPage,movements.length)}</div>`:''}`;
+}
+function finance(){
+  if(!founder())return '';
+  if(!financeReady)return `${head('LEADERSHIP RECORDS','Finance','Review the club ledger.')}<div class="notice">To activate finance, run <code>supabase/upgrade_inventory_finance.sql</code> in your Supabase SQL Editor, then refresh this page.</div>`;
+  const entries=cache.finance_entries||[];
+  const income=entries.filter(x=>x.entry_type==='income').reduce((n,x)=>n+Math.round(Number(x.amount)*100),0);
+  const expense=entries.filter(x=>x.entry_type==='expense').reduce((n,x)=>n+Math.round(Number(x.amount)*100),0);
+  const month=new Date().toISOString().slice(0,7),thisMonth=entries.filter(x=>x.occurred_on?.slice(0,7)===month);
+  const visible=entries.filter(x=>financeFilter==='all'||x.entry_type===financeFilter).sort((a,b)=>b.occurred_on.localeCompare(a.occurred_on)||b.created_at.localeCompare(a.created_at));
+  const pageEntries=visible.slice(financePage*50,(financePage+1)*50);
+  return `${head('LEADERSHIP RECORDS','Finance','A transparent record of club income and spending for founders and administrators.',admin()?button('+ Record transaction','financeEntryForm'):'')}
+    <div class="records-stats">${recordsStat('Recorded income',recordMoney(income),'All ledger entries','finance-income')}${recordsStat('Recorded expenses',recordMoney(expense),'All ledger entries','finance-expense')}${recordsStat('Recorded balance',recordMoney(income-expense),'Income less expenses','finance-total')}${recordsStat('This month',thisMonth.length,'Transactions recorded')}</div>
+    <div class="notice">Amounts are shown in Ghana cedis (GHS). This ledger starts with the entries recorded here; enter any opening balance as an income entry with a clear reference. Entries cannot be edited or deleted. Record a new correcting entry if needed.</div>
+    <div class="records-toolbar"><div><h2>Transaction ledger</h2><p class="subtle">Every entry includes the date, amount, reason, recorder and optional reference.</p></div><div class="records-actions"><button class="button button-outline button-sm" data-action="exportCsv" data-table="finance_entries">Download ledger CSV ↓</button></div></div>
+    <div class="records-tabs" role="group" aria-label="Filter transactions">${[['all','All transactions'],['income','Income'],['expense','Expenses']].map(([key,label])=>`<button data-action="financeFilter" data-filter="${key}" class="${financeFilter===key?'active':''}" aria-pressed="${financeFilter===key}">${label}</button>`).join('')}</div>
+    <div class="records-panel">${visible.length?`<div class="records-table-wrap"><table class="records-table"><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Category / reason</th><th>Counterparty</th><th>Reference</th><th>Recorded by</th></tr></thead><tbody>${pageEntries.map(x=>`<tr><td>${esc(recordDate(x.occurred_on))}<small>Entered ${esc(dateTime(x.created_at))}</small></td><td><span class="record-pill ${x.entry_type==='expense'?'expense':''}">${esc(x.entry_type)}</span></td><td class="${x.entry_type==='income'?'finance-income':'finance-expense'}">${esc(recordMoney(Math.round(Number(x.amount)*100)))}</td><td>${esc(x.category)}<small>${esc(x.description||'—')}</small></td><td>${esc(x.counterparty||'—')}</td><td>${esc(x.reference||'—')}</td><td>${esc(memberName(x.created_by))}</td></tr>`).join('')}</tbody></table></div>`:`<div class="records-empty"><strong>${entries.length?'No matching transactions':'No transactions yet'}</strong>${entries.length?'Choose another filter.':'An administrator can record the first income or expense.'}</div>`}${recordsPager('finance',financePage,visible.length)}</div>`;
 }
 function eventRow(e) {return `<div class="list-item"><div class="event-date"><b>${new Date(e.starts_at).getDate()}</b><small>${new Date(e.starts_at).toLocaleString(undefined,{month:'short'})}</small></div><div><strong>${esc(e.title)}</strong><small>${dateTime(e.starts_at)} · ${esc(e.location||'Online')}</small></div></div>`;}
 function rsvpControls(kind,id) {
@@ -601,6 +662,20 @@ async function signOut() {try{await touchPresence(false);const {error}=await db.
 
 function actions(e) {
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
+  if(action==='inventoryFilter'){if(!clubAccess())return;inventoryFilter=el.dataset.filter;render();return;}
+  if(action==='financeFilter'){if(!founder())return;financeFilter=el.dataset.filter;financePage=0;render();return;}
+  if(action==='inventoryLogPrev'||action==='inventoryLogNext'){if(!founder())return;inventoryLogPage=Math.max(0,inventoryLogPage+(action==='inventoryLogNext'?1:-1));render();return;}
+  if(action==='financePrev'||action==='financeNext'){if(!founder())return;financePage=Math.max(0,financePage+(action==='financeNext'?1:-1));render();return;}
+  if(action==='inventoryAddForm'&&admin()&&inventoryReady)return form('Register asset','Add an item and its starting quantity to the club inventory.','inventoryItem',field('Item name','name')+field('Category','category')+`<div class="field"><label for="quantity_total">Starting quantity</label><input id="quantity_total" name="quantity_total" type="number" min="0" max="2147483647" step="1" value="1" required></div>`+select('Condition','condition',['good','needs_repair','retired'])+field('Storage location','location','text','',false)+field('Serial or asset number (optional)','serial_number','text','',false));
+  if(action==='inventoryEditForm'&&admin()&&inventoryReady){
+    const item=(cache.inventory_items||[]).find(x=>x.id===id);if(!item)return;
+    return form('Edit asset details','Record the reason for this change. The before and after details remain in the movement history.','inventoryDetails',`<input type="hidden" name="item_id" value="${esc(item.id)}">`+field('Item name','name','text',item.name)+field('Category','category','text',item.category)+select('Condition','condition',['good','needs_repair','retired'],item.condition)+field('Storage location','location','text',item.location||'',false)+field('Serial or asset number (optional)','serial_number','text',item.serial_number||'',false)+`<div class="field"><label for="change_note">Reason for change</label><textarea id="change_note" name="note" maxlength="2000" required></textarea></div>`);
+  }
+  if(action==='inventoryMoveForm'&&admin()&&inventoryReady){
+    const item=(cache.inventory_items||[]).find(x=>x.id===id);if(!item)return;
+    return form('Record movement',`${esc(item.name)} · ${item.quantity_available} of ${item.quantity_total} in stock.`,'inventoryMovement',`<input type="hidden" name="item_id" value="${esc(item.id)}">`+select('Movement','movement_kind',['check_out','return','add_stock','remove_stock'])+`<div class="field"><label for="movement_quantity">Quantity</label><input id="movement_quantity" name="quantity" type="number" min="1" max="2147483647" step="1" value="1" required></div><div class="field" id="movementMember"><label for="member_id">Member receiving or returning it</label><select id="member_id" name="member_id" required>${movementMemberOptions(item.id,'check_out')}</select></div><div class="field"><label for="movement_note">Reason / details</label><textarea id="movement_note" name="note" maxlength="2000" required></textarea></div>`);
+  }
+  if(action==='financeEntryForm'&&admin()&&financeReady)return form('Record transaction','Enter a permanent income or expense record in Ghana cedis.','financeEntry',select('Type','entry_type',['income','expense'])+select('Category','category',['Opening balance','Membership dues','Donation','Sponsorship','Event','Equipment','Transport','Training','Operations','Other'])+`<div class="field"><label for="amount">Amount (GHS)</label><input id="amount" name="amount" type="number" min="0.01" max="9999999999.99" step="0.01" required></div>`+field('Transaction date','occurred_on','date',new Date().toISOString().slice(0,10))+area('Purpose / explanation','description')+field('From / paid to (optional)','counterparty','text','',false)+field('Receipt or transfer reference (optional)','reference','text','',false));
   if(action==='calendarPrev'||action==='calendarNext'){calendarMonth=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth()+(action==='calendarNext'?1:-1),1);calendarSelected=new Date(calendarMonth);render();return;}
   if(action==='calendarToday'){calendarSelected=new Date();calendarMonth=new Date(calendarSelected.getFullYear(),calendarSelected.getMonth(),1);render();return;}
   if(action==='calendarDay'){const [y,m,d]=(el.dataset.date||'').split('-').map(Number);if(!y||m<1||m>12||d<1||d>31)return;calendarSelected=new Date(y,m-1,d);render();return;}
@@ -755,7 +830,7 @@ function exportClubContent() {
   const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`innovatex-content-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 function exportCsv(table){
-  if(!admin())return;
+  if(!admin()&&!(founder()&&['inventory_items','inventory_movements','finance_entries'].includes(table)))return;
   const columns={
     profiles:['id','full_name','application_type','role','membership_status','programme','skills','application_reason','created_at'],
     projects:['id','title','summary','status','progress','owner_id','created_at'],
@@ -763,11 +838,14 @@ function exportCsv(table){
     activity_posts:['id','author_id','title','category','body','created_at'],
     reports:['id','reporter_id','target_type','target_id','reason','status','created_at'],
     investor_inquiries:['id','investor_id','subject','message','status','created_at'],
-    audit_events:['id','actor_id','action','target_type','target_id','created_at']
+    audit_events:['id','actor_id','action','target_type','target_id','created_at'],
+    inventory_items:['id','name','category','quantity_total','quantity_available','condition','location','serial_number','created_by','created_at','updated_at'],
+    inventory_movements:['id','item_id','kind','quantity','member_id','note','old_details','new_details','handled_by','created_at'],
+    finance_entries:['id','entry_type','category','amount','occurred_on','description','counterparty','reference','created_by','created_at']
   };
   if(!Object.hasOwn(columns,table))return;
   const safe=value=>{
-    let cell=String(value??'');
+    let cell=typeof value==='object'&&value!==null?JSON.stringify(value):String(value??'');
     if(/^[\s]*[=+@-]/.test(cell))cell="'"+cell;
     return `"${cell.replaceAll('"','""')}"`;
   };
@@ -884,6 +962,44 @@ async function submit(e) {
     const payload={...values};
     for(const key of ['starts_at','ends_at','due_at']) if(key in payload) payload[key]=payload[key]?new Date(payload[key]).toISOString():null;
     for(const key of ['link_url','resource_url','meet_url']) if(key in payload) payload[key]=payload[key]?cleanUrl(payload[key]):null;
+    if(kind==='inventoryItem'){
+      if(!admin()||!inventoryReady)throw Error('Administrator access and the inventory migration are required.');
+      const count=Number(payload.quantity_total);
+      if(!Number.isInteger(count)||count<0||count>2147483647)throw Error('Enter a valid starting quantity.');
+      const name=String(payload.name||'').trim(),category=String(payload.category||'').trim();
+      if(name.length<2||name.length>160||category.length<2||category.length>80)throw Error('Enter an item name and category.');
+      if(!['good','needs_repair','retired'].includes(payload.condition))throw Error('Choose a valid item condition.');
+      return await mutate(()=>db.from('inventory_items').insert({name,category,quantity_total:count,quantity_available:count,condition:payload.condition,location:String(payload.location||'').trim(),serial_number:String(payload.serial_number||'').trim()||null}));
+    }
+    if(kind==='inventoryMovement'){
+      if(!admin()||!inventoryReady)throw Error('Administrator access and the inventory migration are required.');
+      if(!(cache.inventory_items||[]).some(x=>x.id===payload.item_id))throw Error('Choose an inventory item.');
+      const quantity=Number(payload.quantity),movement=payload.movement_kind;
+      if(!Number.isInteger(quantity)||quantity<1||quantity>2147483647)throw Error('Enter a positive whole number of units.');
+      if(!['check_out','return','add_stock','remove_stock'].includes(movement))throw Error('Choose a valid movement.');
+      const member=['check_out','return'].includes(movement)?payload.member_id||null:null;
+      if(['check_out','return'].includes(movement)&&!member)throw Error('Choose the member receiving or returning this item.');
+      const note=String(payload.note||'').trim();if(!note||note.length>2000)throw Error('Explain the movement in the reason field.');
+      return await mutate(()=>db.rpc('record_inventory_movement',{p_item:payload.item_id,p_kind:movement,p_quantity:quantity,p_member:member,p_note:note}));
+    }
+    if(kind==='inventoryDetails'){
+      if(!admin()||!inventoryReady)throw Error('Administrator access and the inventory migration are required.');
+      if(!(cache.inventory_items||[]).some(x=>x.id===payload.item_id))throw Error('Choose an inventory item.');
+      const name=String(payload.name||'').trim(),category=String(payload.category||'').trim(),note=String(payload.note||'').trim();
+      if(name.length<2||name.length>160||category.length<2||category.length>80||!note||note.length>2000)throw Error('Enter an item name, category and reason for the change.');
+      if(!['good','needs_repair','retired'].includes(payload.condition))throw Error('Choose a valid item condition.');
+      return await mutate(()=>db.rpc('update_inventory_item_details',{p_item:payload.item_id,p_name:name,p_category:category,p_condition:payload.condition,p_location:String(payload.location||'').trim(),p_serial_number:String(payload.serial_number||'').trim()||null,p_note:note}));
+    }
+    if(kind==='financeEntry'){
+      if(!admin()||!financeReady)throw Error('Administrator access and the finance migration are required.');
+      if(!['income','expense'].includes(payload.entry_type))throw Error('Choose income or expense.');
+      const amount=Number(payload.amount),description=String(payload.description||'').trim();
+      if(!Number.isFinite(amount)||amount<=0||amount>9999999999.99||Math.abs(amount*100-Math.round(amount*100))>0.000001)throw Error('Enter a positive amount with no more than two decimal places.');
+      if(!description||description.length>2000)throw Error('Explain this transaction.');
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(payload.occurred_on)||Number.isNaN(Date.parse(`${payload.occurred_on}T12:00:00Z`)))throw Error('Choose a valid transaction date.');
+      const record={entry_type:payload.entry_type,category:String(payload.category||'').trim(),amount:amount.toFixed(2),occurred_on:payload.occurred_on,description,counterparty:String(payload.counterparty||'').trim(),reference:String(payload.reference||'').trim()};
+      return await mutate(()=>db.from('finance_entries').insert(record));
+    }
     if(kind==='application'){
       if('application_type' in payload){
         if(!['member','teacher','founder','investor'].includes(payload.application_type))throw Error('Choose a valid account type.');
