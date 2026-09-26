@@ -15,7 +15,7 @@ A responsive club workspace for a TTU engineering community. The site is static 
 1. Create a Supabase project and open **SQL Editor**. Run [`supabase/schema.sql`](supabase/schema.sql) once. Use a new project or review existing schema before running it.
 2. In **Authentication → Providers → Email**, enable email sign-in. For magic links, use Supabase's magic-link email template. Configure production SMTP when you are ready for wider membership; the built-in email sender is limited.
 3. In **Authentication → URL Configuration**, set the Site URL to `https://turkson225.github.io/Turk-Innovation-CLUB/`. Add that exact URL to Redirect URLs. For local testing, add `http://localhost:8000/` as another Redirect URL.
-4. In **Project Settings → API**, copy the Project URL and the **publishable / anon** key into [`config.js`](config.js). These values are designed for browser use. **Never paste a service_role or secret key** into the repository.
+4. In the project's **Connect** dialog, copy the Project URL and **publishable** key into [`config.js`](config.js). These values are designed for browser use. **Never paste a service_role or secret key** into the repository. This repository is configured with the project's public values.
 5. Sign in at least once. Then, in SQL Editor, promote your specific user to an administrator using the authenticated user's UUID from **Authentication → Users**:
 
    ```sql
