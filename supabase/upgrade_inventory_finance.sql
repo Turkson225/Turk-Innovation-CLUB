@@ -4,6 +4,13 @@
 
 begin;
 
+do $$
+begin
+  if to_regclass('public.finance_reviews') is not null then
+    raise exception 'Do not rerun the base inventory migration after the approvals upgrade';
+  end if;
+end $$;
+
 create table if not exists public.inventory_items (
   id uuid primary key default gen_random_uuid(),
   name text not null check (char_length(trim(name)) between 2 and 160),
