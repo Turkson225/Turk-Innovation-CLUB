@@ -59,6 +59,8 @@ Run [`supabase/upgrade_roles_investors.sql`](supabase/upgrade_roles_investors.sq
 
 Then run [`supabase/upgrade_teacher_materials.sql`](supabase/upgrade_teacher_materials.sql) **once**. It creates a private `club-learning` bucket and learning materials table. Only approved teachers and administrators may upload PDF, PPT, PPTX, DOC and DOCX files, up to 20 MB each. Approved members can download published learning files from **Courses**. Teachers manage uploads in **Teaching studio**; administrators can hide or restore a material. This is separate from the collaborative **Document library**, where approved members may continue sharing general project files.
 
+Approved teachers and administrators can publish hands-on workshops under four learning tracks: Controls and Automation, Software and Programming, Electronics and Robotics, and AI & Machine Learning. The publishing form asks for the prototype learners will build, practical activities and tests, and the tools required. Older course categories are displayed in the closest current track. This uses the existing `courses` table and requires no additional migration.
+
 The entry screen has separate **Create an account** and **I have an account** choices. Creating an account verifies the email code once and creates a pending application. Returning users request a new one-time code for sign-in; that path does not create another account. Both flows require the custom Supabase OTP email templates from step 2 above. A successful code exchange creates a Supabase session; account approval and role permissions remain in the database.
 
 Once the first administrator has been promoted using step 5 above:
