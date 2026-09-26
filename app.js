@@ -9,7 +9,26 @@ const cleanUrl = (s) => { try { const u = new URL(s); return u.protocol === 'htt
 const date = (s) => s ? new Date(s).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : 'TBD';
 const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'TBD';
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
-let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, activePeerId = null;
+let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, activePeerId = null;
+const mediaUrls = new Map();
+const mediaUrl = path => path && mediaUrls.get(path)?.url || '';
+async function hydrateMedia() {
+  if(!mediaReady)return;
+  const paths=[...(cache.activity_posts||[]).slice(0,80),...(cache.channel_messages||[]).slice(0,180),...(cache.direct_messages||[]).slice(0,160)].map(x=>x.image_path).filter(Boolean);
+  const missing=[...new Set(paths)].filter(p=>!mediaUrls.has(p)||mediaUrls.get(p).expires<Date.now()+60000);
+  if(!missing.length)return;
+  const {data,error}=await db.storage.from('club-media').createSignedUrls(missing,900);
+  if(error){console.error(error);return;}
+  for(const [i,item] of (data||[]).entries())if(item.signedUrl)mediaUrls.set(item.path||missing[i],{url:item.signedUrl,expires:Date.now()+900000});
+}
+async function uploadClubImage(file){
+  if(!mediaReady)throw Error('Run the Supabase media migration before sharing images.');
+  const ext={'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif'}[file?.type];
+  if(!ext||file.size<1||file.size>5242880)throw Error('Choose a JPG, PNG, WebP or GIF image up to 5 MB.');
+  const path=`${session.user.id}/${crypto.randomUUID()}.${ext}`;
+  const {error}=await db.storage.from('club-media').upload(path,file,{upsert:false,contentType:file.type});
+  if(error)throw error;return path;
+}
 let pendingEmail = sessionStorage.getItem('innovatex.pendingEmail') || '';
 let toastTimer;
 const pages = ['home','founders','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','discussions','courses','events','announcements','founder-room'];
@@ -28,7 +47,7 @@ const read = async (table,query=q=>q) => { const {data,error}=await query(db.fro
 
 async function refresh() {
   if (!db || !session) return;
-  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;render();return;}
+  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;mediaUrls.clear();render();return;}
   const names=['profiles','projects','project_tasks','topics','replies','courses','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes','direct_messages','direct_message_reads'];
   const unordered=new Set(['channel_reads','project_members','event_rsvps','founder_meeting_rsvps']);
   const results=await Promise.allSettled(names.map(n=>read(n,q=>unordered.has(n)?q:q.order('created_at',{ascending:false}))));
@@ -37,6 +56,9 @@ async function refresh() {
   enhancedReady=results[names.indexOf('channel_reads')].status==='fulfilled';
   feedReady=results[names.indexOf('activity_posts')].status==='fulfilled';
   dmReady=results[names.indexOf('direct_messages')].status==='fulfilled';
+  const {error:mediaError}=feedReady?await db.from('activity_posts').select('image_path').limit(1):{error:true};
+  mediaReady=!mediaError;
+  await hydrateMedia();
   if(page==='notifications' && document.activeElement?.closest('#content')) { render(); return; }
   if(page==='channels' && document.activeElement?.closest('#chatComposer')) { renderChatMessages(); return; }
   if(page==='messages' && document.activeElement?.closest('#dmComposer')) return;
@@ -44,7 +66,7 @@ async function refresh() {
 }
 async function refreshChat() {
   if(!session || !approved() || !communityReady) return;
-  try { cache.channel_messages=await read('channel_messages',q=>q.order('created_at',{ascending:false}).limit(250));
+  try { cache.channel_messages=await read('channel_messages',q=>q.order('created_at',{ascending:false}).limit(250));await hydrateMedia();
     if(page==='channels') renderChatMessages();
   } catch(e) { console.error(e); }
 }
@@ -78,7 +100,7 @@ async function signedIn(newSession) {
     }
     if(communityReady && approved()) chatRealtime=db.channel('innovatex-chat')
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'channel_messages'},refreshChat).subscribe();
-  } else { me=null; cache={}; if(!['home','founders'].includes(page)) page='home'; await loadPublic(); }
+  } else { me=null; cache={};mediaUrls.clear(); if(!['home','founders'].includes(page)) page='home'; await loadPublic(); }
   if(session&&!approved()&&!['application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
   if(page==='founder-room'&&!founder()) {page='founders';history.replaceState(null,'','#founders');}
   render();
@@ -97,6 +119,7 @@ async function init() {
   document.addEventListener('click',actions);
   document.addEventListener('submit',submit);
   document.addEventListener('input',e=>{if(e.target.id==='dmFilter'){const term=e.target.value.toLowerCase();document.querySelectorAll('.dm-peer').forEach(b=>b.hidden=!b.textContent.toLowerCase().includes(term));}});
+  document.addEventListener('change',e=>{if(['chat_image','dm_image'].includes(e.target.name)){const label=$(e.target.name==='chat_image'?'#chatImageName':'#dmImageName');if(label){label.textContent=e.target.files?.[0]?.name||'';label.hidden=!e.target.files?.length;}}});
   route();
   if(!db) return;
   db.auth.onAuthStateChange((_event,s)=>{ if(s?.user.id !== session?.user.id) setTimeout(()=>signedIn(s),0); });
@@ -173,7 +196,7 @@ function messages() {
   const thread=peer?history.filter(m=>(m.sender_id===session.user.id&&m.recipient_id===peer.id)||(m.recipient_id===session.user.id&&m.sender_id===peer.id)).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)):[];
   return `${head('MEMBER CONNECTIONS','Direct messages','Discuss a project with another approved club member.')}
     <div class="dm-layout"><div class="dm-list"><div class="dm-heading">Members <span>${people.length}</span></div><div class="dm-search"><label class="sr-only" for="dmFilter">Find a member</label><input id="dmFilter" placeholder="Find a member"></div>${ordered.map(p=>{const last=history.filter(m=>m.sender_id===p.id||m.recipient_id===p.id).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];const seen=(cache.direct_message_reads||[]).find(r=>r.peer_id===p.id)?.last_read_at;const unread=history.filter(m=>m.sender_id===p.id&&(!seen||new Date(m.created_at)>new Date(seen))).length;return `<button class="dm-peer ${p.id===activePeerId?'selected':''}" data-action="openDm" data-id="${esc(p.id)}">${avatar(p.full_name)}<span><strong>${esc(p.full_name)}</strong><small>${esc(last?.body||p.headline||p.programme||'Start a conversation')}</small></span>${unread?`<i class="unread-badge">${unread}</i>`:''}</button>`}).join('')||empty('No other members','Approved members will appear here.')}</div>
-    <div class="dm-conversation">${peer?`<div class="chat-head"><div><h2>${esc(peer.full_name)}</h2><p>${esc(peer.headline||peer.programme||'Club member')}</p></div><button class="text-button" data-action="memberProfile" data-id="${esc(peer.id)}">View profile</button></div><div id="dmStream" class="dm-stream">${thread.length?thread.map(m=>`<div class="dm-bubble ${m.sender_id===session.user.id?'mine':''}">${m.sender_id!==session.user.id?avatar(peer.full_name):''}<div><p>${esc(m.body)}</p><small>${dateTime(m.created_at)}</small></div></div>`).join(''):empty('Start a conversation','Send a message about a club project or upcoming event.')}</div><form id="dmComposer" class="chat-composer"><label class="sr-only" for="dmBody">Message</label><input id="dmBody" name="body" maxlength="3000" placeholder="Message ${esc(peer.full_name)}" required autocomplete="off"><button class="button" type="submit">Send ↗</button></form>`:empty('Choose a member','Select someone to start a private conversation.')}</div></div>`;
+    <div class="dm-conversation">${peer?`<div class="chat-head"><div><h2>${esc(peer.full_name)}</h2><p>${esc(peer.headline||peer.programme||'Club member')}</p></div><button class="text-button" data-action="memberProfile" data-id="${esc(peer.id)}">View profile</button></div><div id="dmStream" class="dm-stream">${thread.length?thread.map(m=>{const photo=mediaUrl(m.image_path);return `<div class="dm-bubble ${m.sender_id===session.user.id?'mine':''}">${m.sender_id!==session.user.id?avatar(peer.full_name):''}<div><p>${esc(m.body)}</p>${photo?`<a href="${esc(photo)}" target="_blank" rel="noopener noreferrer" aria-label="Open private image"><img class="dm-photo" src="${esc(photo)}" loading="lazy" alt="Image shared in this conversation"></a>`:''}<small>${dateTime(m.created_at)}</small></div></div>`}).join(''):empty('Start a conversation','Send a message about a club project or upcoming event.')}</div><form id="dmComposer" class="chat-composer">${mediaReady?`<label class="gallery-picker" title="Choose an image from your gallery">▧<span class="sr-only">Choose image</span><input name="dm_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>`:''}<label class="sr-only" for="dmBody">Message</label><input id="dmBody" name="body" maxlength="3000" placeholder="Message ${esc(peer.full_name)}" ${mediaReady?'':'required'} autocomplete="off"><button class="button" type="submit">Send ↗</button>${mediaReady?`<span id="dmImageName" class="chat-image-name" hidden></span>`:''}</form>`:empty('Choose a member','Select someone to start a private conversation.')}</div></div>`;
 }
 async function markDmRead(peerId) {
   if(!dmReady||!session||!peerId)return;
@@ -223,7 +246,7 @@ function privacy() {
 function feed() {
   if(!feedReady)return head('CLUB COMMUNITY','Activity feed','Member projects, questions and progress.')+communityNotice();
   const posts=(cache.activity_posts||[]).slice().sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
-  const updates=[...(cache.announcements||[]).map(a=>({title:a.title,at:a.created_at,kind:'Alert',page:'announcements'})),...posts.map(p=>({title:memberName(p.author_id)+' shared an update',at:p.created_at,kind:'Post',id:p.id}))].sort((a,b)=>new Date(b.at)-new Date(a.at)).slice(0,6);
+  const updates=[...(cache.announcements||[]).map(a=>({title:a.title,at:a.created_at,kind:'Alert',page:'announcements'})),...posts.map(p=>({title:p.title||memberName(p.author_id)+' shared an update',at:p.created_at,kind:'Post',id:p.id}))].sort((a,b)=>new Date(b.at)-new Date(a.at)).slice(0,6);
   const recentNews=(cache.news_posts||[]).filter(n=>n.status==='published').slice(0,5);
   const people=(cache.profiles||[]).filter(p=>p.membership_status==='approved'&&p.last_seen_at).sort((a,b)=>new Date(b.last_seen_at)-new Date(a.last_seen_at)).slice(0,10);
   return `${head('COMMUNITY PULSE','Activity feed','Share builds, ask for feedback and follow what members are creating.')}
@@ -235,16 +258,24 @@ function feed() {
 }
 function feedPostCard(p) {
   const comments=(cache.activity_comments||[]).filter(c=>c.post_id===p.id).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+  const roots=comments.filter(c=>!c.parent_id);
   const likes=(cache.activity_likes||[]).filter(l=>l.post_id===p.id);
   const liked=likes.some(l=>l.user_id===session?.user.id);
   const doc=(cache.documents||[]).find(d=>d.id===p.document_id);
   let domain='';try{domain=p.link_url?new URL(p.link_url).hostname.replace(/^www\./,''):'';}catch{}
-  return `<article class="card feed-post" id="post-${esc(p.id)}"><div class="feed-post-head">${avatar(memberName(p.author_id))}<div><strong>${esc(memberName(p.author_id))}</strong><small>shared an update · ${dateTime(p.created_at)}${p.edited_at?' · edited':''}</small></div>${p.author_id===session?.user.id||admin()?`<div class="feed-post-menu">${p.author_id===session?.user.id?`<button class="text-button" data-action="editFeedPost" data-id="${esc(p.id)}">Edit</button>`:''}<button class="text-button" data-action="removeFeedPost" data-id="${esc(p.id)}">Remove</button></div>`:''}</div><p class="feed-body">${esc(p.body)}</p>
+  const photo=mediaUrl(p.image_path);
+  return `<article class="card feed-post" id="post-${esc(p.id)}"><div class="feed-post-head">${avatar(memberName(p.author_id))}<div><strong>${esc(memberName(p.author_id))}</strong><small>${dateTime(p.created_at)}${p.edited_at?' · edited':''}</small></div>${p.author_id===session?.user.id||admin()?`<div class="feed-post-menu">${p.author_id===session?.user.id?`<button class="text-button" data-action="editFeedPost" data-id="${esc(p.id)}">Edit</button>`:''}<button class="text-button" data-action="removeFeedPost" data-id="${esc(p.id)}">Remove</button></div>`:''}</div>${mediaReady?`<span class="tag blue feed-category">${esc(p.category||'Project update')}</span>`:''}${p.title?`<h2 class="feed-post-title">${esc(p.title)}</h2>`:''}<p class="feed-body">${esc(p.body)}</p>
+    ${photo?`<a href="${esc(photo)}" target="_blank" rel="noopener noreferrer" aria-label="Open full image"><img class="feed-photo" src="${esc(photo)}" loading="lazy" alt="Image shared by ${esc(memberName(p.author_id))}"></a>`:''}
     ${p.link_url?`<a class="feed-link" href="${esc(cleanUrl(p.link_url))}" target="_blank" rel="noopener noreferrer"><span class="feed-link-art">↗</span><span><small>${esc(domain)}</small><strong>${esc(p.link_url)}</strong></span></a>`:''}
     ${doc?`<button class="feed-file" data-action="downloadDoc" data-id="${esc(doc.id)}">▤ &nbsp; ${esc(doc.title)} <small>Open document ↗</small></button>`:''}
     <div class="feed-post-actions"><button class="feed-action ${liked?'selected':''}" data-action="likeFeedPost" data-id="${esc(p.id)}" aria-label="${liked?'Unlike':'Like'} post">${liked?'♥':'♡'} ${likes.length} Likes</button><span>◌ ${comments.length} Comments</span><button class="feed-action" data-action="report" data-type="post" data-id="${esc(p.id)}">Report</button></div>
-    <div class="feed-comments">${comments.slice(-3).map(c=>`<div class="feed-comment">${avatar(memberName(c.author_id))}<div><strong>${esc(memberName(c.author_id))}</strong><span>${esc(c.body)}</span><small>${dateTime(c.created_at)}</small></div></div>`).join('')}${comments.length>3?`<button class="text-button" data-action="allFeedComments" data-id="${esc(p.id)}">View all ${comments.length} comments</button>`:''}</div>
+    <div class="feed-comments">${roots.slice(-2).map(c=>feedCommentRow(c,comments)).join('')}${roots.length>2?`<button class="text-button" data-action="allFeedComments" data-id="${esc(p.id)}">View all ${comments.length} comments and replies</button>`:''}</div>
     <form class="feed-comment-form" data-post="${esc(p.id)}">${avatar(me?.full_name)}<label class="sr-only" for="comment-${esc(p.id)}">Comment on post</label><input id="comment-${esc(p.id)}" name="body" maxlength="1000" placeholder="Add a helpful comment…" required><button class="button button-sm" type="submit">Reply</button></form></article>`;
+}
+function feedCommentRow(c,all){
+  const replies=all.filter(x=>x.parent_id===c.id);
+  const one=x=>`<div class="feed-comment ${x.parent_id?'nested':''}">${avatar(memberName(x.author_id))}<div><strong>${esc(memberName(x.author_id))}</strong><span>${esc(x.body)}</span><small>${dateTime(x.created_at)}${!x.parent_id?` · <button class="text-button" data-action="replyFeedComment" data-id="${esc(x.id)}">Reply</button>`:''}</small></div></div>`;
+  return `<div class="feed-thread">${one(c)}${replies.map(one).join('')}</div>`;
 }
 function application() {
   if(!session)return head('JOIN INNOVATEX','Membership application','Sign in to apply.')+button('Member sign in','login');
@@ -290,7 +321,7 @@ function channels() {
   const selected=list.find(c=>c.id===activeChannelId);
   return `${head('CLUB CONVERSATIONS','Channels','Focused spaces for ideas, help and project updates.',admin()?button('+ Create channel','channelForm'):'')}
     <div class="chat-layout"><div class="channel-list"><div class="channel-label">YOUR CHANNELS</div>${list.map(c=>{const seen=(cache.channel_reads||[]).find(r=>r.channel_id===c.id)?.last_read_at;const unread=enhancedReady?(cache.channel_messages||[]).filter(m=>m.channel_id===c.id&&m.author_id!==session.user.id&&(!seen||new Date(m.created_at)>new Date(seen))).length:0;return `<button class="channel-button ${c.id===activeChannelId?'selected':''}" data-action="selectChannel" data-id="${esc(c.id)}"><strong># ${esc(c.name)} ${unread?`<i class="unread-badge">${unread}</i>`:''}</strong><small>${esc(c.description)}</small></button>`}).join('')}</div>
-    <div class="chat-panel">${selected?`<div class="chat-head"><div><h2># ${esc(selected.name)}</h2><p>${esc(selected.description)}</p></div><div class="chat-tools">${button('Search','searchChat','button-outline button-sm')}${button('Share file','shareDoc','button-outline button-sm')}</div></div><div id="messageStream" class="message-stream" aria-live="polite">${messageList()}</div><form id="chatComposer" class="chat-composer"><label class="sr-only" for="chatBody">Message</label><input id="chatBody" name="body" maxlength="3000" placeholder="Message #${esc(selected.name)} · mention @handle" required autocomplete="off"><button class="button" type="submit">Send ↗</button></form>`:empty('No channels yet','An administrator can add the first channel.')}</div></div>`;
+    <div class="chat-panel">${selected?`<div class="chat-head"><div><h2># ${esc(selected.name)}</h2><p>${esc(selected.description)}</p></div><div class="chat-tools">${button('Search','searchChat','button-outline button-sm')}${button('Share file','shareDoc','button-outline button-sm')}</div></div><div id="messageStream" class="message-stream" aria-live="polite">${messageList()}</div><form id="chatComposer" class="chat-composer">${mediaReady?`<label class="gallery-picker" title="Choose an image from your gallery">▧<span class="sr-only">Choose image</span><input name="chat_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>`:''}<label class="sr-only" for="chatBody">Message</label><input id="chatBody" name="body" maxlength="3000" placeholder="Message #${esc(selected.name)} · mention @handle" ${mediaReady?'':'required'} autocomplete="off"><button class="button" type="submit">Send ↗</button>${mediaReady?`<span id="chatImageName" class="chat-image-name" hidden></span>`:''}</form>`:empty('No channels yet','An administrator can add the first channel.')}</div></div>`;
 }
 function messageList() {
   const all=cache.channel_messages||[];
@@ -301,7 +332,8 @@ function messageRow(m,showThread=false) {
   const doc=m.deleted_at?null:(cache.documents||[]).find(d=>d.id===m.document_id);
   const replies=(cache.channel_messages||[]).filter(x=>x.parent_id===m.id).length;
   const reactions=(cache.message_reactions||[]).filter(x=>x.message_id===m.id);
-  return `<div class="chat-message">${avatar(memberName(m.author_id))}<div><div class="message-meta"><strong>${esc(memberName(m.author_id))}</strong><time>${dateTime(m.created_at)}${m.edited_at?' · edited':''}</time></div><p>${esc(m.body)}</p>${doc?`<button class="attachment" data-action="downloadDoc" data-id="${esc(doc.id)}">▤ ${esc(doc.title)} <small>${fileSize(doc.file_size)}</small></button>`:''}
+  const photo=m.deleted_at?'':mediaUrl(m.image_path);
+  return `<div class="chat-message">${avatar(memberName(m.author_id))}<div><div class="message-meta"><strong>${esc(memberName(m.author_id))}</strong><time>${dateTime(m.created_at)}${m.edited_at?' · edited':''}</time></div><p>${esc(m.body)}</p>${photo?`<a href="${esc(photo)}" target="_blank" rel="noopener noreferrer" aria-label="Open shared image"><img class="chat-photo" src="${esc(photo)}" loading="lazy" alt="Image shared by ${esc(memberName(m.author_id))}"></a>`:''}${doc?`<button class="attachment" data-action="downloadDoc" data-id="${esc(doc.id)}">▤ ${esc(doc.title)} <small>${fileSize(doc.file_size)}</small></button>`:''}
   ${enhancedReady&&!m.deleted_at?`<div class="message-actions">${['👍','💡','🔥','🎯'].map(emoji=>`<button class="reaction ${reactions.some(r=>r.emoji===emoji&&r.user_id===session.user.id)?'selected':''}" data-action="react" data-id="${esc(m.id)}" data-emoji="${emoji}" aria-label="React ${emoji}">${emoji}${reactions.filter(r=>r.emoji===emoji).length||''}</button>`).join('')}${showThread?`<button class="text-button" data-action="thread" data-id="${esc(m.id)}">Reply${replies?` (${replies})`:''}</button>`:''}${m.author_id===session.user.id?`<button class="text-button" data-action="editMessage" data-id="${esc(m.id)}">Edit</button>`:''}${m.author_id===session.user.id||admin()?`<button class="text-button" data-action="removeMessage" data-id="${esc(m.id)}">Remove</button>`:''}<button class="text-button" data-action="report" data-type="message" data-id="${esc(m.id)}">Report</button></div>`:''}</div></div>`;
 }
 function threadDialog(id) {
@@ -391,9 +423,13 @@ function actions(e) {
   if(action==='feedPostForm'){
     if(!feedReady)return show('Activate the Supabase activity feed migration first.');
     const options='<option value="">No document attached</option>'+(cache.documents||[]).map(d=>`<option value="${esc(d.id)}">${esc(d.title)}</option>`).join('');
-    return form('Share an update','Tell members about a build, question or opportunity.','feedPost',area('Your update','body')+field('Link to a resource (optional)','link_url','url','',false)+`<div class="field"><label for="document_id">Club document (optional)</label><select id="document_id" name="document_id">${options}</select></div>`);
+    return form('Share an update','Tell members about a build, question or technology worth discussing.','feedPost',(mediaReady?field('Headline (optional)','title','text','',false)+select('Topic','category',['Project update','Technology','Build log','Question','Opportunity']):'')+area('Your update','body')+(mediaReady?`<div class="field"><label for="post_image">Gallery image (optional, max 5 MB)</label><input id="post_image" name="post_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></div>`:'')+field('Link to a resource (optional)','link_url','url','',false)+`<div class="field"><label for="document_id">Club document (optional)</label><select id="document_id" name="document_id">${options}</select></div>`);
   }
-  if(action==='editFeedPost'){const p=(cache.activity_posts||[]).find(x=>x.id===id);if(p?.author_id===session?.user.id)return form('Edit update','Revise the text of your post.','feedEdit',area('Your update','body',p.body)+`<input type="hidden" name="post_id" value="${esc(id)}">`);return;}
+  if(action==='editFeedPost'){const p=(cache.activity_posts||[]).find(x=>x.id===id);if(p?.author_id===session?.user.id)return form('Edit update','Revise your post.','feedEdit',(mediaReady?field('Headline','title','text',p.title||'',false)+select('Topic','category',['Project update','Technology','Build log','Question','Opportunity'],p.category||'Project update'):'')+area('Your update','body',p.body)+`<input type="hidden" name="post_id" value="${esc(id)}">`);return;}
+  if(action==='replyFeedComment'){
+    const c=(cache.activity_comments||[]).find(x=>x.id===id);if(!c||c.parent_id)return;
+    return form('Reply to comment',`Reply to ${esc(memberName(c.author_id))}.`,'feedReply',area('Your reply','body')+`<input type="hidden" name="post_id" value="${esc(c.post_id)}"><input type="hidden" name="parent_id" value="${esc(c.id)}">`);
+  }
   if(action==='removeFeedPost')return removeFeedPost(id);
   if(action==='likeFeedPost')return toggleFeedLike(id);
   if(action==='jumpPost')return document.getElementById(`post-${id}`)?.scrollIntoView({behavior:'smooth',block:'center'});
@@ -532,7 +568,7 @@ async function removeFeedPost(id) {
 function allFeedComments(id) {
   const post=(cache.activity_posts||[]).find(p=>p.id===id);if(!post)return;
   const comments=(cache.activity_comments||[]).filter(c=>c.post_id===id).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
-  modal(`<span class="eyebrow">CLUB DISCUSSION</span><h2>Comments</h2><p>${esc(post.body)}</p><div class="thread-scroll">${comments.map(c=>`<div class="feed-comment">${avatar(memberName(c.author_id))}<div><strong>${esc(memberName(c.author_id))}</strong><span>${esc(c.body)}</span><small>${dateTime(c.created_at)}</small></div></div>`).join('')}</div>`);
+  modal(`<span class="eyebrow">CLUB DISCUSSION</span><h2>${esc(post.title||'Comments')}</h2><p>${esc(post.body)}</p><div class="thread-scroll">${comments.filter(c=>!c.parent_id).map(c=>feedCommentRow(c,comments)).join('')}</div>`);
 }
 async function removeMessage(id) {
   if(!confirm('Remove this message?'))return;
@@ -570,9 +606,9 @@ function uploadRevisionDialog(id) {
 }
 async function submit(e) {
   if(e.target.id==='dmComposer'){
-    e.preventDefault();const input=e.target.elements.body,body=input.value.trim(),send=e.target.querySelector('[type=submit]');
-    if(!dmReady||!activePeerId||!body)return;send.disabled=true;
-    try{const {error}=await db.from('direct_messages').insert({sender_id:session.user.id,recipient_id:activePeerId,body});if(error)throw error;input.value='';input.blur();await refresh();}catch(error){fail(error);}finally{send.disabled=false;}return;
+    e.preventDefault();const input=e.target.elements.body,body=input.value.trim(),file=e.target.querySelector('[name=dm_image]')?.files?.[0],send=e.target.querySelector('[type=submit]');
+    if(!dmReady||!activePeerId||(!body&&!file))return;send.disabled=true;let path=null;
+    try{if(file)path=await uploadClubImage(file);const record={sender_id:session.user.id,recipient_id:activePeerId,body:body||'Shared an image'};if(mediaReady)record.image_path=path;const {error}=await db.from('direct_messages').insert(record);if(error)throw error;input.value='';input.blur();if(file)e.target.querySelector('[name=dm_image]').value='';await refresh();}catch(error){if(path)await db.storage.from('club-media').remove([path]);fail(error);}finally{send.disabled=false;}return;
   }
   if(e.target.classList.contains('feed-comment-form')){
     e.preventDefault();const formEl=e.target,body=formEl.elements.body.value.trim(),post_id=formEl.dataset.post,send=formEl.querySelector('[type=submit]');
@@ -582,10 +618,10 @@ async function submit(e) {
   }
   if(e.target.id==='chatComposer'){
     e.preventDefault(); if(!session||!activeChannelId)return;
-    const input=e.target.querySelector('[name=body]'),body=input.value.trim(),send=e.target.querySelector('[type=submit]');
-    if(!body)return;send.disabled=true;
-    try {const {error}=await db.from('channel_messages').insert({channel_id:activeChannelId,author_id:session.user.id,body});if(error)throw error;input.value='';await refreshChat();}
-    catch(error){fail(error);}finally{send.disabled=false;}return;
+    const input=e.target.querySelector('[name=body]'),body=input.value.trim(),file=e.target.querySelector('[name=chat_image]')?.files?.[0],send=e.target.querySelector('[type=submit]');
+    if(!body&&!file)return;send.disabled=true;let path=null;
+    try {if(file)path=await uploadClubImage(file);const record={channel_id:activeChannelId,author_id:session.user.id,body:body||'Shared an image'};if(mediaReady)record.image_path=path;const {error}=await db.from('channel_messages').insert(record);if(error)throw error;input.value='';if(file)e.target.querySelector('[name=chat_image]').value='';const label=$('#chatImageName');if(label)label.hidden=true;await refreshChat();}
+    catch(error){if(path)await db.storage.from('club-media').remove([path]);fail(error);}finally{send.disabled=false;}return;
   }
   if(e.target.id!=='editor')return; e.preventDefault(); if(!db)return;
   const formEl=e.target,kind=formEl.dataset.kind,values=Object.fromEntries(new FormData(formEl));
@@ -617,11 +653,17 @@ async function submit(e) {
       payload.body=String(payload.body).trim();payload.link_url=payload.link_url?cleanUrl(payload.link_url):null;
       if(values.link_url&&!payload.link_url)throw Error('Enter a valid HTTPS link.');
       payload.document_id=payload.document_id||null;payload.author_id=session.user.id;
-      return await mutate(()=>db.from('activity_posts').insert(payload));
+      const file=formEl.querySelector('[name=post_image]')?.files?.[0];delete payload.post_image;
+      let path=null;try{if(file)path=await uploadClubImage(file);if(mediaReady)payload.image_path=path;const {error}=await db.from('activity_posts').insert(payload);if(error)throw error;close();await refresh();show('Update shared with the club.');return;}
+      catch(error){if(path)await db.storage.from('club-media').remove([path]);throw error;}
     }
     if(kind==='feedEdit'){
-      const {error}=await db.rpc('edit_activity_post',{p_id:payload.post_id,p_body:String(payload.body).trim()});if(error)throw error;
+      const {error}=mediaReady?await db.rpc('edit_activity_post_details',{p_id:payload.post_id,p_body:String(payload.body).trim(),p_title:payload.title||'',p_category:payload.category}):await db.rpc('edit_activity_post',{p_id:payload.post_id,p_body:String(payload.body).trim()});if(error)throw error;
       close();await refresh();show('Update edited.');return;
+    }
+    if(kind==='feedReply'){
+      const {error}=await db.from('activity_comments').insert({post_id:payload.post_id,parent_id:payload.parent_id,author_id:session.user.id,body:String(payload.body).trim()});if(error)throw error;
+      close();await refresh();show('Reply posted.');return;
     }
     if(kind==='editMessage'){
       const {error}=await db.rpc('edit_channel_message',{p_id:payload.message_id,p_body:String(payload.body).trim()});if(error)throw error;
