@@ -132,7 +132,7 @@ function announcements() {
 
 function field(label,name,type='text',value='',required=true) {return `<div class="field"><label for="${name}">${esc(label)}</label><input id="${name}" name="${name}" type="${type}" value="${esc(value)}" ${required?'required':''}></div>`;}
 function area(label,name,value='') {return `<div class="field"><label for="${name}">${esc(label)}</label><textarea id="${name}" name="${name}" required>${esc(value)}</textarea></div>`;}
-function select(label,name,options) {return `<div class="field"><label for="${name}">${esc(label)}</label><select id="${name}" name="${name}">${options.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('')}</select></div>`;}
+function select(label,name,options,current='') {return `<div class="field"><label for="${name}">${esc(label)}</label><select id="${name}" name="${name}">${options.map(x=>`<option value="${esc(x)}" ${x===current?'selected':''}>${esc(x)}</option>`).join('')}</select></div>`;}
 function form(title,description,kind,fields) {modal(`<span class="eyebrow">INNOVATEX WORKSPACE</span><h2>${title}</h2><p class="muted">${description}</p><form id="editor" data-kind="${kind}" class="form-stack">${fields}<button class="button" type="submit">Save ${title.toLowerCase()}</button></form>`);}
 function signInDialog() { if(!configured) return show('Add your Supabase URL and publishable key to config.js first.'); form('Member sign in','Enter your email to receive a secure sign-in link.','login',field('Email address','email','email')); }
 function projectDetail(id) {
@@ -150,7 +150,7 @@ function actions(e) {
   if(action==='profileForm')return form('My profile','Help other members recognize your work.','profile',field('Full name','full_name','text',me?.full_name||'')+field('Programme / department','programme','text',me?.programme||'',false)+field('Skills / interests','skills','text',me?.skills||'',false));
   if(action==='projectForm')return form('New project','Start with a clear problem and the first test.','project',field('Project title','title')+field('One-line summary','summary')+area('Description and goal','description'));
   if(action==='projectDetail')return projectDetail(id);
-  if(action==='projectEdit'){const p=(cache.projects||[]).find(x=>x.id===activeProject);return form('Update project','Keep the plan current.','projectEdit',field('Title','title','text',p.title)+field('Summary','summary','text',p.summary)+area('Description','description',p.description)+select('Status','status',['planning','building','testing','complete'])+field('Progress 0–100','progress','number',p.progress));}
+  if(action==='projectEdit'){const p=(cache.projects||[]).find(x=>x.id===activeProject);return form('Update project','Keep the plan current.','projectEdit',field('Title','title','text',p.title)+field('Summary','summary','text',p.summary)+area('Description','description',p.description)+select('Status','status',['planning','building','testing','complete'],p.status)+field('Progress 0–100','progress','number',p.progress));}
   if(action==='taskForm')return form('Project task','Make the next step specific.','task',field('Task title','title')+field('Due date','due_at','date','',false));
   if(action==='taskDone')return mutate(async()=>db.from('project_tasks').update({status:'done'}).eq('id',id).select().single());
   if(action==='topicForm'||action==='projectTopic'){
@@ -170,7 +170,7 @@ async function submit(e) {
   const formEl=e.target,kind=formEl.dataset.kind,values=Object.fromEntries(new FormData(formEl));
   const submitBtn=formEl.querySelector('[type=submit]'); submitBtn.disabled=true;
   try {
-    if(kind==='login'){const {error}=await db.auth.signInWithOtp({email:values.email,emailRedirectTo:location.origin+location.pathname});if(error)throw error;close();show('Check your email for the sign-in link.');return;}
+    if(kind==='login'){const {error}=await db.auth.signInWithOtp({email:values.email,options:{emailRedirectTo:location.origin+location.pathname}});if(error)throw error;close();show('Check your email for the sign-in link.');return;}
     const payload={...values};
     for(const key of ['starts_at','ends_at','due_at']) if(key in payload) payload[key]=payload[key]?new Date(payload[key]).toISOString():null;
     for(const key of ['link_url','resource_url','meet_url']) if(key in payload) payload[key]=payload[key]?cleanUrl(payload[key]):null;
