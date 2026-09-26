@@ -196,6 +196,7 @@ function render() {
   $('#pageCrumb').textContent=page==='founder-room'?'Founder room':page[0].toUpperCase()+page.slice(1);
   document.querySelectorAll('#nav a').forEach(a=>{a.classList.toggle('active',a.dataset.page===page);a.hidden=!!a.dataset.private&&!clubAccess();});
   document.querySelectorAll('#nav [data-founder]').forEach(a=>a.hidden=!founder());
+  document.querySelectorAll('#nav [data-investors-nav]').forEach(a=>a.hidden=!founder());
   document.querySelectorAll('#nav [data-teacher]').forEach(a=>a.hidden=!teacher());
   document.querySelectorAll('#nav [data-investor]').forEach(a=>a.hidden=!investor()&&!admin());
   document.querySelectorAll('#nav [data-admin]').forEach(a=>a.hidden=!admin());
