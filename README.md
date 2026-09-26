@@ -15,6 +15,8 @@ A responsive club workspace for a TTU engineering community. The site is static 
 - Member profiles with a headline, bio and availability, plus private one-to-one messaging and unread counts. Optional dark theme is saved in the browser.
 - New applicants choose member, teacher, founder or investor before email verification. The selected type is a request until an administrator approves it. Teachers can publish courses; founders have a private meeting room; investors have a separate curated portal and inquiry form.
 - Administrator dashboard for pending applications, reports, club activity, investor inquiries and selected CSV exports.
+- Role-specific sidebar: members use community pages, teachers get a Teaching studio, founders get the Founder room, investors use their separate portal, and administrators get oversight pages. Approved profiles display a role badge.
+- Approved teachers and administrators can upload PDF notes, PowerPoint slides and Word guides (up to 20 MB) to a private learning library associated with a course or shared with the whole club. Approved club members can download the visible materials.
 - Blog-style engineering posts with an optional headline, topic, cover image, links and document attachments; comments support one level of replies. Channel messages can include an image selected from the member's gallery.
 - Project collaborators, milestones and task assignments; meeting RSVPs, document versions, reports and moderation actions.
 - Administrator-published courses, alerts and events. Events can include Google Meet links and open in Google Calendar or download as an ICS file.
@@ -52,6 +54,10 @@ Run [`supabase/upgrade_media_threads.sql`](supabase/upgrade_media_threads.sql) *
 Then run [`supabase/upgrade_profile_images.sql`](supabase/upgrade_profile_images.sql) **once**. Approved members can upload, replace or remove their own profile photo from the Members page. Photos appear in the directory, feed, channels and direct messages through temporary links. The private `club-media` bucket accepts images up to 5 MB; only approved members can view an approved member's current profile photo. The home page uses original concept artwork in optimized WebP files under `assets/`; it does not depict actual club members or events. Interface motion follows the device's reduced motion preference.
 
 Run [`supabase/upgrade_roles_investors.sql`](supabase/upgrade_roles_investors.sql) **once** after the profile images upgrade. This adds applicant types, administrator assignment of the approved role, a separate investor portal and private investor inquiries. Existing approved users keep their existing roles. New applicants remain pending until an administrator approves them under **Admin dashboard → Applications**. Choosing a type in the sign-in form never grants privileges directly. Teachers can publish courses after approval. Approved investors can read curated investor updates and their own inquiries; they cannot read club channels, posts, documents or private messages. Public founder profiles remain subject to consent. Administrators can publish investor updates from the portal and review inquiries there.
+
+Then run [`supabase/upgrade_teacher_materials.sql`](supabase/upgrade_teacher_materials.sql) **once**. It creates a private `club-learning` bucket and learning materials table. Only approved teachers and administrators may upload PDF, PPT, PPTX, DOC and DOCX files, up to 20 MB each. Approved members can download published learning files from **Courses**. Teachers manage uploads in **Teaching studio**; administrators can hide or restore a material. This is separate from the collaborative **Document library**, where approved members may continue sharing general project files.
+
+The entry screen has separate **Create an account** and **I have an account** choices. Creating an account verifies the email code once and creates a pending application. Returning users request a new one-time code for sign-in; that path does not create another account. Both flows require the custom Supabase OTP email templates from step 2 above. A successful code exchange creates a Supabase session; account approval and role permissions remain in the database.
 
 Once the first administrator has been promoted using step 5 above:
 
@@ -100,7 +106,7 @@ For a local preview, run `python3 -m http.server 8000` from the repository root 
 | Visitor | Public home, founders, investors, privacy and conduct pages |
 | Applicant | Own application and privacy pages while approval is pending; requested type does not confer access |
 | Member | Directory and profiles, private direct messages, activity posts and comments, channels, documents, news, projects and assigned tasks, discussions, events, RSVPs and inbox |
-| Teacher | Member abilities plus course publishing after approval |
+| Teacher | Member abilities plus course publishing and learning material uploads after approval |
 | Founder | Member abilities plus private founder meetings after approval or accepting an invitation |
 | Investor | Curated investor updates and own private inquiries, separate from the member workspace |
 | Administrator | Member abilities plus account reviews, moderation, CSV and JSON export, investor updates and inquiries, publishing, channel creation and founder invitations |
