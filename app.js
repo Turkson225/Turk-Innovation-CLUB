@@ -52,7 +52,7 @@ let pendingEmail = sessionStorage.getItem('innovatex.pendingEmail') || '';
 let pendingType = sessionStorage.getItem('innovatex.pendingType') || 'member';
 let pendingAuthMode = sessionStorage.getItem('innovatex.pendingAuthMode') === 'signup' ? 'signup' : 'signin';
 let toastTimer;
-const pages = ['home','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','discussions','courses','teaching','events','calendar','announcements','founder-room'];
+const pages = ['home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','discussions','courses','teaching','events','calendar','announcements','founder-room'];
 const approved = () => !!me && (!('membership_status' in me) || me.membership_status==='approved');
 const investor = () => approved() && me?.role==='investor';
 const clubAccess = () => approved() && !investor();
@@ -68,6 +68,7 @@ const memberAvatar = (id,large=false) => {const p=(cache.profiles||[]).find(x=>x
 const roleBadge = p => {const labels={member:'Member',teacher:'Teacher',founder:'Founder',investor:'Investor',admin:'Administrator'};const role=Object.hasOwn(labels,p?.role)?p.role:'member';return `<span class="member-badge badge-${role}" title="Approved ${esc(labels[role])} account">${labels[role]}</span>`;};
 const iconPaths={home:'<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',founders:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',privacy:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',application:'<path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/>',members:'<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M17 5a3 3 0 0 1 0 6M19 14a5 5 0 0 1 2 4v2"/>',messages:'<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3 8.5 8.5 0 0 1 21 11.5z"/>',notifications:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',feed:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',channels:'<path d="M4 5h16v11H8l-4 4zM8 9h8M8 12h5"/>',library:'<path d="M4 4h12l4 4v12H4zM16 4v4h4M8 13h8M8 17h6"/>',news:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h4M13 12h4M7 16h10"/>',projects:'<path d="M3 7h7l2 2h9v11H3zM3 7V4h8l2 3"/>',discussions:'<path d="M4 4h16v12H8l-4 4zM8 9h8M8 12h5"/>',courses:'<path d="M3 6 12 3l9 3-9 3-9-3zM5 10v7c4 3 10 3 14 0v-7M21 7v8"/>',events:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M8 14h3M8 17h3"/>',announcements:'<path d="M3 10h4l12-5v14L7 14H3zM7 14l2 7h4l-2-6M21 9v6"/>','founder-room':'<path d="m12 2 2.5 6.5L21 11l-6.5 2.5L12 20l-2.5-6.5L3 11l6.5-2.5z"/>',applications:'<path d="M5 3h14v18H5zM8 8h8M8 13l2 2 5-5"/>',moderation:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM12 7v6M12 17h.01"/>'};
 iconPaths.investors='<path d="M3 20h18M5 16l5-5 4 3 5-7M16 7h3v3"/>';
+iconPaths.about='<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>';
 iconPaths['investor-portal']='<path d="M3 20h18M5 16l5-5 4 3 5-7M16 7h3v3"/>';
 iconPaths.admin='<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="5" rx="1"/><rect x="13" y="10" width="8" height="11" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/>';
 iconPaths.teaching='<path d="M3 5h18v13H3zM7 22h10M12 18v4M7 10h10M7 13h6"/>';
@@ -90,7 +91,7 @@ async function refresh() {
     const results=await Promise.allSettled(['investor_updates','investor_inquiries'].map(n=>read(n,q=>q.order('created_at',{ascending:false}))));
     cache={profiles:[me],investor_updates:results[0].status==='fulfilled'?results[0].value:[],investor_inquiries:results[1].status==='fulfilled'?results[1].value:[]};
     communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;mediaUrls.clear();
-    if(previous!==`${me.membership_status}:${me.role}`||!['home','founders','investors','investor-portal','privacy'].includes(page)) {route();return;}
+    if(previous!==`${me.membership_status}:${me.role}`||!['home','about','founders','investors','investor-portal','privacy'].includes(page)) {route();return;}
     render();return;
   }
   const names=['profiles','projects','project_tasks','topics','replies','courses','learning_materials','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes','direct_messages','direct_message_reads','investor_updates','investor_inquiries'];
@@ -157,9 +158,9 @@ async function signedIn(newSession) {
     }
     if(communityReady && clubAccess()) chatRealtime=db.channel('innovatex-chat')
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'channel_messages'},refreshChat).subscribe();
-  } else { me=null;roleReady=false;cache={};mediaUrls.clear(); if(!['home','founders','investors'].includes(page)) page='home'; await loadPublic(); }
-  if(session&&!approved()&&!['application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
-  if(investor()&&!['home','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
+  } else { me=null;roleReady=false;cache={};mediaUrls.clear(); if(!['home','about','founders','investors'].includes(page)) page='home'; await loadPublic(); }
+  if(session&&!approved()&&!['about','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
+  if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='founder-room'&&!founder()) {page='founders';history.replaceState(null,'','#founders');}
   render();
 }
@@ -190,9 +191,9 @@ async function init() {
 function updateThemeButton(){const dark=document.documentElement.dataset.theme==='dark';$('#themeButton').textContent=dark?'☀':'☾';$('#themeButton').setAttribute('aria-label',dark?'Switch to light theme':'Switch to dark theme');}
 function route() {
   const requested=location.hash.slice(1).split('/')[0] || 'home';page=pages.includes(requested)?requested:'home';
-  if(!session&&(authReady||!configured)&&!['home','founders','investors','privacy'].includes(page)){page='home';history.replaceState(null,'','#home');show('Sign in to open the workspace.');}
-  if(session&&!approved()&&!['application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
-  if(investor()&&!['home','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
+  if(!session&&(authReady||!configured)&&!['home','about','founders','investors','privacy'].includes(page)){page='home';history.replaceState(null,'','#home');show('Sign in to open the workspace.');}
+  if(session&&!approved()&&!['about','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
+  if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='investor-portal'&&authReady&&!investor()&&!admin()){page='investors';history.replaceState(null,'','#investors');}
   if(page==='teaching'&&authReady&&!teacher()){page=clubAccess()?'courses':'home';history.replaceState(null,'','#'+page);}
   if(page==='founder-room'&&authReady&&!founder()){page='founders';history.replaceState(null,'','#founders');show('Founder access required.');}
@@ -217,7 +218,7 @@ function render() {
   $('#notificationBadge').textContent=(cache.notifications||[]).filter(n=>!n.read_at).length;
   const unreadDm=(cache.direct_messages||[]).filter(m=>m.recipient_id===session?.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;
   $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
-  const views={home,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
+  const views={home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').innerHTML=views[page]();
   $('#content').classList.toggle('view-enter',page!==lastRenderedPage);lastRenderedPage=page;
   if(page==='channels'){const stream=$('#messageStream');if(stream)stream.scrollTop=stream.scrollHeight;if(activeChannelId&&enhancedReady)markChannelRead(activeChannelId);}
@@ -236,12 +237,47 @@ function home() {
   ${session?`<div class="section-heading"><h2>Your community</h2><p>Find a conversation or share what you’re learning.</p></div><div class="grid grid-4"><a class="card feature-card" href="#feed"><span class="feature-icon">${iconSvg('feed')}</span><h3>Activity feed</h3><p>Share progress and hear from club members.</p><span class="link">Open feed →</span></a><a class="card feature-card" href="#channels"><span class="feature-icon">${iconSvg('channels')}</span><h3>Member channels</h3><p>Get help and work through ideas together.</p><span class="link">Open channels →</span></a><a class="card feature-card" href="#library"><span class="feature-icon">${iconSvg('library')}</span><h3>Document library</h3><p>Notes, schematics and useful resources in one place.</p><span class="link">Browse files →</span></a><a class="card feature-card" href="#news"><span class="feature-icon">${iconSvg('news')}</span><h3>Technology news</h3><p>Discover engineering stories worth discussing.</p><span class="link">Read stories →</span></a></div>`:''}
   ${session?`<div class="section-heading"><h2>What’s happening</h2><a class="link" href="#events">View calendar →</a></div><div class="split"><div class="panel"><h3>Latest alerts</h3>${latest.length?latest.map(a=>`<div class="list-item"><span class="icon-box" style="margin:0">◈</span><div><strong>${esc(a.title)}</strong><small>${date(a.created_at)}</small><p class="subtle">${esc(a.body)}</p></div></div>`).join(''):empty('No alerts yet','Official club updates will appear here.')}</div><div class="panel"><h3>Coming up</h3>${upcoming.length?upcoming.map(e=>eventRow(e)).join(''):empty('Nothing scheduled','The next club event will appear here.')}</div></div>`:''}`;
 }
+function about() {
+  const tracks=[
+    {name:'Controls and Automation',detail:'Wire sensors and actuators, design control logic, and test systems that respond to the real world.',outcome:'Prototype: a working controller',icon:'projects'},
+    {name:'Software and Programming',detail:'Write code, build interfaces and connect data to useful tools for people and projects.',outcome:'Prototype: an app or dashboard',icon:'courses'},
+    {name:'Electronics and Robotics',detail:'Assemble circuits, integrate microcontrollers and bring moving or connected machines to life.',outcome:'Prototype: a tested device or robot',icon:'projects'},
+    {name:'AI & Machine Learning',detail:'Explore data, train and evaluate models, and put a useful idea into a working demonstration.',outcome:'Prototype: a usable model',icon:'news'}
+  ];
+  const join=clubAccess()?'<a class="button" href="#courses">Explore practical courses ↗</a>':investor()?'<a class="button" href="#investor-portal">Explore the investor portal ↗</a>':session?'<a class="button" href="#application">View my application ↗</a>':button('Apply to join ↗','login');
+  return `<section class="about-hero">
+    <div class="about-hero-media"><img class="about-hero-image" src="assets/club-about-lab.webp" alt="Illustration of engineering students working together on a prototype"><div class="about-hero-overlay"></div></div>
+    <div class="about-hero-copy"><span class="eyebrow about-kicker">ABOUT INNOVATEX · TAKORADI TECHNICAL UNIVERSITY</span><h1>Learn it. Build it.<br>Make it matter.</h1><p>InnovateX Engineering Club is a student-led space for curious builders at TTU. We bring people from different disciplines together to learn practical skills, test ideas and turn promising prototypes into work we can share.</p><div class="hero-actions">${join}<a class="button button-outline" href="#founders">Meet the founders</a></div></div>
+    <small class="about-image-note">Illustrative imagery</small>
+  </section>
+  <section class="about-section" aria-labelledby="about-purpose"><div class="section-heading"><div><span class="eyebrow">OUR PURPOSE</span><h2 id="about-purpose">Engineering grows when we build together.</h2></div></div>
+    <div class="about-split"><div class="about-intro"><p class="lead">We are an alumni-initiated, student-led community where learning extends beyond the lecture room. Members share knowledge, help each other through technical challenges and create work they can demonstrate.</p><p>Our focus is practical: define a problem, make a first version, test it, learn from the result and improve it. The club platform connects those steps through courses, project planning, member channels, documents and events.</p></div>
+    <div class="about-photo"><img src="assets/club-about-team.webp" alt="Illustration of club members collaborating around an engineering project" loading="lazy"><span class="about-photo-caption">People + practical skills + shared projects <small>Illustrative imagery</small></span></div></div>
+  </section>
+  <section class="about-section" aria-labelledby="about-direction"><div class="section-heading"><div><span class="eyebrow">THE DIRECTION</span><h2 id="about-direction">A clear reason to come together.</h2></div></div>
+    <div class="grid grid-2"><article class="card about-statement"><span class="eyebrow">01 / VISION</span><h3>A community of engineers who turn ideas into useful solutions.</h3><p>We want students to leave with the confidence, skills and collaborators to solve problems beyond the classroom.</p></article>
+    <article class="card about-statement"><span class="eyebrow">02 / MISSION</span><h3>Learn by doing, then share what works.</h3><p>We connect members with practical workshops, team projects, constructive feedback and opportunities to present their work.</p></article></div>
+  </section>
+  <section class="about-section" id="about-tracks" aria-labelledby="about-tracks-title"><div class="section-heading"><div><span class="eyebrow">FOUR LEARNING TRACKS</span><h2 id="about-tracks-title">Pick a skill. Leave with a working result.</h2></div><p>Workshops centre on a build, a test and what members learned.</p></div>
+    <div class="about-track-grid">${tracks.map((track,i)=>`<article class="card about-track-card"><span class="about-track-number">0${i+1}</span><span class="feature-icon">${iconSvg(track.icon)}</span><h3>${track.name}</h3><p>${track.detail}</p><span class="about-outcome">${track.outcome}</span></article>`).join('')}</div>
+  </section>
+  <section class="about-section" aria-labelledby="about-process-title"><div class="section-heading"><div><span class="eyebrow">HOW WE WORK</span><h2 id="about-process-title">A place to begin. A team to keep going.</h2></div></div>
+    <div class="about-process"><article class="about-step"><span>01</span><h3>Find your people</h3><p>Meet members across disciplines, introduce an idea or join a conversation.</p></article><article class="about-step"><span>02</span><h3>Build and test</h3><p>Learn a practical skill, plan with a team and document what you discover.</p></article><article class="about-step"><span>03</span><h3>Show your work</h3><p>Share your progress, get feedback and prepare strong projects for demonstrations and competitions.</p></article></div>
+  </section>
+  <section class="about-section" aria-labelledby="about-values-title"><div class="section-heading"><div><span class="eyebrow">OUR CULTURE</span><h2 id="about-values-title">The habits behind good work.</h2></div></div>
+    <div class="about-values"><div class="about-value"><strong>Curiosity</strong><p>Ask good questions and keep learning.</p></div><div class="about-value"><strong>Collaboration</strong><p>Bring different skills to one challenge.</p></div><div class="about-value"><strong>Care</strong><p>Work safely, respect people and build responsibly.</p></div><div class="about-value"><strong>Follow-through</strong><p>Test the idea and share honest results.</p></div></div>
+  </section>
+  <section class="about-section" aria-labelledby="about-leadership-title"><div class="section-heading"><div><span class="eyebrow">PEOPLE &amp; LEADERSHIP</span><h2 id="about-leadership-title">Built with students, supported by mentors.</h2></div></div>
+    <div class="grid grid-3"><div class="card"><h3>Members</h3><p>Learn, collaborate, share projects and help shape the community.</p></div><div class="card"><h3>Founders &amp; teachers</h3><p>Approved founders coordinate the club; approved teachers can guide practical learning and share materials.</p></div><div class="card"><h3>Proposed patron</h3><p>We hope to invite the Dean of Students’ Affairs to serve as patron. Patronage is subject to acceptance.</p></div></div><p class="subtle">Founders are introduced on the <a class="link" href="#founders">Founders page</a> once each person confirms their profile.</p>
+  </section>
+  <section class="about-cta"><span class="eyebrow">YOUR NEXT BUILD STARTS HERE</span><h2>Bring an idea. Bring a question.<br>Bring your willingness to learn.</h2><p>Discover the people and projects behind InnovateX Engineering Club.</p><div class="hero-actions">${join}<a class="button button-outline" href="#founders">Explore the team →</a></div></section>`;
+}
 function founders() {
   const list=cache.founders||[];
   return `${head('THE PEOPLE BEHIND THE IDEA','Founding team','A four-person team shaping InnovateX with student leaders and university guidance.',admin()?button('+ Add founder','founderForm'):'')}
-  <div class="notice">Founder profiles are added only after each person agrees to be listed. The Dean of Students’ Affairs has been invited to serve as patron; patronage is pending acceptance.</div>
+  <div class="notice">Founder profiles are added only after each person agrees to be listed. We hope to invite the Dean of Students’ Affairs to serve as patron; patronage is subject to acceptance.</div>
   <div class="founder-invite-banner"><div><span class="eyebrow">FOUNDER ACCESS</span><h3>Build the club together.</h3><p>Administrators approve founder applications. Accepted founders can plan together and meet in a private room.</p></div>${founder()?`<a class="button" href="#founder-room">Open founder room →</a>`:!session?button('Apply as founder','login'):''}</div>
-  <div class="section-heading"><h2>Meet the founders</h2></div><div class="grid grid-4">${list.length?list.map(f=>`<div class="card founder-card">${avatar(f.name,true)}<div class="role">${esc(f.role)}</div><h3>${esc(f.name)}</h3><p>${esc(f.bio||'Founding team member')}</p>${f.link_url?`<a class="link" target="_blank" rel="noopener noreferrer" href="${esc(cleanUrl(f.link_url))}">Profile ↗</a>`:''}</div>`).join(''):[1,2,3,4].map((n)=>`<div class="card founder-card">${avatar('IX',true)}<div class="role">Founding member ${n}</div><h3>Profile coming soon</h3><p>We’ll introduce each founder after the team confirms their details.</p></div>`).join('')}</div><div class="section-heading"><h2>How the club is led</h2></div><div class="grid grid-3"><div class="card"><h3>Student executive</h3><p>Elected students lead training, projects, communications and finance.</p></div><div class="card"><h3>Founding advisers</h3><p>Founders help with continuity, mentoring and partnerships.</p></div><div class="card"><h3>Proposed patron</h3><p>The Dean of Students’ Affairs has been invited to guide the club, subject to acceptance.</p></div></div>`;
+  <div class="section-heading"><h2>Meet the founders</h2></div><div class="grid grid-4">${list.length?list.map(f=>`<div class="card founder-card">${avatar(f.name,true)}<div class="role">${esc(f.role)}</div><h3>${esc(f.name)}</h3><p>${esc(f.bio||'Founding team member')}</p>${f.link_url?`<a class="link" target="_blank" rel="noopener noreferrer" href="${esc(cleanUrl(f.link_url))}">Profile ↗</a>`:''}</div>`).join(''):[1,2,3,4].map((n)=>`<div class="card founder-card">${avatar('IX',true)}<div class="role">Founding member ${n}</div><h3>Profile coming soon</h3><p>We’ll introduce each founder after the team confirms their details.</p></div>`).join('')}</div><div class="section-heading"><h2>How the club is led</h2></div><div class="grid grid-3"><div class="card"><h3>Student executive</h3><p>Elected students lead training, projects, communications and finance.</p></div><div class="card"><h3>Founding advisers</h3><p>Founders help with continuity, mentoring and partnerships.</p></div><div class="card"><h3>Proposed patron</h3><p>We hope to invite the Dean of Students’ Affairs to guide the club, subject to acceptance.</p></div></div>`;
 }
 function investors(){
   return `${head('PARTNER WITH INNOVATEX','Investors & partners','Explore how engineering ideas become useful prototypes through a student-led community.')}
