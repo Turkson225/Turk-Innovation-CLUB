@@ -1,6 +1,6 @@
 # InnovateX Engineering Club platform
 
-A responsive club workspace for a TTU engineering community. The site is static and can be hosted on GitHub Pages. Supabase provides email sign-in and a database protected by row level security.
+A responsive workspace for a practical engineering and technology club. The site is static and can be hosted on GitHub Pages. Supabase provides email sign-in and a database protected by row level security.
 
 ## What is included
 
@@ -37,7 +37,7 @@ A responsive club workspace for a TTU engineering community. The site is static 
 
    Check that exactly one row changed. The browser cannot promote accounts. An administrator can publish founder bios, courses, events and alerts. Other members can create projects and discussions.
 
-6. Add the founding team only after they agree to have their name and biography shown publicly. The Dean's patronage is proposed and subject to acceptance, so the interface does not claim it has been granted.
+6. Add the founding team only after they agree to have their name and biography shown publicly. The Dean of Students’ Affairs is a proposed patron; the interface does not claim the role has been accepted.
 
 ## Activate community pages
 
