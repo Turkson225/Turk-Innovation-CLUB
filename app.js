@@ -9,10 +9,10 @@ const cleanUrl = (s) => { try { const u = new URL(s); return u.protocol === 'htt
 const date = (s) => s ? new Date(s).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : 'TBD';
 const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'TBD';
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
-let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false;
+let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, activePeerId = null;
 let pendingEmail = sessionStorage.getItem('innovatex.pendingEmail') || '';
 let toastTimer;
-const pages = ['home','founders','privacy','application','applications','moderation','notifications','members','feed','channels','library','news','projects','discussions','courses','events','announcements','founder-room'];
+const pages = ['home','founders','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','discussions','courses','events','announcements','founder-room'];
 const approved = () => !!me && (!('membership_status' in me) || me.membership_status==='approved');
 const admin = () => approved() && me?.role === 'admin';
 const founder = () => approved() && ['founder','admin'].includes(me?.role);
@@ -28,16 +28,18 @@ const read = async (table,query=q=>q) => { const {data,error}=await query(db.fro
 
 async function refresh() {
   if (!db || !session) return;
-  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;render();return;}
-  const names=['profiles','projects','project_tasks','topics','replies','courses','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes'];
+  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;render();return;}
+  const names=['profiles','projects','project_tasks','topics','replies','courses','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes','direct_messages','direct_message_reads'];
   const unordered=new Set(['channel_reads','project_members','event_rsvps','founder_meeting_rsvps']);
   const results=await Promise.allSettled(names.map(n=>read(n,q=>unordered.has(n)?q:q.order('created_at',{ascending:false}))));
   results.forEach((r,i)=>{ if(r.status==='fulfilled') cache[names[i]]=r.value; else console.error(names[i],r.reason); });
   communityReady=results[names.indexOf('channels')].status==='fulfilled';
   enhancedReady=results[names.indexOf('channel_reads')].status==='fulfilled';
   feedReady=results[names.indexOf('activity_posts')].status==='fulfilled';
+  dmReady=results[names.indexOf('direct_messages')].status==='fulfilled';
   if(page==='notifications' && document.activeElement?.closest('#content')) { render(); return; }
   if(page==='channels' && document.activeElement?.closest('#chatComposer')) { renderChatMessages(); return; }
+  if(page==='messages' && document.activeElement?.closest('#dmComposer')) return;
   render();
 }
 async function refreshChat() {
@@ -82,6 +84,10 @@ async function signedIn(newSession) {
   render();
 }
 async function init() {
+  let savedTheme='';try{savedTheme=localStorage.getItem('innovatex.theme')||'';}catch{}
+  document.documentElement.dataset.theme=savedTheme==='dark'?'dark':'light';
+  $('#themeButton').onclick=()=>{const next=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=next;try{localStorage.setItem('innovatex.theme',next);}catch{}updateThemeButton();};
+  updateThemeButton();
   $('#todayLabel').textContent=new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
   $('#menuBtn').onclick=()=>$('#sidebar').classList.toggle('open');
   $('#modal').addEventListener('click',e=>{ if(e.target===$('#modal')) close(); });
@@ -90,6 +96,7 @@ async function init() {
   $('#authButton').onclick=()=>session ? signOut() : signInDialog();
   document.addEventListener('click',actions);
   document.addEventListener('submit',submit);
+  document.addEventListener('input',e=>{if(e.target.id==='dmFilter'){const term=e.target.value.toLowerCase();document.querySelectorAll('.dm-peer').forEach(b=>b.hidden=!b.textContent.toLowerCase().includes(term));}});
   route();
   if(!db) return;
   db.auth.onAuthStateChange((_event,s)=>{ if(s?.user.id !== session?.user.id) setTimeout(()=>signedIn(s),0); });
@@ -98,6 +105,7 @@ async function init() {
   document.addEventListener('visibilitychange',()=>{ if(!document.hidden && session) {touchPresence();refresh();} });
   window.addEventListener('pagehide',()=>{ if(session) touchPresence(false); });
 }
+function updateThemeButton(){const dark=document.documentElement.dataset.theme==='dark';$('#themeButton').textContent=dark?'☀':'☾';$('#themeButton').setAttribute('aria-label',dark?'Switch to light theme':'Switch to dark theme');}
 function route() {
   const requested=location.hash.slice(1).split('/')[0] || 'home';page=pages.includes(requested)?requested:'home';
   if(!session&&(authReady||!configured)&&!['home','founders','privacy'].includes(page)){page='home';history.replaceState(null,'','#home');show('Sign in to open the workspace.');}
@@ -118,9 +126,12 @@ function render() {
   const online=(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length;
   $('#onlineBadge').textContent=online;
   $('#notificationBadge').textContent=(cache.notifications||[]).filter(n=>!n.read_at).length;
-  const views={home,founders,privacy,application,applications,moderation,notifications,members,feed,channels,library,news,projects,discussions,courses,events,announcements,'founder-room':founderRoom};
+  const unreadDm=(cache.direct_messages||[]).filter(m=>m.recipient_id===session?.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;
+  $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
+  const views={home,founders,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,discussions,courses,events,announcements,'founder-room':founderRoom};
   $('#content').innerHTML=views[page]();
   if(page==='channels'){const stream=$('#messageStream');if(stream)stream.scrollTop=stream.scrollHeight;if(activeChannelId&&enhancedReady)markChannelRead(activeChannelId);}
+  if(page==='messages'){const stream=$('#dmStream');if(stream)stream.scrollTop=stream.scrollHeight;if(activePeerId&&dmReady)markDmRead(activePeerId);}
 }
 function home() {
   const count=n=>(cache[n]||[]).length;
@@ -145,7 +156,28 @@ function members() {
   const invite=(cache.founder_invites||[]).find(i=>i.email===session?.user.email?.toLowerCase()&&!i.accepted_at);
   return `${head('COMMUNITY','Members','See who is around and connect with the people building InnovateX.',button('Edit my profile','profileForm'))}
   ${invite?`<div class="founder-invite-banner"><div><span class="eyebrow">FOUNDER INVITATION</span><h3>You’ve been invited to join the founding team.</h3><p>Accept with your verified account to open founder meetings and planning.</p></div>${button('Accept invitation','acceptFounder')}</div>`:''}
-  <div class="grid grid-4"><div class="stat"><small>Registered members</small><b>${people.length}</b><span>Club workspace</span></div><div class="stat"><small>Online now</small><b>${people.filter(online).length}</b><span>Seen within 65 seconds</span></div></div><div class="section-heading"><h2>Member directory</h2><p>Presence updates while the workspace is open.</p></div><div class="profile-grid">${people.length?people.sort((a,b)=>Number(online(b))-Number(online(a))).map(p=>`<div class="card person">${avatar(p.full_name||p.email)}<div><h3>${esc(p.full_name||'New member')}</h3><p class="subtle">${p.handle?'@'+esc(p.handle)+' · ':''}${esc(p.programme||'Member')} ${p.skills?'· '+esc(p.skills):''}</p></div>${online(p)?'<span class="online-dot" title="Online"></span>':''}</div>`).join(''):empty('No members yet','Member profiles will appear after signup.')}</div>`;
+  <div class="grid grid-4"><div class="stat"><small>Registered members</small><b>${people.length}</b><span>Club workspace</span></div><div class="stat"><small>Online now</small><b>${people.filter(online).length}</b><span>Seen within 65 seconds</span></div></div><div class="section-heading"><h2>Member directory</h2><p>Presence updates while the workspace is open.</p></div><div class="profile-grid">${people.length?people.sort((a,b)=>Number(online(b))-Number(online(a))).map(p=>`<div class="card person">${avatar(p.full_name||p.email)}<div><h3>${esc(p.full_name||'New member')}</h3><p class="subtle">${esc(p.headline||p.programme||'Member')}</p></div>${online(p)?'<span class="online-dot" title="Online"></span>':''}<button class="text-button" data-action="memberProfile" data-id="${esc(p.id)}">Profile</button></div>`).join(''):empty('No members yet','Member profiles will appear after signup.')}</div>`;
+}
+function memberProfile(id) {
+  const p=(cache.profiles||[]).find(x=>x.id===id&&x.membership_status==='approved');if(!p)return;
+  const online=p.last_seen_at&&Date.now()-new Date(p.last_seen_at)<65000;
+  modal(`<div class="member-profile-hero">${avatar(p.full_name,true)}<span class="tag ${online?'':'blue'}">${online?'Online':esc(p.availability||'Member')}</span></div><h2>${esc(p.full_name)}</h2><p class="profile-headline">${esc(p.headline||p.programme||'Club member')}</p><p class="subtle">${p.handle?'@'+esc(p.handle)+' · ':''}${esc(p.programme||'InnovateX Engineering Club')}</p><div class="profile-facts"><div><small>Role</small><strong>${esc(p.role)}</strong></div><div><small>Availability</small><strong>${esc(p.availability||'Available')}</strong></div><div><small>Joined</small><strong>${date(p.created_at)}</strong></div></div><h3>About</h3><p class="profile-bio">${esc(p.bio||'This member has not added a bio yet.')}</p><h3>Skills & interests</h3><p>${esc(p.skills||'Not listed yet.')}</p><div class="profile-buttons">${p.id===session?.user.id?button('Edit my profile','profileForm'):dmReady?`<button class="button" data-action="openDm" data-id="${esc(p.id)}">Message ${esc(p.full_name.split(' ')[0])} →</button>`:''}</div>`);
+}
+function messages() {
+  if(!dmReady)return head('MEMBER CONNECTIONS','Direct messages','Private conversations with club members.')+communityNotice();
+  const people=(cache.profiles||[]).filter(p=>p.id!==session.user.id&&p.membership_status==='approved');
+  const history=cache.direct_messages||[];
+  const peers=new Set(history.map(m=>m.sender_id===session.user.id?m.recipient_id:m.sender_id));
+  const ordered=people.slice().sort((a,b)=>Number(peers.has(b.id))-Number(peers.has(a.id))||a.full_name.localeCompare(b.full_name));
+  const peer=people.find(p=>p.id===activePeerId);
+  const thread=peer?history.filter(m=>(m.sender_id===session.user.id&&m.recipient_id===peer.id)||(m.recipient_id===session.user.id&&m.sender_id===peer.id)).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)):[];
+  return `${head('MEMBER CONNECTIONS','Direct messages','Discuss a project with another approved club member.')}
+    <div class="dm-layout"><div class="dm-list"><div class="dm-heading">Members <span>${people.length}</span></div><div class="dm-search"><label class="sr-only" for="dmFilter">Find a member</label><input id="dmFilter" placeholder="Find a member"></div>${ordered.map(p=>{const last=history.filter(m=>m.sender_id===p.id||m.recipient_id===p.id).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];const seen=(cache.direct_message_reads||[]).find(r=>r.peer_id===p.id)?.last_read_at;const unread=history.filter(m=>m.sender_id===p.id&&(!seen||new Date(m.created_at)>new Date(seen))).length;return `<button class="dm-peer ${p.id===activePeerId?'selected':''}" data-action="openDm" data-id="${esc(p.id)}">${avatar(p.full_name)}<span><strong>${esc(p.full_name)}</strong><small>${esc(last?.body||p.headline||p.programme||'Start a conversation')}</small></span>${unread?`<i class="unread-badge">${unread}</i>`:''}</button>`}).join('')||empty('No other members','Approved members will appear here.')}</div>
+    <div class="dm-conversation">${peer?`<div class="chat-head"><div><h2>${esc(peer.full_name)}</h2><p>${esc(peer.headline||peer.programme||'Club member')}</p></div><button class="text-button" data-action="memberProfile" data-id="${esc(peer.id)}">View profile</button></div><div id="dmStream" class="dm-stream">${thread.length?thread.map(m=>`<div class="dm-bubble ${m.sender_id===session.user.id?'mine':''}">${m.sender_id!==session.user.id?avatar(peer.full_name):''}<div><p>${esc(m.body)}</p><small>${dateTime(m.created_at)}</small></div></div>`).join(''):empty('Start a conversation','Send a message about a club project or upcoming event.')}</div><form id="dmComposer" class="chat-composer"><label class="sr-only" for="dmBody">Message</label><input id="dmBody" name="body" maxlength="3000" placeholder="Message ${esc(peer.full_name)}" required autocomplete="off"><button class="button" type="submit">Send ↗</button></form>`:empty('Choose a member','Select someone to start a private conversation.')}</div></div>`;
+}
+async function markDmRead(peerId) {
+  if(!dmReady||!session||!peerId)return;
+  const stamp=new Date().toISOString();try{const {error}=await db.from('direct_message_reads').upsert({user_id:session.user.id,peer_id:peerId,last_read_at:stamp},{onConflict:'user_id,peer_id'});if(error)throw error;cache.direct_message_reads=(cache.direct_message_reads||[]).filter(r=>r.peer_id!==peerId).concat({user_id:session.user.id,peer_id:peerId,last_read_at:stamp});$('#dmBadge').textContent=(cache.direct_messages||[]).filter(m=>m.recipient_id===session.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;}catch(e){console.error(e);}
 }
 function projects() {
   const list=cache.projects||[];
@@ -183,7 +215,7 @@ function announcements() {
 
 function privacy() {
   return `${head('CLUB TRUST','Privacy & conduct','How the InnovateX workspace should be used.')}
-  <div class="grid grid-2"><div class="card"><h3>Who can see your information?</h3><p>Your name, programme, skills, project activity and approximate online status are visible to approved club members. Founder bios are public only after an administrator publishes them with consent. Founder meetings are restricted to accepted founders and administrators.</p></div>
+  <div class="grid grid-2"><div class="card"><h3>Who can see your information?</h3><p>Your name, headline, bio, programme, skills, project activity and approximate online status are visible to approved club members. Direct messages are visible to their two participants. Founder bios are public only after an administrator publishes them with consent. Founder meetings are restricted to accepted founders and administrators.</p></div>
   <div class="card"><h3>What can you share?</h3><p>Share work you have permission to distribute. Do not upload passwords, private student records, personal contact lists or copyrighted files without permission. Files in the club library are available to all approved members.</p></div>
   <div class="card"><h3>Community conduct</h3><p>Keep feedback constructive and relevant to engineering work. Credit sources and collaborators. Use the Report button when a message, article or document needs administrator review.</p></div>
   <div class="card"><h3>Accounts and decisions</h3><p>New members apply for approval after verifying their email. Administrators can approve, reject or suspend membership. For account or data removal, contact a club administrator; an automated deletion request flow is not yet available.</p></div></div>`;
@@ -354,6 +386,8 @@ async function signOut() {try{await touchPresence(false);const {error}=await db.
 function actions(e) {
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
   if(action==='login')return signInDialog();
+  if(action==='memberProfile')return memberProfile(id);
+  if(action==='openDm'){if(!dmReady)return;activePeerId=id;if($('#modal').open)close();location.hash='#messages';render();markDmRead(id);return;}
   if(action==='feedPostForm'){
     if(!feedReady)return show('Activate the Supabase activity feed migration first.');
     const options='<option value="">No document attached</option>'+(cache.documents||[]).map(d=>`<option value="${esc(d.id)}">${esc(d.title)}</option>`).join('');
@@ -411,7 +445,11 @@ function actions(e) {
   if(action==='founderCalendar'||action==='founderIcs'){const m=(cache.founder_meetings||[]).find(x=>x.id===id);if(m)calendar({...m,description:m.agenda,location:'Online'},action==='founderIcs');return;}
   if(action==='changeEmail'){pendingEmail='';sessionStorage.removeItem('innovatex.pendingEmail');return signInDialog();}
   if(action==='resendCode')return requestCode(pendingEmail).catch(fail);
-  if(action==='profileForm')return form('My profile','Help other members recognize your work.','profile',field('Full name','full_name','text',me?.full_name||'')+(enhancedReady?field('Unique handle (for mentions)','handle','text',me?.handle||''):'')+field('Programme / department','programme','text',me?.programme||'',false)+field('Skills / interests','skills','text',me?.skills||'',false));
+  if(action==='profileForm'){
+    const basic=field('Full name','full_name','text',me?.full_name||'')+(enhancedReady?field('Unique handle (for mentions)','handle','text',me?.handle||''):'')+field('Programme / department','programme','text',me?.programme||'',false)+field('Skills / interests','skills','text',me?.skills||'',false);
+    const extra=dmReady?field('Headline / role','headline','text',me?.headline||'',false)+`<div class="field"><label for="bio">About me</label><textarea id="bio" name="bio" maxlength="1200">${esc(me?.bio||'')}</textarea></div>`+select('Availability','availability',['available','busy','away'],me?.availability||'available'):'';
+    return form('My profile','Help other members recognize your work.','profile',basic+extra);
+  }
   if(action==='projectForm')return form('New project','Start with a clear problem and the first test.','project',field('Project title','title')+field('One-line summary','summary')+area('Description and goal','description'));
   if(action==='projectDetail')return projectDetail(id);
   if(action==='projectEdit'){const p=(cache.projects||[]).find(x=>x.id===activeProject);return form('Update project','Keep the plan current.','projectEdit',field('Title','title','text',p.title)+field('Summary','summary','text',p.summary)+area('Description','description',p.description)+select('Status','status',['planning','building','testing','complete'],p.status)+field('Progress 0–100','progress','number',p.progress));}
@@ -449,6 +487,7 @@ async function openNotification(id) {
   else if(n.target_type==='event')location.hash='#events';
   else if(n.target_type==='application')location.hash=admin()?'#applications':'#application';
   else if(n.target_type==='post'){location.hash='#feed';setTimeout(()=>document.getElementById(`post-${n.target_id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),80);}
+  else if(n.target_type==='direct_message'){activePeerId=n.target_id;location.hash='#messages';render();markDmRead(activePeerId);}
 }
 async function resolveReport(id) {
   if(!admin())return;
@@ -530,6 +569,11 @@ function uploadRevisionDialog(id) {
   modal(`<span class="eyebrow">DOCUMENT HISTORY</span><h2>Upload a revision</h2><p class="muted">The current file stays in the version history.</p><form id="editor" data-kind="revision" class="form-stack"><input type="hidden" name="document_id" value="${esc(id)}"><div class="field"><label for="revision_file">New file (max 10 MB)</label><input id="revision_file" name="revision_file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.zip,.png,.jpg,.jpeg,.stl" required></div><button class="button" type="submit">Upload revision</button></form>`);
 }
 async function submit(e) {
+  if(e.target.id==='dmComposer'){
+    e.preventDefault();const input=e.target.elements.body,body=input.value.trim(),send=e.target.querySelector('[type=submit]');
+    if(!dmReady||!activePeerId||!body)return;send.disabled=true;
+    try{const {error}=await db.from('direct_messages').insert({sender_id:session.user.id,recipient_id:activePeerId,body});if(error)throw error;input.value='';input.blur();await refresh();}catch(error){fail(error);}finally{send.disabled=false;}return;
+  }
   if(e.target.classList.contains('feed-comment-form')){
     e.preventDefault();const formEl=e.target,body=formEl.elements.body.value.trim(),post_id=formEl.dataset.post,send=formEl.querySelector('[type=submit]');
     if(!feedReady||!body||!post_id)return;send.disabled=true;
