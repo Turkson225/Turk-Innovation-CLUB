@@ -1,0 +1,4 @@
+# Cron calls this function with a secret Supabase API key in the apikey header.
+# The function accepts only the named approval_email_worker secret key.
+[functions.send-approval-emails]
+verify_jwt = false

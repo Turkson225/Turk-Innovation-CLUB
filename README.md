@@ -11,6 +11,7 @@ A responsive workspace for a practical engineering and technology club. The site
 - Technology news submitted by members and reviewed by administrators before appearing in the feed.
 - Founder invitations, verified-email acceptance, and a private founders' meeting room with Google Meet and calendar links.
 - Administrator-approved member applications, threaded channel replies, reactions, mentions, unread counts, search and in-app notifications.
+- A branded approval email for each newly approved member, teacher, founder and investor, delivered by a private Supabase worker after setup.
 - Three-column member activity feed with project updates, resource links, shared club documents, comments, likes, recent stories and active members.
 - Member profiles with a headline, bio and availability, plus private one-to-one messaging and unread counts. Optional dark theme is saved in the browser.
 - New applicants choose member, teacher, founder or investor before email verification. The selected type is a request until an administrator approves it. Teachers can publish courses; founders have a private meeting room; investors have a separate curated portal and inquiry form.
@@ -60,6 +61,31 @@ If inserting an activity feed comment reports `infinite recursion detected in po
 Then run [`supabase/upgrade_profile_images.sql`](supabase/upgrade_profile_images.sql) **once**. Approved members can upload, replace or remove their own profile photo from the Members page. Photos appear in the directory, feed, channels and direct messages through temporary links. The private `club-media` bucket accepts images up to 5 MB; only approved members can view an approved member's current profile photo. The home page uses original concept artwork in optimized WebP files under `assets/`; it does not depict actual club members or events. Interface motion follows the device's reduced motion preference.
 
 Run [`supabase/upgrade_roles_investors.sql`](supabase/upgrade_roles_investors.sql) **once** after the profile images upgrade. This adds applicant types, administrator assignment of the approved role, a separate investor portal and private investor inquiries. Existing approved users keep their existing roles. New applicants remain pending until an administrator approves them under **Admin dashboard → Applications**. Choosing a type in the sign-in form never grants privileges directly. Teachers can publish courses after approval. Approved investors can read curated investor updates and their own inquiries; they cannot read club channels, posts, documents or private messages. Public founder profiles remain subject to consent. Administrators can publish investor updates from the portal and review inquiries there.
+
+### Approval feedback email
+
+New applicants in all four categories receive an InnovateX email once an administrator approves their verified account. This is a separate email from the sign-in code. **Authentication → SMTP Settings** alone cannot deliver this approval message; the private Edge Function below needs its own Gmail App Password. Never put the App Password or a Supabase secret key in the repository, `config.js`, a browser console, or a public chat.
+
+1. After `upgrade_roles_investors.sql`, run [`supabase/upgrade_approval_emails.sql`](supabase/upgrade_approval_emails.sql) in **SQL Editor**. It adds a private delivery queue and updates the administrator approval action. A first-time applicant must have verified their email and submitted a reason for joining. Existing approved accounts are recorded as already approved and are **not** emailed retroactively. Do not rerun `upgrade_roles_investors.sql` afterward: it would replace the updated approval function.
+2. In **Edge Functions → Secrets**, set `APPROVAL_SMTP_EMAIL` to the Gmail address configured as the club sender and `APPROVAL_SMTP_APP_PASSWORD` to its Google App Password. It is okay to paste the 16-character password with or without spaces; the worker strips spaces. These are Edge Function secrets, separate from the credentials entered under Authentication → SMTP Settings.
+3. Under **Project Settings → API Keys**, create a **secret** API key named exactly `approval_email_worker`. In **Vault**, create a secret named exactly `approval_email_worker_key` with that key's value. Keep both private. The worker accepts only this named key in its `apikey` header.
+4. Deploy [`supabase/functions/send-approval-emails/index.ts`](supabase/functions/send-approval-emails/index.ts) from the repository root with the Supabase CLI. The included [`supabase/config.toml`](supabase/config.toml) disables JWT preverification so the function can check its **named secret key** itself:
+
+   ```sh
+   npx supabase login
+   npx supabase link --project-ref xsbpxjiuiqpfrvhqmlsa
+   npx supabase functions deploy send-approval-emails --no-verify-jwt
+   ```
+
+5. Enable `pg_cron` and `pg_net` under **Database → Extensions**. Run [`supabase/schedule_approval_emails.sql`](supabase/schedule_approval_emails.sql) in SQL Editor. Supabase Cron then calls the private worker every minute; it takes up to five queued approvals per invocation and retries transient failures. You can check the job in **Integrations → Cron → Jobs**, the delivery logs in **Edge Functions → send-approval-emails → Logs**, and the database status in SQL Editor:
+
+   ```sql
+   select application_type, status, attempts, next_attempt_at, sent_at, last_error
+   from public.approval_email_outbox
+   order by created_at desc limit 20;
+   ```
+
+6. Create and verify a fresh test account, submit its application, approve it in **Applications**, and check that the email arrives. Repeat with member, teacher, founder and investor test accounts before inviting applicants. An approval is recorded even if the mail service is temporarily unavailable; check queue status and logs if the message does not arrive. The queue sends at least once, so a rare worker interruption after Gmail accepts a message can lead to a duplicate.
 
 Then run [`supabase/upgrade_teacher_materials.sql`](supabase/upgrade_teacher_materials.sql) **once**. It creates a private `club-learning` bucket and learning materials table. Only approved teachers and administrators may upload PDF, PPT, PPTX, DOC and DOCX files, up to 20 MB each. Approved members can download published learning files from **Courses**. Teachers manage uploads in **Teaching studio**; administrators can hide or restore a material. This is separate from the collaborative **Document library**, where approved members may continue sharing general project files.
 

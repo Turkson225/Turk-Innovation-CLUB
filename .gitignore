@@ -1,0 +1,7 @@
+# Supabase CLI state and credentials must stay out of the public repository.
+supabase/.branches/
+supabase/.temp/
+supabase/functions/.env
+supabase/functions/.env.*
+.env
+.env.*
