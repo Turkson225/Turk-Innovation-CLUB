@@ -10,6 +10,11 @@ const date = (s) => s ? new Date(s).toLocaleDateString(undefined,{month:'short',
 const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'TBD';
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
 let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, inventoryReady = false, inventoryCatalogReady = false, financeReady = false, financeApprovalsReady = false, activePeerId = null, lastRenderedPage = '';
+let adminAlertTimer = null, adminAlertRealtime = null, adminAlertDismissTimer = null, adminAudioContext = null, adminDeferredAlert = null;
+let adminPendingCount = 0, adminAlertsInitialized = false, adminSoundEnabled = false;
+let adminSeenApplicationIds = new Set();
+let adminAlertPolling = false;
+let authGeneration = 0;
 let inventoryFilter = 'all', inventorySearchTerm = '', financeFilter = 'all', inventoryLogPage = 0, financePage = 0, financeReviewPage = 0;
 let calendarMonth = new Date(new Date().getFullYear(),new Date().getMonth(),1), calendarSelected = new Date();
 let courseTrack = 'all';
@@ -62,6 +67,89 @@ const admin = () => approved() && me?.role === 'admin';
 const founder = () => approved() && ['founder','admin'].includes(me?.role);
 const founderOnly = () => approved() && me?.role === 'founder';
 const show = (message) => { $('#toast').textContent=message; $('#toast').classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),4200); };
+function updateAdminAlertControls(){
+  const visible=admin();
+  const bell=$('#adminBell'),sound=$('#adminSoundButton'),count=$('#adminBellCount');
+  bell.hidden=!visible;sound.hidden=!visible;
+  count.textContent=adminPendingCount>99?'99+':adminPendingCount;
+  count.hidden=!visible||!adminPendingCount;
+  bell.setAttribute('aria-label',`${adminPendingCount} account${adminPendingCount===1?'':'s'} awaiting approval. Review applications`);
+  sound.setAttribute('aria-pressed',String(adminSoundEnabled));
+  sound.setAttribute('aria-label',adminSoundEnabled?'Disable application alert sounds':'Enable application alert sounds');
+  sound.title=adminSoundEnabled?'Application alert sounds on':'Application alert sounds off';
+  sound.classList.toggle('active',adminSoundEnabled);
+}
+function dismissAdminAlert(){clearTimeout(adminAlertDismissTimer);adminDeferredAlert=null;$('#adminAlert').hidden=true;}
+function showAdminAlert(title,message){
+  if(!admin())return;
+  if(document.hidden){clearTimeout(adminAlertDismissTimer);$('#adminAlert').hidden=true;adminDeferredAlert={title,message};return;}
+  adminDeferredAlert=null;
+  $('#adminAlertTitle').textContent=title;$('#adminAlertMessage').textContent=message;
+  $('#adminAlert').hidden=false;
+  clearTimeout(adminAlertDismissTimer);
+  adminAlertDismissTimer=setTimeout(dismissAdminAlert,12000);
+}
+async function playAdminAlertSound(){
+  if(!adminSoundEnabled||!admin())return;
+  const Audio=window.AudioContext||window.webkitAudioContext;
+  if(!Audio)return;
+  try{
+    adminAudioContext ||= new Audio();
+    if(adminAudioContext.state==='suspended')await adminAudioContext.resume();
+    const start=adminAudioContext.currentTime;
+    for(const [i,pitch] of [660,880].entries()){
+      const oscillator=adminAudioContext.createOscillator(),gain=adminAudioContext.createGain(),at=start+i*.16;
+      oscillator.type='sine';oscillator.frequency.value=pitch;
+      gain.gain.setValueAtTime(.0001,at);
+      gain.gain.exponentialRampToValueAtTime(.09,at+.015);
+      gain.gain.exponentialRampToValueAtTime(.0001,at+.15);
+      oscillator.connect(gain);gain.connect(adminAudioContext.destination);
+      oscillator.start(at);oscillator.stop(at+.16);
+    }
+  }catch(error){console.error('Application alert sound unavailable',error);}
+}
+function receiveAdminApplications(rows){
+  if(!admin())return 0;
+  const applications=rows.filter(n=>n?.kind==='application'&&n.target_type==='application'&&n.user_id===session.user.id);
+  const unseen=applications.filter(n=>!adminSeenApplicationIds.has(n.id));
+  for(const n of applications)adminSeenApplicationIds.add(n.id);
+  if(!adminAlertsInitialized){
+    adminAlertsInitialized=true;
+    if(adminPendingCount)showAdminAlert(`${adminPendingCount} account${adminPendingCount===1?'':'s'} awaiting review`,'Open Applications to review their submitted details.');
+  }else if(unseen.length){
+    showAdminAlert(unseen.length===1?'New account awaiting review':`${unseen.length} new accounts awaiting review`,'A new signup has arrived. Open Applications to review its details.');
+    void playAdminAlertSound();
+  }
+  return unseen.length;
+}
+function mergeAdminNotifications(rows){
+  const byId=new Map((cache.notifications||[]).map(n=>[n.id,n]));
+  for(const n of rows)byId.set(n.id,n);
+  cache.notifications=[...byId.values()].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,1000);
+  $('#notificationBadge').textContent=cache.notifications.filter(n=>!n.read_at).length;
+  if(page==='notifications')render();
+}
+async function refreshAdminAlerts(){
+  if(!admin()||!session||adminAlertPolling)return;
+  adminAlertPolling=true;
+  const userId=session.user.id;
+  try{
+    const [pending,notices]=await Promise.all([
+      db.from('profiles').select('id',{count:'exact',head:true}).eq('membership_status','pending'),
+      db.from('notifications').select('*').eq('user_id',userId).eq('kind','application').order('created_at',{ascending:false}).limit(50)
+    ]);
+    if(!admin()||session?.user.id!==userId)return;
+    const oldCount=adminPendingCount;
+    if(pending.error)console.error('Application count',pending.error);
+    else adminPendingCount=pending.count||0;
+    let newCount=0;
+    if(notices.error)console.error('Application notifications',notices.error);
+    else {newCount=receiveAdminApplications(notices.data||[]);mergeAdminNotifications(notices.data||[]);}
+    updateAdminAlertControls();
+    if((page==='admin'||page==='applications')&&(oldCount!==adminPendingCount||newCount))void refresh();
+  }catch(error){console.error('Application alerts',error);}
+  finally{adminAlertPolling=false;}
+}
 const button = (label,action,extra='') => `<button class="button ${extra}" data-action="${action}">${label}</button>`;
 const empty = (title,body) => `<div class="empty"><strong>${esc(title)}</strong>${esc(body)}</div>`;
 const head = (label,title,subtitle,action='') => `<div class="page-head"><div><span class="eyebrow">${esc(label)}</span><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${action}</div>`;
@@ -113,6 +201,10 @@ async function refresh() {
   const records=new Set(['inventory_items','inventory_movements','finance_entries','finance_reviews']);
   const results=await Promise.allSettled(names.map(n=>records.has(n)?readRecords(n):read(n,q=>unordered.has(n)?q:q.order('created_at',{ascending:false}))));
   results.forEach((r,i)=>{ if(r.status==='fulfilled') cache[names[i]]=r.value; else {cache[names[i]]=[];console.error(names[i],r.reason);} });
+  if(admin()){
+    adminPendingCount=(cache.profiles||[]).filter(p=>p.membership_status==='pending').length;
+    if(results[names.indexOf('notifications')].status==='fulfilled')receiveAdminApplications(cache.notifications);
+  }
   communityReady=results[names.indexOf('channels')].status==='fulfilled';
   enhancedReady=results[names.indexOf('channel_reads')].status==='fulfilled';
   feedReady=results[names.indexOf('activity_posts')].status==='fulfilled';
@@ -151,14 +243,19 @@ async function touchPresence(online=true) {
   if(error) console.error(error);
 }
 async function signedIn(newSession) {
+  const generation=++authGeneration;
   session=newSession;
   authReady=true;
   clearInterval(pollTimer); clearInterval(presenceTimer);
-  clearInterval(chatTimer);
+  clearInterval(chatTimer);clearInterval(adminAlertTimer);dismissAdminAlert();
+  adminPendingCount=0;adminAlertsInitialized=false;adminSeenApplicationIds=new Set();adminAlertPolling=false;
   if(chatRealtime) { await db.removeChannel(chatRealtime); chatRealtime=null; }
+  if(adminAlertRealtime) { await db.removeChannel(adminAlertRealtime); adminAlertRealtime=null; }
+  if(generation!==authGeneration)return;
   if(session) {
     pendingEmail=''; sessionStorage.removeItem('innovatex.pendingEmail');sessionStorage.removeItem('innovatex.pendingAuthMode');
     const {data,error}=await db.from('profiles').select('*').eq('id',session.user.id).single();
+    if(generation!==authGeneration)return;
     if(error) { fail(error); return; }
     me=data;
     roleReady='application_type' in me;
@@ -171,6 +268,7 @@ async function signedIn(newSession) {
     }
     if(approved())await touchPresence();
     await refresh();
+    if(generation!==authGeneration)return;
     pollTimer=setInterval(refresh,30000);
     if(approved()){
       presenceTimer=setInterval(()=>touchPresence(),20000);
@@ -178,6 +276,16 @@ async function signedIn(newSession) {
     }
     if(communityReady && clubAccess()) chatRealtime=db.channel('innovatex-chat')
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'channel_messages'},refreshChat).subscribe();
+    if(admin()){
+      adminAlertTimer=setInterval(refreshAdminAlerts,10000);
+      adminAlertRealtime=db.channel(`innovatex-admin-applications-${session.user.id}`)
+        .on('postgres_changes',{event:'INSERT',schema:'public',table:'notifications',filter:`user_id=eq.${session.user.id}`},payload=>{
+          const notification=payload.new;
+          if(!admin()||notification?.kind!=='application'||notification.target_type!=='application')return;
+          receiveAdminApplications([notification]);mergeAdminNotifications([notification]);
+          void refreshAdminAlerts();
+        }).subscribe();
+    }
   } else { me=null;roleReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); if(!['home','about','founders','investors'].includes(page)) page='home'; await loadPublic(); }
   if(session&&!approved()&&!['about','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
   if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
@@ -189,6 +297,7 @@ async function signedIn(newSession) {
 async function init() {
   document.querySelectorAll('#nav a[data-page]').forEach(a=>{const slot=a.querySelector('span');if(slot)slot.innerHTML=iconSvg(a.dataset.page);});
   let savedTheme='';try{savedTheme=localStorage.getItem('innovatex.theme')||'';}catch{}
+  try{adminSoundEnabled=localStorage.getItem('innovatex.adminSound')==='on';}catch{}
   document.documentElement.dataset.theme=savedTheme==='dark'?'dark':'light';
   $('#themeButton').onclick=()=>{const next=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=next;try{localStorage.setItem('innovatex.theme',next);}catch{}updateThemeButton();};
   updateThemeButton();
@@ -211,7 +320,7 @@ async function init() {
   db.auth.onAuthStateChange((_event,s)=>{ if(s?.user.id !== session?.user.id) setTimeout(()=>signedIn(s),0); });
   const {data,error}=await db.auth.getSession();
   if(error) fail(error); else await signedIn(data.session);
-  document.addEventListener('visibilitychange',()=>{ if(!document.hidden && session) {touchPresence();refresh();} });
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden && session) {if(adminDeferredAlert)showAdminAlert(adminDeferredAlert.title,adminDeferredAlert.message);touchPresence();refresh();if(admin())void refreshAdminAlerts();} });
   window.addEventListener('pagehide',()=>{ if(session) touchPresence(false); });
 }
 function updateThemeButton(){const dark=document.documentElement.dataset.theme==='dark';$('#themeButton').textContent=dark?'☀':'☾';$('#themeButton').setAttribute('aria-label',dark?'Switch to light theme':'Switch to dark theme');}
@@ -246,6 +355,7 @@ function render() {
   const online=(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length;
   $('#onlineBadge').textContent=online;
   $('#notificationBadge').textContent=(cache.notifications||[]).filter(n=>!n.read_at).length;
+  updateAdminAlertControls();
   const pendingFinance=founderOnly()&&financeApprovalsReady?(cache.finance_entries||[]).filter(x=>financeStatus(x)==='pending').length:0;
   const financeBadge=$('#financeReviewBadge');if(financeBadge){financeBadge.textContent=pendingFinance;financeBadge.hidden=!pendingFinance;}
   const unreadDm=(cache.direct_messages||[]).filter(m=>m.recipient_id===session?.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;
@@ -558,8 +668,8 @@ function applications() {
   if(!admin())return '';
   if(!enhancedReady)return head('ADMINISTRATION','Applications','Review club membership.')+communityNotice();
   const applicants=(cache.profiles||[]).filter(p=>p.membership_status!=='approved');
-  return `${head('ADMINISTRATION','Applications','Review verified accounts before they enter the club workspace.')}
-    <div class="grid grid-2">${applicants.length?applicants.map(p=>`<div class="card"><div class="row"><span class="tag ${p.membership_status==='pending'?'gold':''}">${esc(p.membership_status)}</span><span class="tag blue">${esc(p.application_type||'member')}</span><small class="subtle">${date(p.created_at)}</small></div><h3 style="margin-top:14px">${esc(p.full_name)}</h3><p>${esc(p.programme||'Programme not provided')}</p><p class="detail">${esc(p.application_reason||'No reason submitted yet.')}</p><div class="card-footer"><span>${esc(p.skills||'')}</span><div><button class="text-button" data-action="reviewMember" data-status="approved" data-id="${esc(p.id)}">Approve</button> · <button class="text-button" data-action="reviewMember" data-status="rejected" data-id="${esc(p.id)}">Reject</button></div></div></div>`).join(''):empty('No applications waiting','New verified accounts will appear here.')}</div>
+  return `${head('ADMINISTRATION','Applications','Review new accounts and submitted details before granting club access.')}
+    <div class="grid grid-2">${applicants.length?applicants.map(p=>`<div class="card"><div class="row"><span class="tag ${p.membership_status==='pending'?'gold':''}">${esc(p.membership_status)}</span><span class="tag blue">${esc(p.application_type||'member')}</span><small class="subtle">${date(p.created_at)}</small></div><h3 style="margin-top:14px">${esc(p.full_name)}</h3><p>${esc(p.programme||'Programme not provided')}</p><p class="detail">${esc(p.application_reason||'No reason submitted yet.')}</p><div class="card-footer"><span>${esc(p.skills||'')}</span><div><button class="text-button" data-action="reviewMember" data-status="approved" data-id="${esc(p.id)}">Approve</button> · <button class="text-button" data-action="reviewMember" data-status="rejected" data-id="${esc(p.id)}">Reject</button></div></div></div>`).join(''):empty('No applications waiting','New accounts will appear here.')}</div>
     <div class="section-heading"><h2>Approved accounts</h2><p>Pause access if needed.</p></div><div class="profile-grid">${(cache.profiles||[]).filter(p=>p.membership_status==='approved'&&p.id!==session.user.id).map(p=>`<div class="card person">${memberAvatar(p.id)}<div><strong>${esc(p.full_name)}</strong>${roleBadge(p)}<small class="subtle">${esc(p.role)} · ${esc(p.handle||'')}</small></div><button class="text-button" data-action="reviewMember" data-status="suspended" data-id="${esc(p.id)}">Suspend</button></div>`).join('')}</div>`;
 }
 function adminDashboard(){
@@ -704,6 +814,20 @@ async function signOut() {try{await touchPresence(false);const {error}=await db.
 
 function actions(e) {
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
+  if(action==='dismissAdminAlert'){dismissAdminAlert();return;}
+  if(action==='openAdminApplications'){
+    if(!admin())return;
+    dismissAdminAlert();location.hash='#applications';void refresh();return;
+  }
+  if(action==='toggleAdminSound'){
+    if(!admin())return;
+    adminSoundEnabled=!adminSoundEnabled;
+    try{localStorage.setItem('innovatex.adminSound',adminSoundEnabled?'on':'off');}catch{}
+    updateAdminAlertControls();
+    if(adminSoundEnabled){void playAdminAlertSound();show('Application alert sounds enabled in this browser.');}
+    else show('Application alert sounds off.');
+    return;
+  }
   if(action==='inventoryFilter'){if(!clubAccess())return;inventoryFilter=el.dataset.filter;render();return;}
   if(action==='financeFilter'){if(!admin())return;financeFilter=el.dataset.filter;financePage=0;render();return;}
   if(action==='inventoryLogPrev'||action==='inventoryLogNext'){if(!founder())return;inventoryLogPage=Math.max(0,inventoryLogPage+(action==='inventoryLogNext'?1:-1));render();return;}
