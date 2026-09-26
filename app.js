@@ -10,6 +10,7 @@ const date = (s) => s ? new Date(s).toLocaleDateString(undefined,{month:'short',
 const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'TBD';
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
 let session = null, me = null, cache = {}, page = 'home', activeProject = null, pollTimer = null, presenceTimer = null, authReady = false;
+let pendingEmail = sessionStorage.getItem('innovatex.pendingEmail') || '';
 let toastTimer;
 const pages = ['home','founders','members','projects','discussions','courses','events','announcements'];
 const admin = () => me?.role === 'admin';
@@ -45,6 +46,7 @@ async function signedIn(newSession) {
   authReady=true;
   clearInterval(pollTimer); clearInterval(presenceTimer);
   if(session) {
+    pendingEmail=''; sessionStorage.removeItem('innovatex.pendingEmail');
     const {data,error}=await db.from('profiles').select('*').eq('id',session.user.id).single();
     if(error) { fail(error); return; }
     me=data;
@@ -134,7 +136,23 @@ function field(label,name,type='text',value='',required=true) {return `<div clas
 function area(label,name,value='') {return `<div class="field"><label for="${name}">${esc(label)}</label><textarea id="${name}" name="${name}" required>${esc(value)}</textarea></div>`;}
 function select(label,name,options,current='') {return `<div class="field"><label for="${name}">${esc(label)}</label><select id="${name}" name="${name}">${options.map(x=>`<option value="${esc(x)}" ${x===current?'selected':''}>${esc(x)}</option>`).join('')}</select></div>`;}
 function form(title,description,kind,fields) {modal(`<span class="eyebrow">INNOVATEX WORKSPACE</span><h2>${title}</h2><p class="muted">${description}</p><form id="editor" data-kind="${kind}" class="form-stack">${fields}<button class="button" type="submit">Save ${title.toLowerCase()}</button></form>`);}
-function signInDialog() { if(!configured) return show('Add your Supabase URL and publishable key to config.js first.'); form('Member sign in','Enter your email to receive a secure sign-in link.','login',field('Email address','email','email')); }
+function signInDialog() {
+  if(!configured) return show('Add your Supabase URL and publishable key to config.js first.');
+  if(pendingEmail) return codeDialog();
+  modal(`<span class="eyebrow">INNOVATEX ENGINEERING CLUB</span><h2>Join or sign in</h2><p class="muted">Enter your email. We’ll send a one-time verification code to create your account or sign you in.</p><form id="editor" data-kind="login" class="form-stack">${field('Email address','email','email')}<button class="button" type="submit">Send verification code</button></form>`);
+}
+function codeDialog() {
+  modal(`<span class="eyebrow">INNOVATEX ENGINEERING CLUB</span><h2>Verify your email</h2><p class="muted">Enter the six-digit code sent to <strong>${esc(pendingEmail)}</strong>.</p><form id="editor" data-kind="verify" class="form-stack"><div class="field"><label for="code">Verification code</label><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required></div><button class="button" type="submit">Verify and enter</button></form><div class="otp-actions"><button class="text-button" data-action="resendCode">Resend code</button><button class="text-button" data-action="changeEmail">Use another email</button></div><p class="hint">Only the latest code will work. Check your spam folder if you don't see the email.</p>`);
+  $('#code').focus();
+}
+async function requestCode(email) {
+  const {error}=await db.auth.signInWithOtp({email,options:{shouldCreateUser:true,emailRedirectTo:location.origin+location.pathname}});
+  if(error) throw error;
+  pendingEmail=email;
+  sessionStorage.setItem('innovatex.pendingEmail',email);
+  codeDialog();
+  show('Verification code sent. Check your email.');
+}
 function projectDetail(id) {
   const p=(cache.projects||[]).find(x=>x.id===id); if(!p)return;
   activeProject=id; const tasks=(cache.project_tasks||[]).filter(t=>t.project_id===id); const can=admin()||p.owner_id===session?.user.id;
@@ -147,6 +165,8 @@ async function signOut() {try{await touchPresence(false);const {error}=await db.
 function actions(e) {
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
   if(action==='login')return signInDialog();
+  if(action==='changeEmail'){pendingEmail='';sessionStorage.removeItem('innovatex.pendingEmail');return signInDialog();}
+  if(action==='resendCode')return requestCode(pendingEmail).catch(fail);
   if(action==='profileForm')return form('My profile','Help other members recognize your work.','profile',field('Full name','full_name','text',me?.full_name||'')+field('Programme / department','programme','text',me?.programme||'',false)+field('Skills / interests','skills','text',me?.skills||'',false));
   if(action==='projectForm')return form('New project','Start with a clear problem and the first test.','project',field('Project title','title')+field('One-line summary','summary')+area('Description and goal','description'));
   if(action==='projectDetail')return projectDetail(id);
@@ -170,7 +190,15 @@ async function submit(e) {
   const formEl=e.target,kind=formEl.dataset.kind,values=Object.fromEntries(new FormData(formEl));
   const submitBtn=formEl.querySelector('[type=submit]'); submitBtn.disabled=true;
   try {
-    if(kind==='login'){const {error}=await db.auth.signInWithOtp({email:values.email,options:{emailRedirectTo:location.origin+location.pathname}});if(error)throw error;close();show('Check your email for the sign-in link.');return;}
+    if(kind==='login'){await requestCode(String(values.email).trim().toLowerCase());return;}
+    if(kind==='verify'){
+      const token=String(values.code).trim();
+      if(!/^[0-9]{6}$/.test(token))throw Error('Enter the six-digit code from your email.');
+      const {data,error}=await db.auth.verifyOtp({email:pendingEmail,token,type:'email'});
+      if(error)throw error;
+      if(!data.session)throw Error('Verification succeeded, but no session was returned. Please try signing in again.');
+      close();await signedIn(data.session);show('Email verified. Welcome to InnovateX!');return;
+    }
     const payload={...values};
     for(const key of ['starts_at','ends_at','due_at']) if(key in payload) payload[key]=payload[key]?new Date(payload[key]).toISOString():null;
     for(const key of ['link_url','resource_url','meet_url']) if(key in payload) payload[key]=payload[key]?cleanUrl(payload[key]):null;
