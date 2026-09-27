@@ -4,10 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#101d2a">
+  <meta name="apple-mobile-web-app-title" content="InnovateX">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <title>InnovateX Engineering Club</title>
   <meta name="description" content="The home for InnovateX Engineering Club members, projects, courses and events.">
   <link rel="canonical" href="https://turkson225.github.io/Turk-Innovation-CLUB/">
-  <link rel="stylesheet" href="styles.css?v=home-privacy-growth-20260927">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css?v=pwa-20260927">
 </head>
 <body>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -48,6 +53,7 @@
         <a href="#moderation" data-page="moderation" data-admin hidden><span>⚑</span> Moderation</a>
       </nav>
       <div class="guest-sidebar-cta" id="guestSidebarCta" hidden><strong>Build with InnovateX</strong><p>Join workshops, projects and conversations after your account is approved.</p><button class="button button-sm" type="button" data-action="login">Join the club</button><button class="guest-signin" type="button" data-action="signin">Already a member? Sign in</button></div>
+      <button class="sidebar-install" id="installAppButton" type="button" aria-label="Install InnovateX app" hidden><span class="sidebar-install-icon" aria-hidden="true">↓</span><span><strong>Install InnovateX</strong><small>Keep the club on your phone</small></span></button>
       <div class="sidebar-bottom"><div class="signal"><span class="pulse"></span><span id="connectionLabel">Public preview</span></div><p>Learn. Build. Innovate. Compete.</p></div>
     </aside>
     <main class="main">
@@ -81,7 +87,8 @@
     <div class="image-viewer-footer"><span class="image-viewer-hint">Pinch or double tap to zoom</span><div class="image-viewer-buttons"><button id="imageViewerZoomOut" class="image-viewer-control" type="button" aria-label="Zoom out">−</button><output id="imageViewerZoomLabel">100%</output><button id="imageViewerZoomIn" class="image-viewer-control" type="button" aria-label="Zoom in">+</button><button id="imageViewerReset" class="image-viewer-control image-viewer-fit" type="button" aria-label="Fit image to screen">Fit</button></div></div>
   </dialog>
   <script src="config.js"></script>
+  <script src="pwa-register.js" defer></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script type="module" src="app.js?v=home-privacy-growth-20260927"></script>
+  <script type="module" src="app.js?v=pwa-20260927"></script>
 </body>
 </html>

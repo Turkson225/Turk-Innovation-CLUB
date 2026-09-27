@@ -162,6 +162,12 @@ The included GitHub Actions workflow publishes the static site on each push to `
 
 For a local preview, run `python3 -m http.server 8000` from the repository root and open `http://localhost:8000/`.
 
+### Install the web app
+
+On Android, open the site in Chrome and choose **Install app** from the browser menu, or tap **Install InnovateX** in the site menu. On iPhone, open the site in Safari, tap **Share → Add to Home Screen**, and enable **Open as Web App** if offered. The site menu also contains device instructions. Installation requires a supported browser and the HTTPS GitHub Pages address; test on a phone after publishing. The app opens in its own window and has a branded home screen icon.
+
+The worker caches only a small set of public files, including the About and Founders page shells. When disconnected, the member workspace shows a reconnect screen. Chats, courses, approvals, account details, founder portraits and files require an internet connection and are never stored in the worker's offline cache. The public founder directory itself loads live from Supabase. The admin bell remains an in-app alert when the site is open; installing the app does not enable background push notifications. To test the offline screen, load the site while online, then disable network in browser developer tools and reload a member workspace route. Reconnect before signing in or using member features.
+
 ## Operational notes
 
 - The public repository exposes all static site code and `config.js`. Supabase RLS, not hidden JavaScript, controls database access. Verify RLS after any schema changes.

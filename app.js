@@ -11,6 +11,7 @@ const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'med
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
 let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, courseReady = false, coursePlanningReady = false, teacherProfileReady = false, teacherProfile = null, privacyReady = false, inventoryReady = false, inventoryCatalogReady = false, financeReady = false, financeApprovalsReady = false, activePeerId = null, lastRenderedPage = '';
 let adminAlertTimer = null, adminAlertRealtime = null, adminAlertDismissTimer = null, adminAudioContext = null, adminDeferredAlert = null;
+let deferredInstallPrompt = null;
 let adminPendingCount = 0, adminAlertsInitialized = false, adminSoundEnabled = false;
 let adminSeenApplicationIds = new Set();
 let adminAlertPolling = false;
@@ -755,6 +756,14 @@ async function init() {
   updateThemeButton();
   $('#todayLabel').textContent=new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
   $('#menuBtn').onclick=()=>$('#sidebar').classList.toggle('open');
+  $('#installAppButton').onclick=installInnovateX;
+  updateInstallButton();
+  window.addEventListener('beforeinstallprompt',event=>{
+    event.preventDefault();
+    deferredInstallPrompt=event;
+    updateInstallButton();
+  });
+  window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;updateInstallButton();show('InnovateX is ready on your home screen.');});
   $('#modal').addEventListener('click',e=>{ if(e.target===$('#modal')) close(); });
   $('.modal-close').onclick=close;
   setupImageViewer();
@@ -786,6 +795,25 @@ async function init() {
     if(admin())void refreshAdminAlerts();
   });
   window.addEventListener('pagehide',()=>{ if(session) touchPresence(false); });
+}
+function updateInstallButton(){
+  $('#installAppButton').hidden=window.matchMedia?.('(display-mode: standalone)').matches===true||navigator.standalone===true;
+}
+async function installInnovateX(){
+  if(deferredInstallPrompt){
+    const prompt=deferredInstallPrompt;deferredInstallPrompt=null;
+    try{
+      await prompt.prompt();
+      const choice=await prompt.userChoice;
+      if(choice?.outcome==='accepted')show('InnovateX is being added to your device.');
+    }catch(error){console.error('Install prompt unavailable',error);}
+    return;
+  }
+  const iphone=/iPad|iPhone|iPod/i.test(navigator.userAgent);
+  const directions=iphone?
+    '<li>Open this page in Safari.</li><li>Tap the Share button, then <strong>Add to Home Screen</strong>.</li><li>Choose <strong>Open as Web App</strong> if shown, then tap Add.</li>':
+    '<li>Open your browser menu while viewing this page.</li><li>Choose <strong>Install app</strong> or <strong>Add to Home screen</strong>.</li><li>Confirm the InnovateX icon and name.</li>';
+  modal(`<span class="eyebrow">INNOVATEX ON YOUR PHONE</span><h2>Install the club app</h2><p>Keep InnovateX on your home screen and open it without a browser tab.</p><ol class="install-steps">${directions}</ol><p class="subtle">Chats, courses, account approvals and shared files still need an internet connection.</p>`);
 }
 function updateThemeButton(){const dark=document.documentElement.dataset.theme==='dark';$('#themeButton').textContent=dark?'☀':'☾';$('#themeButton').setAttribute('aria-label',dark?'Switch to light theme':'Switch to dark theme');}
 function route() {

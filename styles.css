@@ -425,3 +425,15 @@ nav a span svg,.icon-box svg{vertical-align:middle;transition:transform .22s eas
 @media(max-width:710px){.home-personal-intro{align-items:flex-start;flex-direction:column}.home-community-links{grid-template-columns:1fr}}
 @media(max-width:520px){.home-glance,.home-focus-grid,.home-role-grid{grid-template-columns:1fr}.home-focus-card{min-height:180px}.home-personal-intro{padding:27px 22px}.home-personal-intro .button{width:100%}.home-glance>a{padding:15px 18px}}
 @media(prefers-reduced-motion:reduce){.home-focus-card{transition:none}.home-glance>a:hover,.home-focus-card:hover,.home-community-links a:hover{transform:none}}
+
+/* Installable club app: a persistent entry point in the navigation. */
+.sidebar-install{display:flex;align-items:center;gap:10px;width:100%;margin:13px 0 3px;padding:11px 12px;border:1px solid #3c6370;border-radius:11px;background:#173743;color:#f3fbfc;text-align:left;transition:background .2s,border-color .2s}
+.sidebar-install[hidden]{display:none}
+.sidebar-install:hover,.sidebar-install:focus-visible{background:#20505a;border-color:#74cdbb}
+.sidebar-install-icon{display:grid;place-items:center;flex:none;width:30px;height:30px;border-radius:8px;background:#0cae99;color:#fff;font-size:21px;line-height:1}
+.sidebar-install strong,.sidebar-install small{display:block}
+.sidebar-install strong{font-size:12px;line-height:1.3}
+.sidebar-install small{margin-top:2px;color:#a4c6c8;font-size:10px}
+.install-steps{padding-left:22px;margin:20px 0;line-height:1.7}
+.install-steps li{padding-left:4px;margin:8px 0}
+@media(prefers-reduced-motion:reduce){.sidebar-install{transition:none}}

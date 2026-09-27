@@ -28,8 +28,8 @@ jobs:
       - name: Prepare static site
         run: |
           mkdir -p _site
-          cp index.html styles.css public-pages.css app.js config.js sitemap.xml .nojekyll _site/
-          cp -R assets about founders _site/
+          cp index.html styles.css public-pages.css app.js config.js sitemap.xml .nojekyll manifest.webmanifest sw.js offline.html pwa-register.js _site/
+          cp -R assets about founders icons _site/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
