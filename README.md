@@ -13,7 +13,7 @@ A responsive workspace for a practical engineering and technology club. The site
 - Administrator-approved member applications, threaded channel replies, reactions, mentions, unread counts, search and in-app notifications.
 - A branded approval email for each newly approved member, teacher, founder and investor, delivered by a private Supabase worker after setup.
 - Three-column member activity feed with project updates, resource links, shared club documents, comments, likes, recent stories and active members.
-- Member profiles with a headline, bio and availability, plus private one-to-one messaging and unread counts. Optional dark theme is saved in the browser.
+- Member profiles with a headline, bio and availability, plus private one-to-one messaging and unread counts. Tap a member portrait directly in the directory or a profile, feed, channel or direct-message photo to open a full-screen viewer with pinch, double-tap and button zoom. Optional dark theme is saved in the browser.
 - New applicants choose member, teacher, founder or investor before email verification. The selected type is a request until an administrator approves it. Teachers can publish courses; founders have a private meeting room; investors have a separate curated portal and inquiry form.
 - Administrator dashboard for pending applications, reports, club activity, investor inquiries and selected CSV exports.
 - Role-specific sidebar: members use community pages, teachers get a Teaching studio, founders get the Founder room, investors use their separate portal, and administrators get oversight pages. Approved profiles display a role badge.

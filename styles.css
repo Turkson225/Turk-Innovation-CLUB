@@ -245,3 +245,32 @@ nav a span svg,.icon-box svg{vertical-align:middle;transition:transform .22s eas
 #modal:has(.member-profile-hero){max-height:calc(100dvh - 30px);overflow-y:auto}
 #modal:has(.member-profile-hero) .modal-close{color:#eaf9f6}
 @media(max-width:460px){.member-profile-hero{padding:40px 18px 20px}.avatar-preview{align-items:flex-start}.avatar-preview .avatar{width:96px;height:96px}}
+
+/* A full-screen photo viewer for member portraits and shared images. */
+.profile-photo-trigger{position:relative;display:block;width:min(320px,100%);padding:0;border:0;background:transparent;line-height:0;cursor:zoom-in}
+.person-photo-trigger{flex-shrink:0;display:block;padding:0;border:0;border-radius:50%;background:transparent;line-height:0;cursor:zoom-in}
+.person-photo-trigger:focus-visible{outline:3px solid var(--deep);outline-offset:4px}
+.member-profile-hero .profile-photo-trigger .avatar{width:100%}
+.profile-photo-trigger:focus-visible{outline:3px solid #a4f5e4;outline-offset:4px;border-radius:15px}
+.profile-photo-hint{position:absolute;right:12px;bottom:12px;padding:8px 11px;border-radius:8px;background:#0b2638dc;color:#fff;font-size:11px;font-weight:800;line-height:1.2}
+.feed-photo,.chat-photo,.dm-photo{cursor:zoom-in}
+.image-viewer{inset:0;margin:0;width:100vw;height:100vh;height:100dvh;max-width:none;max-height:none;padding:0;border:0;border-radius:0;overflow:hidden;background:#0b1119;color:#f7fbfc}
+.image-viewer[open]{display:flex;flex-direction:column}
+.image-viewer::backdrop{background:#0b1119}
+.image-viewer-toolbar,.image-viewer-footer{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-shrink:0;background:#101c27}
+.image-viewer-toolbar{min-height:68px;padding:calc(12px + env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) 12px max(16px,env(safe-area-inset-left))}
+.image-viewer-toolbar strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.image-viewer-stage{position:relative;flex:1;min-height:0;display:grid;place-items:center;overflow:hidden;touch-action:none;overscroll-behavior:contain;cursor:grab}
+.image-viewer-stage:active{cursor:grabbing}
+.image-viewer-stage img{display:block;max-width:100%;max-height:100%;object-fit:contain;user-select:none;pointer-events:none;will-change:transform}
+.image-viewer-loading{position:absolute;left:20px;right:20px;text-align:center;color:#b9cbd4;font-size:13px}
+.image-viewer-loading[hidden]{display:none}
+.image-viewer-footer{min-height:70px;padding:10px max(16px,env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+.image-viewer-hint{font-size:12px;color:#b9cbd4}
+.image-viewer-buttons{display:flex;align-items:center;gap:8px}
+.image-viewer-buttons output{min-width:48px;text-align:center;font-size:12px;font-weight:800}
+.image-viewer-control{min-width:44px;height:44px;padding:0 12px;border:1px solid #506270;border-radius:10px;background:#1e303e;color:#fff;font-size:23px;line-height:1}
+.image-viewer-control:hover,.image-viewer-control:focus-visible{background:#305267;border-color:#7fbdc1}
+.image-viewer-control:disabled{opacity:.45;cursor:default}
+.image-viewer-fit{font-size:12px;font-weight:800}
+@media(max-width:480px){.image-viewer-footer{flex-direction:column;gap:8px}.image-viewer-hint{font-size:11px}.image-viewer-buttons{width:100%;justify-content:center}.image-viewer-toolbar{min-height:60px}}

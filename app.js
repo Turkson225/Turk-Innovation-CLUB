@@ -41,14 +41,15 @@ const proposedWorkshops = [
 const courseTrackFor = c => ({Automation:'Controls and Automation',Electronics:'Electronics and Robotics','Embedded systems':'Electronics and Robotics',Robotics:'Electronics and Robotics',CAD:'Software and Programming',Software:'Software and Programming'}[c.category]||c.category);
 const mediaUrls = new Map();
 const mediaUrl = path => path && mediaUrls.get(path)?.url || '';
-async function hydrateMedia() {
-  if(!mediaReady)return;
-  const paths=[...(cache.profiles||[]).slice(0,150).map(p=>p.avatar_path),...[...(cache.activity_posts||[]).slice(0,80),...(cache.channel_messages||[]).slice(0,180),...(cache.direct_messages||[]).slice(0,160),...channelHistoryRows,...dmThreadRows].map(x=>x.image_path)].filter(Boolean);
+async function hydrateMedia(extraPaths=[]) {
+  if(!mediaReady)return false;
+  const paths=[...(cache.profiles||[]).slice(0,150).map(p=>p.avatar_path),...extraPaths,...[...(cache.activity_posts||[]).slice(0,80),...(cache.channel_messages||[]).slice(0,180),...(cache.direct_messages||[]).slice(0,160),...channelHistoryRows,...dmThreadRows].map(x=>x.image_path)].filter(Boolean);
   const missing=[...new Set(paths)].filter(p=>!mediaUrls.has(p)||mediaUrls.get(p).expires<Date.now()+60000);
-  if(!missing.length)return;
+  if(!missing.length)return false;
   const {data,error}=await db.storage.from('club-media').createSignedUrls(missing,900);
-  if(error){console.error(error);return;}
+  if(error){console.error(error);return false;}
   for(const [i,item] of (data||[]).entries())if(item.signedUrl)mediaUrls.set(item.path||missing[i],{url:item.signedUrl,expires:Date.now()+900000});
+  return true;
 }
 async function uploadClubImage(file){
   if(!mediaReady)throw Error('Run the Supabase media migration before sharing images.');
@@ -183,6 +184,138 @@ const iconSvg = name => `<svg viewBox="0 0 24 24" width="20" height="20" fill="n
 iconPaths.calendar=iconPaths.events;
 const modal = (html) => { if($('#modal').open) $('#modal').close(); $('#modalContent').innerHTML=html; $('#modal').showModal(); };
 const close = () => $('#modal').close();
+const imageView = {scale:1,x:0,y:0,pointers:new Map(),gesture:null,lastTap:null,focus:null,request:0};
+const imageStage = () => $('#imageViewerStage');
+const imagePhoto = () => $('#imageViewerPhoto');
+function applyImageZoom(){
+  const photo=imagePhoto();
+  photo.style.transform=`translate3d(${imageView.x}px,${imageView.y}px,0) scale(${imageView.scale})`;
+  $('#imageViewerZoomLabel').textContent=`${Math.round(imageView.scale*100)}%`;
+  $('#imageViewerZoomOut').disabled=imageView.scale<=1;
+  $('#imageViewerZoomIn').disabled=imageView.scale>=5;
+  $('#imageViewerReset').disabled=imageView.scale<=1;
+}
+function clampImagePan(){
+  const photo=imagePhoto(),stage=imageStage();
+  const maxX=Math.max(0,(photo.offsetWidth*imageView.scale-stage.clientWidth)/2);
+  const maxY=Math.max(0,(photo.offsetHeight*imageView.scale-stage.clientHeight)/2);
+  imageView.x=Math.max(-maxX,Math.min(maxX,imageView.x));
+  imageView.y=Math.max(-maxY,Math.min(maxY,imageView.y));
+}
+function setImageZoom(next,clientX,clientY){
+  const stage=imageStage(),rect=stage.getBoundingClientRect();
+  const cx=(clientX??rect.left+rect.width/2)-(rect.left+rect.width/2);
+  const cy=(clientY??rect.top+rect.height/2)-(rect.top+rect.height/2);
+  const scale=Math.max(1,Math.min(5,next));
+  imageView.x=cx-(cx-imageView.x)*scale/imageView.scale;
+  imageView.y=cy-(cy-imageView.y)*scale/imageView.scale;
+  imageView.scale=scale;
+  clampImagePan();applyImageZoom();
+}
+function fitImageViewer(){
+  const photo=imagePhoto(),stage=imageStage();
+  if(!photo.naturalWidth||!stage.clientWidth)return;
+  const factor=Math.min(stage.clientWidth/photo.naturalWidth,stage.clientHeight/photo.naturalHeight);
+  photo.style.width=`${photo.naturalWidth*factor}px`;
+  photo.style.height=`${photo.naturalHeight*factor}px`;
+  imageView.scale=1;imageView.x=0;imageView.y=0;applyImageZoom();
+}
+function closeImageViewer(restoreFocus=true){
+  if(!restoreFocus)imageView.focus=null;
+  imageView.request++;
+  if($('#imageViewer').open)$('#imageViewer').close();
+}
+async function openImageViewer(path,caption,trigger){
+  if(!clubAccess()||!mediaReady||!path)return;
+  if($('#imageViewer').open)return;
+  const user=session?.user.id,request=++imageView.request;
+  try{
+    let signed=mediaUrls.get(path);
+    if(!signed||signed.expires<Date.now()+60000){
+      const {data,error}=await db.storage.from('club-media').createSignedUrl(path,900);
+      if(error||!data?.signedUrl)throw error||Error('Could not open this image.');
+      signed={url:data.signedUrl,expires:Date.now()+900000};mediaUrls.set(path,signed);
+    }
+    if(request!==imageView.request||session?.user.id!==user||!clubAccess()||!trigger.isConnected)return;
+    const viewer=$('#imageViewer'),photo=imagePhoto(),loading=$('#imageViewerLoading');
+    imageView.focus=trigger;imageView.lastTap=null;imageView.gesture=null;imageView.pointers.clear();
+    imageView.scale=1;imageView.x=0;imageView.y=0;applyImageZoom();
+    $('#imageViewerCaption').textContent=caption||'Photo';
+    loading.textContent='Opening photo…';loading.hidden=false;
+    photo.style.visibility='hidden';photo.style.width='';photo.style.height='';
+    photo.alt=caption||'Photo';
+    photo.onload=()=>{if(request!==imageView.request)return;fitImageViewer();photo.style.visibility='visible';loading.hidden=true;};
+    photo.onerror=()=>{if(request!==imageView.request)return;loading.textContent='Photo could not be loaded. Close and try again.';photo.style.visibility='hidden';};
+    viewer.showModal();
+    photo.src=signed.url;
+    $('#imageViewerClose').focus();
+  }catch(error){if(request===imageView.request)fail(error);}
+}
+function setupImageViewer(){
+  const viewer=$('#imageViewer'),stage=imageStage(),photo=imagePhoto();
+  $('#imageViewerClose').onclick=()=>closeImageViewer();
+  $('#imageViewerZoomIn').onclick=()=>setImageZoom(imageView.scale*1.5);
+  $('#imageViewerZoomOut').onclick=()=>setImageZoom(imageView.scale/1.5);
+  $('#imageViewerReset').onclick=()=>setImageZoom(1);
+  viewer.addEventListener('close',()=>{
+    imageView.request++;imageView.pointers.clear();imageView.gesture=null;imageView.lastTap=null;
+    photo.onload=null;photo.onerror=null;photo.removeAttribute('src');photo.style.transform='';
+    const focus=imageView.focus;imageView.focus=null;
+    if(focus?.isConnected)focus.focus({preventScroll:true});
+  });
+  viewer.addEventListener('keydown',e=>{
+    if(e.key==='+'||e.key==='='){e.preventDefault();setImageZoom(imageView.scale*1.5);}
+    if(e.key==='-'){e.preventDefault();setImageZoom(imageView.scale/1.5);}
+    if(e.key==='0'){e.preventDefault();setImageZoom(1);}
+  });
+  stage.addEventListener('wheel',e=>{if(!photo.naturalWidth)return;e.preventDefault();setImageZoom(imageView.scale*(e.deltaY<0?1.15:1/1.15),e.clientX,e.clientY);},{passive:false});
+  stage.addEventListener('pointerdown',e=>{
+    if(!photo.naturalWidth||e.pointerType==='mouse'&&e.button!==0)return;
+    stage.setPointerCapture(e.pointerId);
+    imageView.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,time:Date.now()});
+    if(imageView.pointers.size===1)imageView.gesture={type:'pan',x:imageView.x,y:imageView.y,startX:e.clientX,startY:e.clientY};
+    if(imageView.pointers.size===2){
+      const [a,b]=[...imageView.pointers.values()],rect=stage.getBoundingClientRect();
+      imageView.gesture={type:'pinch',distance:Math.hypot(a.x-b.x,a.y-b.y)||1,scale:imageView.scale,x:imageView.x,y:imageView.y,
+        cx:(a.x+b.x)/2-rect.left-rect.width/2,cy:(a.y+b.y)/2-rect.top-rect.height/2};
+      imageView.lastTap=null;
+    }
+  });
+  stage.addEventListener('pointermove',e=>{
+    const point=imageView.pointers.get(e.pointerId);if(!point)return;
+    point.x=e.clientX;point.y=e.clientY;
+    if(imageView.pointers.size===2&&imageView.gesture?.type==='pinch'){
+      const [a,b]=[...imageView.pointers.values()],g=imageView.gesture,rect=stage.getBoundingClientRect();
+      const scale=Math.max(1,Math.min(5,g.scale*Math.hypot(a.x-b.x,a.y-b.y)/g.distance));
+      const cx=(a.x+b.x)/2-rect.left-rect.width/2,cy=(a.y+b.y)/2-rect.top-rect.height/2;
+      imageView.scale=scale;imageView.x=cx-(g.cx-g.x)*scale/g.scale;imageView.y=cy-(g.cy-g.y)*scale/g.scale;
+      clampImagePan();applyImageZoom();
+    }else if(imageView.pointers.size===1&&imageView.gesture?.type==='pan'&&imageView.scale>1){
+      imageView.x=imageView.gesture.x+e.clientX-imageView.gesture.startX;
+      imageView.y=imageView.gesture.y+e.clientY-imageView.gesture.startY;
+      clampImagePan();applyImageZoom();
+    }
+  });
+  const endPointer=e=>{
+    const point=imageView.pointers.get(e.pointerId);if(!point)return;
+    const wasPinch=imageView.gesture?.type==='pinch';imageView.pointers.delete(e.pointerId);
+    if(imageView.pointers.size===1){
+      const p=[...imageView.pointers.values()][0];imageView.gesture={type:'pan',x:imageView.x,y:imageView.y,startX:p.x,startY:p.y};
+      imageView.lastTap=null;
+    }else{
+      imageView.gesture=null;
+      if(e.type==='pointerup'&&!wasPinch&&Math.hypot(e.clientX-point.startX,e.clientY-point.startY)<12&&Date.now()-point.time<350){
+        const tap=imageView.lastTap;
+        if(tap&&Date.now()-tap.time<350&&Math.hypot(e.clientX-tap.x,e.clientY-tap.y)<30){
+          setImageZoom(imageView.scale>1?1:2.5,e.clientX,e.clientY);imageView.lastTap=null;
+        }else imageView.lastTap={time:Date.now(),x:e.clientX,y:e.clientY};
+      }else imageView.lastTap=null;
+    }
+  };
+  stage.addEventListener('pointerup',endPointer);
+  stage.addEventListener('pointercancel',endPointer);
+  window.addEventListener('resize',()=>{if(viewer.open&&photo.naturalWidth)fitImageViewer();});
+}
 const fail = (error) => { console.error(error); show(error?.message || 'Something went wrong. Please try again.'); };
 const read = async (table,query=q=>q) => { const {data,error}=await query(db.from(table).select('*')); if(error) throw error; return data || []; };
 async function readRecords(table){
@@ -363,7 +496,7 @@ async function refresh() {
   if(!self.error&&self.data)me=self.data;
   roleReady=!!me&&'application_type' in me;
   if(previous!==accessSignature(me))return signedIn(session);
-  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();route();return;}
+  if(!approved()){if($('#imageViewer').open)closeImageViewer(false);cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();route();return;}
   if(investor()){
     const results=await Promise.allSettled(['investor_updates','investor_inquiries','privacy_requests'].map(readRecords));
     cache={profiles:[me],investor_updates:results[0].status==='fulfilled'?results[0].value:[],investor_inquiries:results[1].status==='fulfilled'?results[1].value:[],privacy_requests:results[2].status==='fulfilled'?results[2].value:[]};
@@ -440,6 +573,7 @@ async function touchPresence(online=true) {
 }
 async function signedIn(newSession) {
   const generation=++authGeneration;
+  closeImageViewer(false);
   session=newSession;
   unreadCounts={channels:{},direct_messages:{},direct_peers:[],direct_total:0};unreadCountsReady=false;
   applicationVerification=new Map();applicationsOwner=null;feedOwner=null;channelHistoryId=null;dmThreadPeer=null;
@@ -504,6 +638,7 @@ async function init() {
   $('#menuBtn').onclick=()=>$('#sidebar').classList.toggle('open');
   $('#modal').addEventListener('click',e=>{ if(e.target===$('#modal')) close(); });
   $('.modal-close').onclick=close;
+  setupImageViewer();
   window.addEventListener('hashchange',route);
   $('#authButton').onclick=()=>session ? signOut() : signInDialog();
   document.addEventListener('click',actions);
@@ -647,12 +782,16 @@ function members() {
   const invite=(cache.founder_invites||[]).find(i=>i.email===session?.user.email?.toLowerCase()&&!i.accepted_at);
   return `${head('COMMUNITY','Members','See who is around and connect with the people building InnovateX.',`<div class="profile-buttons">${avatarReady?button('Change photo','avatarForm','button-outline'):''}${button('Edit my profile','profileForm')}<a class="button button-outline" href="#privacy">Privacy settings</a></div>`)}
   ${invite?`<div class="founder-invite-banner"><div><span class="eyebrow">FOUNDER INVITATION</span><h3>You’ve been invited to join the founding team.</h3><p>Accept with your verified account to open founder meetings and planning.</p></div>${button('Accept invitation','acceptFounder')}</div>`:''}
-  <div class="grid grid-4"><div class="stat"><small>Visible members</small><b>${people.length}</b><span>In your directory</span></div><div class="stat"><small>Visible online</small><b>${people.filter(online).length}</b><span>Seen within 65 seconds</span></div></div><div class="section-heading"><h2>Member directory</h2><p>Presence updates while the workspace is open. Private profiles appear only to their owner and administrators.</p></div><div class="profile-grid">${people.length?pageMembers.map(p=>`<div class="card person">${memberAvatar(p.id)}<div><h3>${esc(p.full_name||'New member')}</h3>${roleBadge(p)}<p class="subtle">${esc(p.headline||p.programme||'Member')}</p></div>${online(p)?'<span class="online-dot" title="Online"></span>':''}<button class="text-button" data-action="memberProfile" data-id="${esc(p.id)}">Profile</button></div>`).join(''):empty('No members yet','Member profiles will appear after signup.')}</div>${recordsPager('memberDirectory',memberDirectoryPage,people.length)}`;
+  <div class="grid grid-4"><div class="stat"><small>Visible members</small><b>${people.length}</b><span>In your directory</span></div><div class="stat"><small>Visible online</small><b>${people.filter(online).length}</b><span>Seen within 65 seconds</span></div></div><div class="section-heading"><h2>Member directory</h2><p>Presence updates while the workspace is open. Private profiles appear only to their owner and administrators.</p></div><div class="profile-grid">${people.length?pageMembers.map(p=>`<div class="card person">${p.avatar_path?`<button type="button" class="person-photo-trigger" data-action="viewProfilePhoto" data-id="${esc(p.id)}" aria-label="View ${esc(p.full_name)}'s profile photo full screen">${memberAvatar(p.id)}</button>`:memberAvatar(p.id)}<div><h3>${esc(p.full_name||'New member')}</h3>${roleBadge(p)}<p class="subtle">${esc(p.headline||p.programme||'Member')}</p></div>${online(p)?'<span class="online-dot" title="Online"></span>':''}<button class="text-button" data-action="memberProfile" data-id="${esc(p.id)}">Profile</button></div>`).join(''):empty('No members yet','Member profiles will appear after signup.')}</div>${recordsPager('memberDirectory',memberDirectoryPage,people.length)}`;
 }
 function memberProfile(id) {
   const p=(cache.profiles||[]).find(x=>x.id===id&&x.membership_status==='approved'&&x.role!=='investor');if(!p)return;
   const online=p.last_seen_at&&Date.now()-new Date(p.last_seen_at)<65000;
-  modal(`<div class="member-profile-hero">${memberAvatar(p.id,true)}<span class="tag ${online?'':'blue'}">${online?'Online':esc(p.availability||'Member')}</span></div><h2>${esc(p.full_name)}</h2>${roleBadge(p)}<p class="profile-headline">${esc(p.headline||p.programme||'Club member')}</p><p class="subtle">${p.handle?'@'+esc(p.handle)+' · ':''}${esc(p.programme||'InnovateX Engineering Club')}</p><div class="profile-facts"><div><small>Role</small><strong>${esc(p.role)}</strong></div><div><small>Availability</small><strong>${esc(p.availability||'Available')}</strong></div><div><small>Joined</small><strong>${date(p.created_at)}</strong></div></div><h3>About</h3><p class="profile-bio">${esc(p.bio||'This member has not added a bio yet.')}</p><h3>Skills & interests</h3><p>${esc(p.skills||'Not listed yet.')}</p><div class="profile-buttons">${p.id===session?.user.id?`${avatarReady?button('Change photo','avatarForm','button-outline'):''}${button('Edit my profile','profileForm')}`:dmReady?`<button class="button" data-action="openDm" data-id="${esc(p.id)}">Message ${esc(p.full_name.split(' ')[0])} →</button>`:''}</div>`);
+  modal(`<div class="member-profile-hero">${p.avatar_path?`<button type="button" class="profile-photo-trigger" data-action="viewProfilePhoto" data-id="${esc(p.id)}" aria-label="View ${esc(p.full_name)}'s profile photo full screen">${memberAvatar(p.id,true)}<span class="profile-photo-hint">Tap to enlarge</span></button>`:memberAvatar(p.id,true)}<span class="tag ${online?'':'blue'}">${online?'Online':esc(p.availability||'Member')}</span></div><h2>${esc(p.full_name)}</h2>${roleBadge(p)}<p class="profile-headline">${esc(p.headline||p.programme||'Club member')}</p><p class="subtle">${p.handle?'@'+esc(p.handle)+' · ':''}${esc(p.programme||'InnovateX Engineering Club')}</p><div class="profile-facts"><div><small>Role</small><strong>${esc(p.role)}</strong></div><div><small>Availability</small><strong>${esc(p.availability||'Available')}</strong></div><div><small>Joined</small><strong>${date(p.created_at)}</strong></div></div><h3>About</h3><p class="profile-bio">${esc(p.bio||'This member has not added a bio yet.')}</p><h3>Skills & interests</h3><p>${esc(p.skills||'Not listed yet.')}</p><div class="profile-buttons">${p.id===session?.user.id?`${avatarReady?button('Change photo','avatarForm','button-outline'):''}${button('Edit my profile','profileForm')}`:dmReady?`<button class="button" data-action="openDm" data-id="${esc(p.id)}">Message ${esc(p.full_name.split(' ')[0])} →</button>`:''}</div>`);
+  if(p.avatar_path&&!mediaUrl(p.avatar_path))void hydrateMedia([p.avatar_path]).then(changed=>{
+    const trigger=$('#modal .profile-photo-trigger');
+    if(changed&&trigger?.dataset.id===id&&trigger.querySelector('.avatar'))trigger.querySelector('.avatar').outerHTML=memberAvatar(id,true);
+  }).catch(console.error);
 }
 function messages() {
   if(!dmReady)return head('MEMBER CONNECTIONS','Direct messages','Private conversations with club members.')+communityNotice();
@@ -668,7 +807,7 @@ function messages() {
   return `${head('MEMBER CONNECTIONS','Direct messages','Discuss a project with another approved club member.')}
     ${!unreadCountsReady?'<div class="notice">Unread counts may be incomplete while the club finishes setup. Contact an administrator if a conversation seems missing.</div>':''}
     <div class="dm-layout"><div class="dm-list"><div class="dm-heading">Members <span>${people.length}</span></div><div class="dm-search"><label class="sr-only" for="dmFilter">Find a member</label><input id="dmFilter" placeholder="Find a member"></div>${ordered.map(p=>{const last=history.filter(m=>m.sender_id===p.id||m.recipient_id===p.id).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];const seen=(cache.direct_message_reads||[]).find(r=>r.peer_id===p.id)?.last_read_at;const unread=unreadCountsReady?Number(unreadCounts.direct_messages[p.id]||0):history.filter(m=>m.sender_id===p.id&&(!seen||new Date(m.created_at)>new Date(seen))).length;return `<button class="dm-peer ${p.id===activePeerId?'selected':''}" data-action="openDm" data-id="${esc(p.id)}">${memberAvatar(p.id)}<span><strong>${esc(p.full_name)}</strong><small>${esc(last?.body||p.headline||p.programme||'Start a conversation')}</small></span>${unread?`<i class="unread-badge">${unread}</i>`:''}</button>`}).join('')||empty('No other members','Approved members will appear here.')}</div>
-    <div class="dm-conversation">${peer?`<div class="chat-head"><div><h2>${esc(peer.full_name)}</h2><p>${esc(peer.headline||peer.programme||'Club member')}</p></div>${peer.private_placeholder?'':`<button class="text-button" data-action="memberProfile" data-id="${esc(peer.id)}">View profile</button>`}</div>${dmThreadError?`<div class="notice">${esc(dmThreadError)} <button class="text-button" data-action="reloadDmThread">Retry</button></div>`:''}${dmTotal>50?`<div class="records-toolbar"><small class="subtle">Messages ${dmPage*50+1}–${Math.min(dmTotal,dmPage*50+50)} of ${dmTotal}</small><div class="records-actions"><button class="button button-outline button-sm" data-action="dmOlder" ${(dmPage+1)*50>=dmTotal||dmThreadLoading?'disabled':''}>← Older</button><button class="button button-outline button-sm" data-action="dmNewer" ${dmPage===0||dmThreadLoading?'disabled':''}>Newer →</button></div></div>`:''}<div id="dmStream" class="dm-stream">${thread.length?thread.map(m=>{const photo=mediaUrl(m.image_path);return `<div class="dm-bubble ${m.sender_id===session.user.id?'mine':''}">${m.sender_id!==session.user.id?memberAvatar(peer.id):''}<div><p>${esc(m.body)}</p>${photo?`<a href="${esc(photo)}" target="_blank" rel="noopener noreferrer" aria-label="Open private image"><img class="dm-photo" src="${esc(photo)}" loading="lazy" alt="Image shared in this conversation"></a>`:''}<small>${dateTime(m.created_at)}</small></div></div>`}).join(''):dmThreadLoading?empty('Loading messages','Fetching this part of the conversation…'):empty('Start a conversation','Send a message about a club project or upcoming event.')}</div><form id="dmComposer" class="chat-composer">${mediaReady?`<label class="gallery-picker" title="Choose an image from your gallery">▧<span class="sr-only">Choose image</span><input name="dm_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>`:''}<label class="sr-only" for="dmBody">Message</label><input id="dmBody" name="body" maxlength="3000" placeholder="Message ${esc(peer.full_name)}" ${mediaReady?'':'required'} autocomplete="off"><button class="button" type="submit">Send ↗</button>${mediaReady?`<span id="dmImageName" class="chat-image-name" hidden></span>`:''}</form>`:empty('Choose a member','Select someone to start a private conversation.')}</div></div>`;
+    <div class="dm-conversation">${peer?`<div class="chat-head"><div><h2>${esc(peer.full_name)}</h2><p>${esc(peer.headline||peer.programme||'Club member')}</p></div>${peer.private_placeholder?'':`<button class="text-button" data-action="memberProfile" data-id="${esc(peer.id)}">View profile</button>`}</div>${dmThreadError?`<div class="notice">${esc(dmThreadError)} <button class="text-button" data-action="reloadDmThread">Retry</button></div>`:''}${dmTotal>50?`<div class="records-toolbar"><small class="subtle">Messages ${dmPage*50+1}–${Math.min(dmTotal,dmPage*50+50)} of ${dmTotal}</small><div class="records-actions"><button class="button button-outline button-sm" data-action="dmOlder" ${(dmPage+1)*50>=dmTotal||dmThreadLoading?'disabled':''}>← Older</button><button class="button button-outline button-sm" data-action="dmNewer" ${dmPage===0||dmThreadLoading?'disabled':''}>Newer →</button></div></div>`:''}<div id="dmStream" class="dm-stream">${thread.length?thread.map(m=>{const photo=mediaUrl(m.image_path);return `<div class="dm-bubble ${m.sender_id===session.user.id?'mine':''}">${m.sender_id!==session.user.id?memberAvatar(peer.id):''}<div><p>${esc(m.body)}</p>${photo?`<a href="${esc(photo)}" data-action="viewImage" data-media-path="${esc(m.image_path)}" data-caption="Image shared in this conversation" target="_blank" rel="noopener noreferrer" aria-label="View private image full screen"><img class="dm-photo" src="${esc(photo)}" loading="lazy" alt="Image shared in this conversation"></a>`:''}<small>${dateTime(m.created_at)}</small></div></div>`}).join(''):dmThreadLoading?empty('Loading messages','Fetching this part of the conversation…'):empty('Start a conversation','Send a message about a club project or upcoming event.')}</div><form id="dmComposer" class="chat-composer">${mediaReady?`<label class="gallery-picker" title="Choose an image from your gallery">▧<span class="sr-only">Choose image</span><input name="dm_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>`:''}<label class="sr-only" for="dmBody">Message</label><input id="dmBody" name="body" maxlength="3000" placeholder="Message ${esc(peer.full_name)}" ${mediaReady?'':'required'} autocomplete="off"><button class="button" type="submit">Send ↗</button>${mediaReady?`<span id="dmImageName" class="chat-image-name" hidden></span>`:''}</form>`:empty('Choose a member','Select someone to start a private conversation.')}</div></div>`;
 }
 async function markDmRead(peerId) {
   if(!dmReady||!session||!peerId)return;
@@ -917,7 +1056,7 @@ function feedPostCard(p) {
   let domain='';try{domain=p.link_url?new URL(p.link_url).hostname.replace(/^www\./,''):'';}catch{}
   const photo=mediaUrl(p.image_path);
   return `<article class="card feed-post" id="post-${esc(p.id)}"><div class="feed-post-head">${memberAvatar(p.author_id)}<div><strong>${esc(memberName(p.author_id))} ${roleBadge((cache.profiles||[]).find(x=>x.id===p.author_id))}</strong><small>${dateTime(p.created_at)}${p.edited_at?' · edited':''}</small></div>${p.author_id===session?.user.id||admin()?`<div class="feed-post-menu">${p.author_id===session?.user.id?`<button class="text-button" data-action="editFeedPost" data-id="${esc(p.id)}">Edit</button>`:''}<button class="text-button" data-action="removeFeedPost" data-id="${esc(p.id)}">Remove</button></div>`:''}</div>${mediaReady?`<span class="tag blue feed-category">${esc(p.category||'Project update')}</span>`:''}${p.title?`<h2 class="feed-post-title">${esc(p.title)}</h2>`:''}<p class="feed-body">${esc(p.body)}</p>
-    ${photo?`<a href="${esc(photo)}" target="_blank" rel="noopener noreferrer" aria-label="Open full image"><img class="feed-photo" src="${esc(photo)}" loading="lazy" alt="Image shared by ${esc(memberName(p.author_id))}"></a>`:''}
+    ${photo?`<a href="${esc(photo)}" data-action="viewImage" data-media-path="${esc(p.image_path)}" data-caption="Image shared by ${esc(memberName(p.author_id))}" target="_blank" rel="noopener noreferrer" aria-label="View shared image full screen"><img class="feed-photo" src="${esc(photo)}" loading="lazy" alt="Image shared by ${esc(memberName(p.author_id))}"></a>`:''}
     ${p.link_url?`<a class="feed-link" href="${esc(cleanUrl(p.link_url))}" target="_blank" rel="noopener noreferrer"><span class="feed-link-art">↗</span><span><small>${esc(domain)}</small><strong>${esc(p.link_url)}</strong></span></a>`:''}
     ${doc?`<button class="feed-file" data-action="downloadDoc" data-id="${esc(doc.id)}">▤ &nbsp; ${esc(doc.title)} <small>Open document ↗</small></button>`:''}
     <div class="feed-post-actions"><button class="feed-action ${liked?'selected':''}" data-action="likeFeedPost" data-id="${esc(p.id)}" aria-label="${liked?'Unlike':'Like'} post">${liked?'♥':'♡'} ${likes.length} Likes</button><span>◌ ${comments.length} Comments</span><button class="feed-action" data-action="report" data-type="post" data-id="${esc(p.id)}">Report</button></div>
@@ -1009,7 +1148,7 @@ function messageRow(m,showThread=false) {
   const replies=(selected?channelHistoryRows:cache.channel_messages||[]).filter(x=>x.parent_id===m.id).length;
   const reactions=(selected?channelHistoryReactions:cache.message_reactions||[]).filter(x=>x.message_id===m.id);
   const photo=m.deleted_at?'':mediaUrl(m.image_path);
-  return `<div class="chat-message">${memberAvatar(m.author_id)}<div><div class="message-meta"><strong>${esc(memberName(m.author_id))}</strong><time>${dateTime(m.created_at)}${m.edited_at?' · edited':''}</time></div><p>${esc(m.body)}</p>${photo?`<a href="${esc(photo)}" target="_blank" rel="noopener noreferrer" aria-label="Open shared image"><img class="chat-photo" src="${esc(photo)}" loading="lazy" alt="Image shared by ${esc(memberName(m.author_id))}"></a>`:''}${doc?`<button class="attachment" data-action="downloadDoc" data-id="${esc(doc.id)}">▤ ${esc(doc.title)} <small>${fileSize(doc.file_size)}</small></button>`:''}
+  return `<div class="chat-message">${memberAvatar(m.author_id)}<div><div class="message-meta"><strong>${esc(memberName(m.author_id))}</strong><time>${dateTime(m.created_at)}${m.edited_at?' · edited':''}</time></div><p>${esc(m.body)}</p>${photo?`<a href="${esc(photo)}" data-action="viewImage" data-media-path="${esc(m.image_path)}" data-caption="Image shared by ${esc(memberName(m.author_id))}" target="_blank" rel="noopener noreferrer" aria-label="View shared image full screen"><img class="chat-photo" src="${esc(photo)}" loading="lazy" alt="Image shared by ${esc(memberName(m.author_id))}"></a>`:''}${doc?`<button class="attachment" data-action="downloadDoc" data-id="${esc(doc.id)}">▤ ${esc(doc.title)} <small>${fileSize(doc.file_size)}</small></button>`:''}
   ${enhancedReady&&!m.deleted_at?`<div class="message-actions">${['👍','💡','🔥','🎯'].map(emoji=>`<button class="reaction ${reactions.some(r=>r.emoji===emoji&&r.user_id===session.user.id)?'selected':''}" data-action="react" data-id="${esc(m.id)}" data-emoji="${emoji}" aria-label="React ${emoji}">${emoji}${reactions.filter(r=>r.emoji===emoji).length||''}</button>`).join('')}${showThread?`<button class="text-button" data-action="thread" data-id="${esc(m.id)}">Reply${replies?` (${replies})`:''}</button>`:''}${m.author_id===session.user.id?`<button class="text-button" data-action="editMessage" data-id="${esc(m.id)}">Edit</button>`:''}${m.author_id===session.user.id||admin()?`<button class="text-button" data-action="removeMessage" data-id="${esc(m.id)}">Remove</button>`:''}<button class="text-button" data-action="report" data-type="message" data-id="${esc(m.id)}">Report</button></div>`:''}</div></div>`;
 }
 function threadDialog(id) {
@@ -1097,6 +1236,17 @@ async function signOut() {try{await touchPresence(false);const {error}=await db.
 
 function actions(e) {
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
+  if(action==='viewProfilePhoto'){
+    e.preventDefault();
+    const profile=(cache.profiles||[]).find(p=>p.id===id&&p.membership_status==='approved'&&p.role!=='investor');
+    if(profile?.avatar_path&&clubAccess())void openImageViewer(profile.avatar_path,`${profile.full_name} profile photo`,el);
+    return;
+  }
+  if(action==='viewImage'){
+    e.preventDefault();
+    if(clubAccess()&&el.dataset.mediaPath)void openImageViewer(el.dataset.mediaPath,el.dataset.caption||'Shared photo',el);
+    return;
+  }
   if(action==='dismissAdminAlert'){dismissAdminAlert();return;}
   if(action==='openAdminApplications'){
     if(!admin())return;
@@ -1230,7 +1380,12 @@ function actions(e) {
     const next=current+(action.endsWith('Next')?1:-1);
     if(next<0||next*50>=total)return;
     if(memberList)memberDirectoryPage=next;else projectListPage=next;
-    render();return;
+    render();
+    if(memberList){
+      const paths=[...document.querySelectorAll('.person-photo-trigger[data-id]')].map(photo=>(cache.profiles||[]).find(p=>p.id===photo.dataset.id)?.avatar_path).filter(Boolean);
+      void hydrateMedia(paths).then(changed=>{if(changed&&page==='members'&&memberDirectoryPage===next)render();}).catch(console.error);
+    }
+    return;
   }
   if(action==='thread')return threadDialog(id);
   if(action==='react')return toggleReaction(id,el.dataset.emoji);

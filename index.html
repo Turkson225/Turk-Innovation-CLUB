@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#101d2a">
   <title>InnovateX Engineering Club</title>
   <meta name="description" content="The home for InnovateX Engineering Club members, projects, courses and events.">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=photo-viewer-20260927">
 </head>
 <body>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -72,8 +72,13 @@
     <button class="admin-alert-close" type="button" data-action="dismissAdminAlert" aria-label="Dismiss application alert" title="Dismiss">×</button>
   </section>
   <dialog id="modal"><button class="modal-close" aria-label="Close">×</button><div id="modalContent"></div></dialog>
+  <dialog id="imageViewer" class="image-viewer" aria-labelledby="imageViewerCaption">
+    <div class="image-viewer-toolbar"><strong id="imageViewerCaption">Photo</strong><button id="imageViewerClose" class="image-viewer-control" type="button" aria-label="Close photo viewer">×</button></div>
+    <div id="imageViewerStage" class="image-viewer-stage"><span id="imageViewerLoading" class="image-viewer-loading" role="status">Opening photo…</span><img id="imageViewerPhoto" alt="" draggable="false"></div>
+    <div class="image-viewer-footer"><span class="image-viewer-hint">Pinch or double tap to zoom</span><div class="image-viewer-buttons"><button id="imageViewerZoomOut" class="image-viewer-control" type="button" aria-label="Zoom out">−</button><output id="imageViewerZoomLabel">100%</output><button id="imageViewerZoomIn" class="image-viewer-control" type="button" aria-label="Zoom in">+</button><button id="imageViewerReset" class="image-viewer-control image-viewer-fit" type="button" aria-label="Fit image to screen">Fit</button></div></div>
+  </dialog>
   <script src="config.js"></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script type="module" src="app.js"></script>
+  <script type="module" src="app.js?v=photo-viewer-20260927"></script>
 </body>
 </html>
