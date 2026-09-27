@@ -41,10 +41,19 @@
     return bytes;
   };
   async function publicKey() {
-    const response = await fetch(pushUrl(), { method: 'GET', cache: 'no-store' });
-    if (!response.ok) throw new Error('The club notification service is unavailable. Try again later.');
-    const data = await response.json();
-    if (!data?.vapid_public_key) throw new Error('The administrator still needs to configure push notifications in Supabase.');
+    const endpoint = pushUrl();
+    let response;
+    try { response = await fetch(endpoint, { method: 'GET', cache: 'no-store' }); }
+    catch { throw new Error('Could not reach the club notification service. Check your connection and try again.'); }
+    if (response.status === 404)
+      throw new Error('Device alerts are not set up yet. A club administrator needs to deploy the notification function in Supabase. Your in-app inbox still works.');
+    if (response.status === 401 || response.status === 403)
+      throw new Error('Device alerts are blocked by the club notification settings. An administrator needs to check the Edge Function access settings.');
+    if (!response.ok) throw new Error('The club notification service is temporarily unavailable. Please try again later.');
+    let data;
+    try { data = await response.json(); }
+    catch { throw new Error('The club notification service returned an invalid setup response. Ask an administrator to check the function.'); }
+    if (!data?.vapid_public_key) throw new Error('A club administrator still needs to add the device notification keys in Supabase.');
     return vapidBytes(data.vapid_public_key);
   }
   const registration = create => !('serviceWorker' in navigator) ? Promise.resolve(null)
@@ -117,7 +126,13 @@
       announce();
       throw new Error(lastReason);
     }
-    const key = await publicKey();
+    let key;
+    try { key = await publicKey(); }
+    catch (error) {
+      lastReason = error instanceof Error ? error.message : 'Device alerts could not be enabled.';
+      announce();
+      throw error;
+    }
     const reg = await registration(true);
     let existing = await reg.pushManager.getSubscription();
     const owner = readOwner();

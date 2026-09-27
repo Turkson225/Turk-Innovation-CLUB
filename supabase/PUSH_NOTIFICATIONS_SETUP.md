@@ -77,6 +77,16 @@ verify_jwt = false
 Open the function's GET URL in a browser and confirm it returns a nonempty
 `vapid_public_key`. Do not send a POST from the public website.
 
+If **Enable device alerts** says the club notification service is unavailable,
+check that GET URL first. A `404` with `Requested function was not found`
+means the Edge Function has not been deployed to the project in `config.js`
+under the exact name `send-push-notifications`; running the SQL migration
+does not deploy it. A `401` or `403` means the public GET is being blocked;
+turn off **Verify JWT with legacy secret** for this function. A successful GET
+with an empty `vapid_public_key` means the VAPID secrets in step 2 are missing
+or invalid. Refresh the site after correcting the setup, then tap **Enable
+device alerts** again. The in-app inbox works independently of device push.
+
 ## 5. Schedule delivery
 
 Enable **Database → Extensions → `pg_cron` and `pg_net`** if they are not
