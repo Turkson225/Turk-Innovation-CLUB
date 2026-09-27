@@ -208,6 +208,9 @@ nav a span svg,.icon-box svg{vertical-align:middle;transition:transform .22s eas
 @media(max-width:460px){.inventory-card,.finance-review-card{padding:15px}.inventory-card-head,.finance-review-card>header{flex-wrap:wrap}.finance-review-actions .button{flex:1}.finance-review-card .records-actions{width:100%}}
 
 /* Administrator application alerts */
+.alert-delete{color:#aa3c34}
+.alert-delete:hover{text-decoration:underline;text-underline-offset:3px}
+.alert-delete:focus-visible{outline:2px solid #aa3c34;outline-offset:4px}
 .admin-top-button{position:relative;display:inline-grid;flex:0 0 36px;place-items:center;width:36px;height:36px;padding:0;border:1px solid var(--line);border-radius:10px;background:var(--white);color:var(--ink);transition:background .2s,border-color .2s,transform .2s}
 .admin-top-button:hover{background:color-mix(in srgb,var(--teal) 9%,var(--white));border-color:var(--teal);transform:translateY(-1px)}
 .admin-top-button:focus-visible,.admin-alert button:focus-visible{outline:2px solid var(--deep);outline-offset:3px}
