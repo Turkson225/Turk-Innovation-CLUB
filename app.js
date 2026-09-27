@@ -9,7 +9,7 @@ const cleanUrl = (s) => { try { const u = new URL(s); return u.protocol === 'htt
 const date = (s) => s ? new Date(s).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : 'TBD';
 const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'TBD';
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
-let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, courseReady = false, privacyReady = false, inventoryReady = false, inventoryCatalogReady = false, financeReady = false, financeApprovalsReady = false, activePeerId = null, lastRenderedPage = '';
+let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, courseReady = false, teacherProfileReady = false, teacherProfile = null, privacyReady = false, inventoryReady = false, inventoryCatalogReady = false, financeReady = false, financeApprovalsReady = false, activePeerId = null, lastRenderedPage = '';
 let adminAlertTimer = null, adminAlertRealtime = null, adminAlertDismissTimer = null, adminAudioContext = null, adminDeferredAlert = null;
 let adminPendingCount = 0, adminAlertsInitialized = false, adminSoundEnabled = false;
 let adminSeenApplicationIds = new Set();
@@ -362,11 +362,11 @@ async function refresh() {
   if(!self.error&&self.data)me=self.data;
   roleReady=!!me&&'application_type' in me;
   if(previous!==`${me?.membership_status}:${me?.role}`)return signedIn(session);
-  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();route();return;}
+  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();route();return;}
   if(investor()){
     const results=await Promise.allSettled(['investor_updates','investor_inquiries','privacy_requests'].map(readRecords));
     cache={profiles:[me],investor_updates:results[0].status==='fulfilled'?results[0].value:[],investor_inquiries:results[1].status==='fulfilled'?results[1].value:[],privacy_requests:results[2].status==='fulfilled'?results[2].value:[]};
-    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;privacyReady=results[2].status==='fulfilled';inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
+    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=results[2].status==='fulfilled';inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
     if(previous!==`${me.membership_status}:${me.role}`||!['home','about','founders','investors','investor-portal','privacy'].includes(page)) {route();return;}
     render();return;
   }
@@ -375,10 +375,16 @@ async function refresh() {
   const unordered=new Set(['channel_reads','project_members','event_rsvps','founder_meeting_rsvps']);
   const records=new Set(['profiles','projects','project_tasks','topics','replies','courses','learning_materials','events','announcements','founders','channels','documents','news_posts','founder_invites','founder_meetings','notifications','project_milestones','document_versions','reports','audit_events','investor_updates','investor_inquiries','course_enrollments','course_submissions','course_completions','privacy_requests','inventory_items','inventory_movements','finance_entries','finance_reviews']);
   const previews={channel_messages:120,direct_messages:120,activity_posts:50,activity_comments:1,activity_likes:1,message_reactions:1,notifications:100};
-  const results=await Promise.allSettled(names.map(n=>records.has(n)?readRecords(n):read(n,q=>{
-    if(!unordered.has(n))q=q.order('created_at',{ascending:false});
-    return Object.hasOwn(previews,n)?q.limit(previews[n]):q;
-  })));
+  const [results,teachingProfileResult]=await Promise.all([
+    Promise.allSettled(names.map(n=>records.has(n)?readRecords(n):read(n,q=>{
+      if(!unordered.has(n))q=q.order('created_at',{ascending:false});
+      return Object.hasOwn(previews,n)?q.limit(previews[n]):q;
+    }))),
+    me?.role==='teacher'?db.from('teacher_profiles').select('*').eq('teacher_id',session.user.id).maybeSingle():Promise.resolve({data:null,error:null})
+  ]);
+  teacherProfileReady=me?.role==='teacher'&&!teachingProfileResult.error;
+  teacherProfile=teacherProfileReady?teachingProfileResult.data:null;
+  if(teachingProfileResult.error)console.error('teacher_profiles',teachingProfileResult.error);
   results.forEach((r,i)=>{ if(r.status==='fulfilled') cache[names[i]]=r.value; else {cache[names[i]]=[];console.error(names[i],r.reason);} });
   if(admin()){
     const pending=await db.from('profiles').select('id',{count:'exact',head:true}).eq('membership_status','pending');
@@ -412,6 +418,7 @@ async function refresh() {
   if(page==='notifications' && document.activeElement?.closest('#content')) { render(); return; }
   if(page==='channels' && document.activeElement?.closest('#chatComposer')) { renderChatMessages(); return; }
   if(page==='messages' && document.activeElement?.closest('#dmComposer')) return;
+  if(page==='teaching' && document.activeElement?.closest('#teacherProfileForm')) return;
   render();
 }
 async function refreshChat() {
@@ -477,7 +484,7 @@ async function signedIn(newSession) {
           void refreshAdminAlerts();
         }).subscribe();
     }
-  } else { me=null;roleReady=false;courseReady=false;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); if(!['home','about','founders','investors'].includes(page)) page='home'; await loadPublic(); }
+  } else { me=null;roleReady=false;courseReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); if(!['home','about','founders','investors'].includes(page)) page='home'; await loadPublic(); }
   if(session&&!approved()&&!['about','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
   if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='founder-room'&&!founder()) {page='founders';history.replaceState(null,'','#founders');}
@@ -707,12 +714,14 @@ function courseJourney(c){
 function materialRow(m){return `<div class="learning-row"><span class="tag blue">${esc(m.kind)}</span><div><strong>${esc(m.title)}</strong><small>${esc(m.file_name)} · ${fileSize(m.file_size)} · ${date(m.created_at)}</small>${m.description?`<p>${esc(m.description)}</p>`:''}</div>${m.hidden_at?'<span class="tag gold">Hidden</span>':`<button class="text-button" data-action="downloadLearning" data-id="${esc(m.id)}">Download ↓</button>`}</div>`;}
 function teaching(){
   if(!teacher())return '';
+  const onboarding=me.role==='teacher'?(teacherProfileReady?`<section class="card teacher-onboarding"><div class="row"><div><span class="eyebrow">YOUR TEACHING PROFILE</span><h2>${teacherProfile?'Update your teaching details':'Complete your teaching details'}</h2><p class="subtle">Tell the club what you can teach through practical projects. Only you and administrators can see these details.</p></div><span class="tag ${teacherProfile?'blue':'gold'}">${teacherProfile?'Saved':'To complete'}</span></div><form id="teacherProfileForm" data-kind="teacherProfile" class="form-stack">${select('Primary learning track','track',courseTracks.map(t=>t.name),teacherProfile?.track||courseTracks[0].name)}<div class="field"><label for="teacher_experience">Relevant experience or skills</label><textarea id="teacher_experience" name="experience" minlength="20" maxlength="2000" required placeholder="Describe the tools, projects and topics you can teach.">${esc(teacherProfile?.experience||'')}</textarea></div><div class="field"><label for="teacher_practical_focus">Practical teaching plan</label><textarea id="teacher_practical_focus" name="practical_focus" minlength="20" maxlength="2000" required placeholder="What will members build or test with you?">${esc(teacherProfile?.practical_focus||'')}</textarea></div><div class="field"><label for="teacher_availability">Availability</label><textarea id="teacher_availability" name="availability" minlength="5" maxlength="500" required placeholder="For example, Saturdays or two sessions each month.">${esc(teacherProfile?.availability||'')}</textarea></div><button class="button" type="submit">${teacherProfile?'Save changes':'Save teaching profile'}</button></form></section>`:'<div class="notice">Run the teacher promotions migration to set up teaching profiles.</div>'):'';
   const items=learningReady?(cache.learning_materials||[]).filter(m=>admin()||m.uploaded_by===session.user.id):[];
   const workshops=(cache.courses||[]).filter(c=>admin()||c.instructor_id===session.user.id),courseIds=new Set(workshops.map(c=>c.id));
   const submissions=courseReady?(cache.course_submissions||[]).filter(s=>courseIds.has(s.course_id)):[];
   const pending=submissions.filter(s=>s.review_status==='submitted');
   const completions=courseReady?(cache.course_completions||[]).filter(x=>courseIds.has(x.course_id)):[];
   return `${head('TEACHING','Teaching studio','Review practical project submissions and share learning resources.',learningReady?button('+ Upload material','learningForm'):'')}
+  ${onboarding}
   ${courseReady?`<div class="course-summary"><strong>${workshops.length} workshops</strong><span>${pending.length} awaiting review</span><span>${completions.length} completed projects</span></div>
     <div class="section-heading"><h2>Project submissions</h2><p>Review the build notes and evidence before recording completion.</p></div>
     <div class="grid grid-2">${pending.length?pending.map(s=>courseSubmissionCard(s,true)).join(''):empty('No submissions waiting','New project submissions appear here when learners finish a build.')}</div>
@@ -936,9 +945,9 @@ function applications() {
     ${applicationsError?`<div class="notice">${esc(applicationsError)} <button class="text-button" data-action="reloadApplications">Retry</button></div>`:''}
     ${applicationVerificationError?`<div class="notice">${esc(applicationVerificationError)}</div>`:''}
     <div class="section-heading"><h2>Applications (${applicationTotal})</h2><p>All pending, rejected and suspended accounts, newest first.</p></div>
-    <div class="grid grid-2">${applicants.length?applicants.map(p=>{const eligibility=applicationVerification.get(p.id),verified=eligibility?.verified,previouslyApproved=eligibility?.previouslyApproved===true,submitted=!!p.application_reason?.trim();return `<div class="card"><div class="row"><span class="tag ${p.membership_status==='pending'?'gold':''}">${esc(p.membership_status)}</span><span class="tag blue">${esc(p.application_type||'member')}</span><small class="subtle">${date(p.created_at)}</small></div><h3 style="margin-top:14px">${esc(p.full_name)}</h3><div class="row"><span class="tag ${verified===true?'blue':'gold'}">${verified===true?'Email verified':verified===false?'Verify email first':'Email status unknown'}</span><span class="tag ${submitted?'blue':'gold'}">${submitted?'Application submitted':previouslyApproved?'Prior member: reason not recorded':'Application incomplete'}</span></div><p>${esc(p.programme||'Background not provided')}</p><p class="detail">${esc(p.application_reason||'No reason submitted yet.')}</p><div class="card-footer"><span>${esc(p.skills||'')}</span><div><button class="text-button" data-action="reviewMember" data-status="approved" data-id="${esc(p.id)}" ${verified!==true||!submitted&&!previouslyApproved?'disabled':''}>Approve</button> · <button class="text-button" data-action="reviewMember" data-status="rejected" data-id="${esc(p.id)}">Reject</button></div></div></div>`}).join(''):applicationsLoading?empty('Loading applications','Fetching this page of accounts…'):applicationTotal?empty('Page unavailable','Use Previous or retry loading.'):empty('No applications waiting','New accounts will appear here.')}</div>
+    <div class="grid grid-2">${applicants.length?applicants.map(p=>{const eligibility=applicationVerification.get(p.id),verified=eligibility?.verified,previouslyApproved=eligibility?.previouslyApproved===true,submitted=!!p.application_reason?.trim();return `<div class="card"><div class="row"><span class="tag ${p.membership_status==='pending'?'gold':''}">${esc(p.membership_status)}</span><span class="tag blue">${esc(p.application_type||'member')}</span><small class="subtle">${date(p.created_at)}</small></div><h3 style="margin-top:14px">${esc(p.full_name)}</h3><div class="row"><span class="tag ${verified===true?'blue':'gold'}">${verified===true?'Email verified':verified===false?'Verify email first':'Email status unknown'}</span><span class="tag ${submitted?'blue':'gold'}">${submitted?'Application submitted':previouslyApproved?'Prior member: reason not recorded':'Application incomplete'}</span></div><p>${esc(p.programme||'Background not provided')}</p><p class="detail">${esc(p.application_reason||'No reason submitted yet.')}</p><div class="card-footer"><span>${esc(p.skills||'')}</span><div class="application-actions"><button class="text-button" data-action="reviewMember" data-status="approved" data-id="${esc(p.id)}" ${verified!==true||!submitted&&!previouslyApproved?'disabled':''}>Approve</button>${p.application_type==='member'&&['pending','rejected'].includes(p.membership_status)?`<button class="text-button" data-action="approveApplicantTeacher" data-id="${esc(p.id)}" ${verified!==true||!submitted&&!previouslyApproved?'disabled':''}>Approve as teacher</button>`:''}<button class="text-button" data-action="reviewMember" data-status="rejected" data-id="${esc(p.id)}">Reject</button></div></div></div>`}).join(''):applicationsLoading?empty('Loading applications','Fetching this page of accounts…'):applicationTotal?empty('Page unavailable','Use Previous or retry loading.'):empty('No applications waiting','New accounts will appear here.')}</div>
     ${recordsPager('applications',applicationsPage,applicationTotal)}
-    <div class="section-heading"><h2>Approved accounts (${approvedAccountTotal})</h2><p>Pause access if needed.</p></div><div class="profile-grid">${accounts.map(p=>`<div class="card person">${avatar(p.full_name,false,p.avatar_path)}<div><strong>${esc(p.full_name)}</strong>${roleBadge(p)}<small class="subtle">${esc(p.role)} · ${esc(p.handle||'')}</small></div><button class="text-button" data-action="reviewMember" data-status="suspended" data-id="${esc(p.id)}">Suspend</button></div>`).join('')||empty('No approved accounts','Approved accounts will appear here.')}</div>${recordsPager('approvedAccounts',approvedAccountsPage,approvedAccountTotal)}`;
+    <div class="section-heading"><h2>Approved accounts (${approvedAccountTotal})</h2><p>Promote an approved member to teacher or pause access if needed.</p></div><div class="profile-grid">${accounts.map(p=>`<div class="card person">${avatar(p.full_name,false,p.avatar_path)}<div><strong>${esc(p.full_name)}</strong>${roleBadge(p)}<small class="subtle">${esc(p.role)} · ${esc(p.handle||'')}</small></div><div class="person-actions">${p.role==='member'?`<button class="text-button" data-action="promoteTeacher" data-id="${esc(p.id)}">Make teacher</button>`:''}${p.role==='teacher'?`<button class="text-button" data-action="viewTeacherProfile" data-id="${esc(p.id)}">Teaching details</button>`:''}<button class="text-button" data-action="reviewMember" data-status="suspended" data-id="${esc(p.id)}">Suspend</button></div></div>`).join('')||empty('No approved accounts','Approved accounts will appear here.')}</div>${recordsPager('approvedAccounts',approvedAccountsPage,approvedAccountTotal)}`;
 }
 function adminDashboard(){
   if(!admin())return '';
@@ -1230,6 +1239,18 @@ function actions(e) {
   if(action==='openChannel'){close();activeChannelId=id;location.hash='#channels';render();void loadChannelHistory();markChannelRead(id);return;}
   if(action==='report'){activeReportTarget={type:el.dataset.type,id};return form('Report content','Tell administrators what needs attention.','report',area('Reason for report','reason'));}
   if(action==='reviewMember')return reviewMember(id,el.dataset.status);
+  if(action==='approveApplicantTeacher'&&admin()){
+    const applicant=applicationRows.find(p=>p.id===id&&p.application_type==='member'&&['pending','rejected'].includes(p.membership_status));
+    const eligibility=applicationVerification.get(id);
+    if(!applicant||eligibility?.verified!==true||!applicant.application_reason?.trim()&&!eligibility.previouslyApproved)return;
+    return modal(`<span class="eyebrow">APPLICATION REVIEW</span><h2>Approve ${esc(applicant.full_name)} as a teacher?</h2><p class="muted">They applied as a member. This grants teacher access, sends the normal approval notification and queues the first approval email if the email worker is running. They can complete their teaching details in Teaching studio.</p><form id="editor" data-kind="approveApplicantTeacher" class="form-stack"><input type="hidden" name="user_id" value="${esc(id)}"><button class="button" type="submit">Approve as teacher</button></form>`);
+  }
+  if(action==='promoteTeacher'&&admin()){
+    const member=approvedAccountRows.find(p=>p.id===id&&p.role==='member'&&p.membership_status==='approved');
+    if(!member)return;
+    return modal(`<span class="eyebrow">TEACHER ACCESS</span><h2>Make ${esc(member.full_name)} a teacher?</h2><p class="muted">They will gain access to Teaching studio, course publishing, learning materials and assigned project reviews. They can complete their teaching details after signing in.</p><form id="editor" data-kind="promoteTeacher" class="form-stack"><input type="hidden" name="user_id" value="${esc(id)}"><button class="button" type="submit">Confirm teacher access</button></form>`);
+  }
+  if(action==='viewTeacherProfile'&&admin())return void viewTeacherProfile(id);
   if(action==='readNotification')return markNotification(id);
   if(action==='openNotification')return openNotification(id);
   if(action==='resolveReport')return resolveReport(id);
@@ -1320,6 +1341,31 @@ async function reviewMember(id,status) {
   if(!admin()||!['approved','rejected','suspended'].includes(status))return;
   try {const {error}=await db.rpc('review_membership',{p_user:id,p_status:status});if(error)throw error;await refresh();show(`Membership ${status}.`);}catch(e){fail(e);}
 }
+async function approveApplicantTeacher(id) {
+  if(!admin()||!applicationRows.some(p=>p.id===id&&p.application_type==='member'&&['pending','rejected'].includes(p.membership_status)))return;
+  try {
+    const {error}=await db.rpc('approve_member_applicant_as_teacher',{p_user:id});
+    if(error)throw error;
+    close();await refresh();await loadAdminApplicationPages();show('Applicant approved as a teacher.');
+  }catch(error){fail(error);}
+}
+async function promoteTeacher(id) {
+  if(!admin()||!approvedAccountRows.some(p=>p.id===id&&p.role==='member'&&p.membership_status==='approved'))return;
+  try {
+    const {error}=await db.rpc('promote_member_to_teacher',{p_user:id});
+    if(error)throw error;
+    close();await refresh();await loadAdminApplicationPages();show('Member promoted to teacher. Their Teaching studio is ready.');
+  }catch(error){fail(error);}
+}
+async function viewTeacherProfile(id) {
+  const account=approvedAccountRows.find(p=>p.id===id&&p.role==='teacher'&&p.membership_status==='approved');
+  if(!admin()||!account)return;
+  try {
+    const {data,error}=await db.from('teacher_profiles').select('*').eq('teacher_id',id).maybeSingle();
+    if(error)throw error;
+    modal(`<span class="eyebrow">PRIVATE TEACHING DETAILS</span><h2>${esc(account.full_name)}</h2>${data?`<div class="teacher-profile-review"><small>${esc(data.track)} · Updated ${dateTime(data.updated_at)}</small><h3>Experience or skills</h3><p>${esc(data.experience)}</p><h3>Practical teaching plan</h3><p>${esc(data.practical_focus)}</p><h3>Availability</h3><p>${esc(data.availability)}</p></div>`:'<p class="muted">This teacher has not completed their teaching profile yet.</p>'}`);
+  }catch(error){fail(error);}
+}
 async function markNotification(id) {
   try {const {error}=await db.from('notifications').update({read_at:new Date().toISOString()}).eq('id',id);if(error)throw error;await refresh();}catch(e){fail(e);}
 }
@@ -1331,6 +1377,7 @@ async function openNotification(id) {
   else if(n.target_type==='meeting')location.hash='#founder-room';
   else if(n.target_type==='event')location.hash='#events';
   else if(n.target_type==='application')location.hash=admin()?'#applications':'#application';
+  else if(n.target_type==='teacher')location.hash='#teaching';
   else if(n.target_type==='privacy_request'){location.hash='#privacy';if(admin())setTimeout(()=>document.getElementById('privacy-admin-queue')?.scrollIntoView({behavior:'smooth',block:'start'}),80);}
   else if(n.target_type==='post'){location.hash='#feed';setTimeout(()=>document.getElementById(`post-${n.target_id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),80);}
   else if(n.target_type==='direct_message'){activePeerId=n.target_id;location.hash='#messages';render();markDmRead(activePeerId);}
@@ -1519,7 +1566,7 @@ async function submit(e) {
     try {if(file)path=await uploadClubImage(file);const record={channel_id:activeChannelId,author_id:session.user.id,body:body||'Shared an image'};if(mediaReady)record.image_path=path;const {error}=await db.from('channel_messages').insert(record);if(error)throw error;input.value='';if(file)e.target.querySelector('[name=chat_image]').value='';const label=$('#chatImageName');if(label)label.hidden=true;channelPage=0;await refreshChat();if(page==='channels')render();}
     catch(error){if(path)await db.storage.from('club-media').remove([path]);fail(error);}finally{send.disabled=false;}return;
   }
-  if(e.target.id!=='editor'&&!e.target.matches('.privacy-editor'))return; e.preventDefault(); if(!db)return;
+  if(e.target.id!=='editor'&&!e.target.matches('.privacy-editor')&&e.target.id!=='teacherProfileForm')return; e.preventDefault(); if(!db)return;
   const formEl=e.target,kind=formEl.dataset.kind,values=Object.fromEntries(new FormData(formEl));
   const submitBtn=formEl.querySelector('[type=submit]'); submitBtn.disabled=true;
   try {
@@ -1535,6 +1582,20 @@ async function submit(e) {
     const payload={...values};
     for(const key of ['starts_at','ends_at','due_at']) if(key in payload) payload[key]=payload[key]?new Date(payload[key]).toISOString():null;
     for(const key of ['link_url','resource_url','meet_url']) if(key in payload) payload[key]=payload[key]?cleanUrl(payload[key]):null;
+    if(kind==='promoteTeacher'){
+      await promoteTeacher(String(payload.user_id||''));return;
+    }
+    if(kind==='approveApplicantTeacher'){
+      await approveApplicantTeacher(String(payload.user_id||''));return;
+    }
+    if(kind==='teacherProfile'){
+      if(me?.role!=='teacher'||!teacherProfileReady)throw Error('Approved teacher access and the teacher promotions migration are required.');
+      const record={track:String(payload.track||''),experience:String(payload.experience||'').trim(),practical_focus:String(payload.practical_focus||'').trim(),availability:String(payload.availability||'').trim()};
+      if(!courseTracks.some(t=>t.name===record.track)||record.experience.length<20||record.experience.length>2000||record.practical_focus.length<20||record.practical_focus.length>2000||record.availability.length<5||record.availability.length>500)throw Error('Choose a track and complete your experience, practical plan and availability.');
+      const query=teacherProfile?db.from('teacher_profiles').update(record).eq('teacher_id',session.user.id):db.from('teacher_profiles').insert({teacher_id:session.user.id,...record});
+      const {error}=await query;if(error)throw error;
+      document.activeElement?.blur();await refresh();show('Teaching profile saved.');return;
+    }
     if(kind==='profileVisibility'){
       if(!session||!me||!('profile_visibility' in me)||!['club','private'].includes(payload.profile_visibility))throw Error('Select a profile visibility option.');
       const {error}=await db.from('profiles').update({profile_visibility:payload.profile_visibility}).eq('id',session.user.id);
