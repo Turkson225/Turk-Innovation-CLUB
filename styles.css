@@ -325,3 +325,45 @@ nav a span svg,.icon-box svg{vertical-align:middle;transition:transform .22s eas
 @media(max-width:520px){.mobile-wordmark{display:inline-flex}.topbar{gap:8px}.topbar .top-actions{margin-left:auto}}
 @media(max-width:380px){.mobile-wordmark-long{display:none}.mobile-wordmark-short{display:inline}.mobile-wordmark{font-size:16px}}
 @media(prefers-reduced-motion:reduce){.hero-graphic,.hero-copy>.eyebrow:before,.about-kicker:before{animation:none}}
+
+/* Course enrollment and teaching studio: readable cards from desktop to narrow phones. */
+.enrollment-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:14px;margin:18px 0 27px}
+.enrollment-card{min-width:0;padding:19px;border:1px solid var(--line);border-top:3px solid var(--teal);border-radius:14px;background:var(--white);color:var(--ink);box-shadow:var(--shadow);overflow-wrap:anywhere;transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease}
+.enrollment-card:nth-child(even){border-top-color:var(--accent-orange-bright)}
+.enrollment-card h3{margin:11px 0 7px}.enrollment-card p{color:var(--muted)}
+.course-timeline{display:flex;flex-wrap:wrap;align-items:center;gap:8px 13px;min-width:0;margin:12px 0;color:var(--muted);font-size:12px}
+.course-date,.course-deadline{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-width:0;padding:5px 9px;border-radius:7px;background:color-mix(in srgb,var(--teal) 10%,var(--white));color:var(--deep);font-size:11px;font-weight:750;line-height:1.35;overflow-wrap:anywhere}
+.course-deadline{background:color-mix(in srgb,var(--accent-orange) 12%,var(--white));color:var(--accent-orange)}
+.course-deadline.overdue{background:color-mix(in srgb,var(--accent-orange) 20%,var(--white));border:1px solid color-mix(in srgb,var(--accent-orange) 42%,var(--line))}
+.teaching-overview{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);align-items:start;gap:16px;margin:20px 0 27px}
+.teaching-overview>*{min-width:0}
+.teaching-agenda{min-width:0;padding:21px;border:1px solid var(--line);border-radius:14px;background:var(--white);box-shadow:var(--shadow)}
+.teaching-agenda h2,.teaching-agenda h3{margin:0 0 13px}
+.teaching-agenda-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px;min-width:0;padding:12px 0;border-top:1px solid var(--line);overflow-wrap:anywhere}
+.teaching-agenda-row>*{min-width:0;overflow-wrap:anywhere}.teaching-agenda-row .avatar,.teaching-agenda-row .event-date{flex:none}
+.teaching-workshops{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:16px 0 28px}
+.teaching-workshop-card{min-width:0;padding:21px;border:1px solid var(--line);border-radius:14px;background:var(--white);color:var(--ink);box-shadow:var(--shadow);overflow-wrap:anywhere;transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease}
+.teaching-workshop-card:nth-child(even){box-shadow:inset 0 3px var(--accent-orange-bright),var(--shadow)}
+.teaching-workshop-card h3{margin:4px 0 9px}.teaching-workshop-card p{color:var(--muted)}
+.teacher-roster-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:10px;min-width:0;margin:14px 0}
+.teacher-roster-row{display:flex;align-items:center;gap:11px;min-width:0;padding:12px;border:1px solid var(--line);border-radius:11px;background:color-mix(in srgb,var(--teal) 4%,var(--white));overflow-wrap:anywhere}
+.teacher-roster-row>*{min-width:0}.teacher-roster-row .avatar{flex:none}
+.teacher-roster-row strong,.teacher-roster-row small{display:block;overflow-wrap:anywhere}
+.teacher-roster-row small{color:var(--muted);font-size:11px}
+.teacher-workshop-actions{display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin-top:16px}
+.teacher-workshop-actions .button{white-space:normal;text-align:center}
+@media(hover:hover){.enrollment-card:hover,.teaching-workshop-card:hover{transform:translateY(-2px);border-color:var(--accent-orange-bright);box-shadow:0 16px 34px rgba(9,39,51,.1)}}
+.enrollment-card:focus-within,.teaching-workshop-card:focus-within,.teacher-roster-row:focus-within{border-color:var(--accent-orange-bright)}
+@media(max-width:760px){.teaching-overview,.teaching-workshops{grid-template-columns:1fr}}
+@media(max-width:560px){.teacher-roster-list{grid-template-columns:1fr}.teaching-agenda{padding:17px}.teaching-workshop-card{padding:18px}}
+@media(max-width:360px){.enrollment-grid{gap:10px}.enrollment-card{padding:15px}.course-timeline{align-items:flex-start;flex-direction:column}.teaching-agenda-row{flex-wrap:wrap}.teacher-workshop-actions .button{flex:1 1 100%}}
+@media(prefers-reduced-motion:reduce){.enrollment-card,.teaching-workshop-card{transition:none}.enrollment-card:hover,.teaching-workshop-card:hover{transform:none}}
+
+/* Personal workshop dates in the club calendar. */
+.cal-chip.course{background:color-mix(in srgb,var(--accent-orange) 16%,var(--white));color:var(--accent-orange)}
+.cal-chip.course_due{background:color-mix(in srgb,#b34865 16%,var(--white));color:#943451}
+.cal-dot.course{background:var(--accent-orange-bright)}
+.cal-dot.course_due{background:#b34865}
+[data-theme=dark] .cal-chip.course_due{background:#543041;color:#ffc0d1}
+[data-theme=dark] .cal-dot.course_due{background:#ff92b0}
+.cal-agenda .cal-events-link{margin-right:15px}
