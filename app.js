@@ -9,13 +9,21 @@ const cleanUrl = (s) => { try { const u = new URL(s); return u.protocol === 'htt
 const date = (s) => s ? new Date(s).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : 'TBD';
 const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'TBD';
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
-let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, inventoryReady = false, inventoryCatalogReady = false, financeReady = false, financeApprovalsReady = false, activePeerId = null, lastRenderedPage = '';
+let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, courseReady = false, privacyReady = false, inventoryReady = false, inventoryCatalogReady = false, financeReady = false, financeApprovalsReady = false, activePeerId = null, lastRenderedPage = '';
 let adminAlertTimer = null, adminAlertRealtime = null, adminAlertDismissTimer = null, adminAudioContext = null, adminDeferredAlert = null;
 let adminPendingCount = 0, adminAlertsInitialized = false, adminSoundEnabled = false;
 let adminSeenApplicationIds = new Set();
 let adminAlertPolling = false;
 let authGeneration = 0;
 let inventoryFilter = 'all', inventorySearchTerm = '', financeFilter = 'all', inventoryLogPage = 0, financePage = 0, financeReviewPage = 0;
+let memberDirectoryPage = 0, projectListPage = 0;
+let applicationsPage = 0, approvedAccountsPage = 0, applicationsOwner = null, applicationsLoading = false, applicationsError = '';
+let applicationRows = [], approvedAccountRows = [], applicationTotal = 0, approvedAccountTotal = 0, applicationsRequest = 0;
+let applicationVerification = new Map(), applicationVerificationError = '';
+let feedPage = 0, feedTotal = 0, feedLoading = false, feedError = '', feedOwner = null, feedRequest = 0;
+let channelPage = 0, channelTotal = 0, channelHistoryId = null, channelHistoryRows = [], channelHistoryReactions = [], channelHistoryLoading = false, channelHistoryError = '', channelRequest = 0;
+let dmPage = 0, dmTotal = 0, dmThreadPeer = null, dmThreadRows = [], dmThreadLoading = false, dmThreadError = '', dmRequest = 0;
+let unreadCounts = {channels:{},direct_messages:{},direct_peers:[],direct_total:0}, unreadCountsReady = false;
 let calendarMonth = new Date(new Date().getFullYear(),new Date().getMonth(),1), calendarSelected = new Date();
 let courseTrack = 'all';
 const courseTracks = [
@@ -24,12 +32,18 @@ const courseTracks = [
   {name:'Electronics and Robotics',example:'Assemble and test a circuit, mobile robot or connected device.'},
   {name:'AI & Machine Learning',example:'Train and evaluate a model using real data and a usable prototype.'}
 ];
+const proposedWorkshops = [
+  {track:'Controls and Automation',title:'Build a feedback controller for a small fan',detail:'Compare sensor readings and a setpoint, test a safe low-voltage output, and record what changed when feedback was enabled.'},
+  {track:'Software and Programming',title:'Turn sensor readings into a useful dashboard',detail:'Build a responsive display with time-stamped readings, history, connection state, and a tested threshold alert.'},
+  {track:'Electronics and Robotics',title:'Calibrate and test a small line-following robot',detail:'Map and calibrate sensors, tune steering, then log three repeatable trials and a recovery from a lost line.'},
+  {track:'AI & Machine Learning',title:'Classify simple device states from sensor data',detail:'Build a baseline and a small classifier, compare held-out results, and explain uncertainty in the prototype.'}
+];
 const courseTrackFor = c => ({Automation:'Controls and Automation',Electronics:'Electronics and Robotics','Embedded systems':'Electronics and Robotics',Robotics:'Electronics and Robotics',CAD:'Software and Programming',Software:'Software and Programming'}[c.category]||c.category);
 const mediaUrls = new Map();
 const mediaUrl = path => path && mediaUrls.get(path)?.url || '';
 async function hydrateMedia() {
   if(!mediaReady)return;
-  const paths=[...(cache.profiles||[]).slice(0,150).map(p=>p.avatar_path),...[...(cache.activity_posts||[]).slice(0,80),...(cache.channel_messages||[]).slice(0,180),...(cache.direct_messages||[]).slice(0,160)].map(x=>x.image_path)].filter(Boolean);
+  const paths=[...(cache.profiles||[]).slice(0,150).map(p=>p.avatar_path),...[...(cache.activity_posts||[]).slice(0,80),...(cache.channel_messages||[]).slice(0,180),...(cache.direct_messages||[]).slice(0,160),...channelHistoryRows,...dmThreadRows].map(x=>x.image_path)].filter(Boolean);
   const missing=[...new Set(paths)].filter(p=>!mediaUrls.has(p)||mediaUrls.get(p).expires<Date.now()+60000);
   if(!missing.length)return;
   const {data,error}=await db.storage.from('club-media').createSignedUrls(missing,900);
@@ -173,10 +187,171 @@ const read = async (table,query=q=>q) => { const {data,error}=await query(db.fro
 async function readRecords(table){
   const rows=[];
   for(;;){
-    const {data,error,count}=await db.from(table).select('*',{count:'exact'}).order('created_at',{ascending:false}).order('id',{ascending:false}).range(rows.length,rows.length+999);
+    const {data,error,count}=await db.from(table).select('*',{count:'exact'}).order('created_at',{ascending:false}).order('id',{ascending:false}).range(rows.length,rows.length+499);
     if(error)throw error;
+    if(!data?.length && count>rows.length)throw Error(`Could not load all ${table} records. Please retry.`);
     rows.push(...(data||[]));
     if(!data?.length||rows.length>=count)return rows;
+  }
+}
+async function loadAdminApplicationPages(){
+  if(!admin()||!session)return;
+  const owner=session.user.id,request=++applicationsRequest;
+  if(applicationsOwner!==owner){
+    applicationsOwner=owner;applicationsPage=0;approvedAccountsPage=0;
+    applicationRows=[];approvedAccountRows=[];applicationTotal=0;approvedAccountTotal=0;
+  }
+  applicationsLoading=true;applicationsError='';
+  applicationVerificationError='';
+  try{
+    const getPages=()=>Promise.all([
+      db.from('profiles').select('*',{count:'exact'}).neq('membership_status','approved').order('created_at',{ascending:false}).order('id',{ascending:false}).range(applicationsPage*50,applicationsPage*50+49),
+      db.from('profiles').select('*',{count:'exact'}).eq('membership_status','approved').neq('id',owner).order('created_at',{ascending:false}).order('id',{ascending:false}).range(approvedAccountsPage*50,approvedAccountsPage*50+49)
+    ]);
+    let [applicants,accounts]=await getPages();
+    if(applicants.error)throw applicants.error;
+    if(accounts.error)throw accounts.error;
+    if(applicants.count===null||accounts.count===null)throw Error('Could not count applications. Please retry.');
+    if(applicationsPage>0&&applicationsPage*50>=applicants.count||approvedAccountsPage>0&&approvedAccountsPage*50>=accounts.count){
+      applicationsPage=Math.min(applicationsPage,Math.max(0,Math.ceil(applicants.count/50)-1));
+      approvedAccountsPage=Math.min(approvedAccountsPage,Math.max(0,Math.ceil(accounts.count/50)-1));
+      [applicants,accounts]=await getPages();
+      if(applicants.error)throw applicants.error;
+      if(accounts.error)throw accounts.error;
+    }
+    let verification=new Map();
+    if(applicants.data?.length){
+      const result=await db.rpc('application_verification_status',{p_users:applicants.data.map(p=>p.id)});
+      if(result.error)applicationVerificationError='Verification status unavailable. Run the updated approval migration to see it here.';
+      else verification=new Map((result.data||[]).map(row=>[row.user_id,{verified:row.email_verified,previouslyApproved:row.previously_approved}]));
+    }
+    if(request!==applicationsRequest||session?.user.id!==owner||!admin())return;
+    applicationRows=applicants.data||[];approvedAccountRows=accounts.data||[];
+    applicationVerification=verification;
+    applicationTotal=applicants.count||0;approvedAccountTotal=accounts.count||0;
+  }catch(error){
+    if(request!==applicationsRequest)return;
+    applicationRows=[];approvedAccountRows=[];applicationVerification=new Map();applicationsError=error?.message||'Could not load accounts.';
+  }finally{
+    if(request===applicationsRequest){applicationsLoading=false;if(page==='applications')render();}
+  }
+}
+async function readFeedRelations(table,ids){
+  if(!ids.length)return [];
+  const rows=[];
+  const keys=table==='activity_likes'?['created_at','post_id','user_id']:['created_at','id'];
+  let total=null;
+  do{
+    let query=db.from(table).select('*',{count:'exact'}).in('post_id',ids);
+    for(const key of keys)query=query.order(key,{ascending:true});
+    const {data,error,count}=await query.range(rows.length,rows.length+499);
+    if(error)throw error;
+    if(total===null)total=count;
+    if(total===null||!data?.length&&rows.length<total)throw Error('Could not load complete feed discussion. Please retry.');
+    rows.push(...(data||[]));
+  }while(rows.length<total);
+  return rows;
+}
+async function loadFeedPage(renderAfter=true){
+  if(!session||!clubAccess()||!feedReady)return;
+  const owner=session.user.id,request=++feedRequest;
+  if(feedOwner!==owner){feedOwner=owner;feedPage=0;feedTotal=0;}
+  feedLoading=true;feedError='';
+  try{
+    const fetchPosts=()=>db.from('activity_posts').select('*',{count:'exact'}).order('created_at',{ascending:false}).order('id',{ascending:false}).range(feedPage*30,feedPage*30+29);
+    let posts=await fetchPosts();
+    if(posts.error)throw posts.error;
+    if(posts.count===null)throw Error('Could not count activity posts. Please retry.');
+    if(feedPage>0&&feedPage*30>=posts.count){feedPage=Math.max(0,Math.ceil(posts.count/30)-1);posts=await fetchPosts();if(posts.error)throw posts.error;}
+    const ids=(posts.data||[]).map(p=>p.id);
+    const [comments,likes]=await Promise.all([readFeedRelations('activity_comments',ids),readFeedRelations('activity_likes',ids)]);
+    if(request!==feedRequest||session?.user.id!==owner||!clubAccess())return;
+    cache.activity_posts=posts.data||[];
+    cache.activity_comments=comments;
+    cache.activity_likes=likes;
+    feedTotal=posts.count||0;
+    await hydrateMedia();
+  }catch(error){if(request===feedRequest)feedError=error?.message||'Could not load posts.';}
+  finally{if(request===feedRequest){feedLoading=false;if(renderAfter&&page==='feed')render();}}
+}
+async function readRelatedRows(table,column,ids,order){
+  const rows=[];
+  for(let i=0;i<ids.length;i+=100){
+    const subset=ids.slice(i,i+100);
+    let total=null,offset=0;
+    do{
+      let query=db.from(table).select('*',{count:'exact'}).in(column,subset);
+      for(const key of order)query=query.order(key,{ascending:true});
+      const {data,error,count}=await query.range(offset,offset+499);
+      if(error)throw error;
+      if(total===null)total=count;
+      if(total===null||!data?.length&&offset<total)throw Error(`Could not load complete ${table} history. Please retry.`);
+      rows.push(...(data||[]));offset+=(data||[]).length;
+    }while(offset<total);
+  }
+  return rows;
+}
+async function loadChannelHistory(renderAfter=true){
+  if(!clubAccess()||!communityReady||!activeChannelId)return;
+  const id=activeChannelId,owner=session.user.id,request=++channelRequest;
+  if(channelHistoryId!==id){channelHistoryId=id;channelPage=0;channelTotal=0;channelHistoryRows=[];channelHistoryReactions=[];}
+  channelHistoryLoading=true;channelHistoryError='';
+  try{
+    const fetchRoots=()=>{
+      let query=db.from('channel_messages').select('*',{count:'exact'}).eq('channel_id',id);
+      if(enhancedReady)query=query.is('parent_id',null);
+      return query.order('created_at',{ascending:false}).order('id',{ascending:false}).range(channelPage*50,channelPage*50+49);
+    };
+    let result=await fetchRoots();
+    if(result.error)throw result.error;
+    if(result.count===null)throw Error('Could not count channel messages. Please retry.');
+    if(channelPage>0&&channelPage*50>=result.count){channelPage=Math.max(0,Math.ceil(result.count/50)-1);result=await fetchRoots();if(result.error)throw result.error;}
+    const roots=result.data||[];
+    const replies=enhancedReady?await readRelatedRows('channel_messages','parent_id',roots.map(m=>m.id),['created_at','id']):[];
+    const rows=roots.concat(replies);
+    const reactions=enhancedReady?await readRelatedRows('message_reactions','message_id',rows.map(m=>m.id),['message_id','user_id','emoji']):[];
+    if(request!==channelRequest||activeChannelId!==id||session?.user.id!==owner||!clubAccess())return;
+    channelHistoryRows=rows;channelHistoryReactions=reactions;channelTotal=result.count||0;
+    await hydrateMedia();
+  }catch(error){if(request===channelRequest)channelHistoryError=error?.message||'Could not load channel history.';}
+  finally{if(request===channelRequest){channelHistoryLoading=false;if(renderAfter&&page==='channels')render();}}
+}
+async function loadDmThread(renderAfter=true){
+  if(!clubAccess()||!dmReady||!activePeerId||!session)return;
+  const peer=activePeerId,owner=session.user.id,request=++dmRequest;
+  if(dmThreadPeer!==peer){dmThreadPeer=peer;dmPage=0;dmTotal=0;dmThreadRows=[];}
+  dmThreadLoading=true;dmThreadError='';
+  try{
+    const fetchThread=()=>db.from('direct_messages').select('*',{count:'exact'}).in('sender_id',[owner,peer]).in('recipient_id',[owner,peer]).order('created_at',{ascending:false}).order('id',{ascending:false}).range(dmPage*50,dmPage*50+49);
+    let result=await fetchThread();
+    if(result.error)throw result.error;
+    if(result.count===null)throw Error('Could not count direct messages. Please retry.');
+    if(dmPage>0&&dmPage*50>=result.count){dmPage=Math.max(0,Math.ceil(result.count/50)-1);result=await fetchThread();if(result.error)throw result.error;}
+    if(request!==dmRequest||activePeerId!==peer||session?.user.id!==owner||!clubAccess())return;
+    dmThreadRows=result.data||[];dmTotal=result.count||0;
+    await hydrateMedia();
+  }catch(error){if(request===dmRequest)dmThreadError=error?.message||'Could not load direct messages.';}
+  finally{if(request===dmRequest){dmThreadLoading=false;if(renderAfter&&page==='messages')render();}}
+}
+async function refreshUnreadCounts(){
+  if(!session||!clubAccess())return;
+  const owner=session.user.id;
+  const {data,error}=await db.rpc('club_unread_counts');
+  if(session?.user.id!==owner||!clubAccess())return;
+  if(error){unreadCountsReady=false;console.error('Unread counts',error);return;}
+  if(!data||typeof data!=='object')return;
+  unreadCounts={channels:data.channels||{},direct_messages:data.direct_messages||{},direct_peers:Array.isArray(data.direct_peers)?data.direct_peers:[],direct_total:Number(data.direct_total)||0};
+  unreadCountsReady=true;
+  const badge=$('#dmBadge');if(badge){badge.textContent=unreadCounts.direct_total;badge.hidden=!unreadCounts.direct_total;}
+  for(const [selector,key,target] of [['[data-action="selectChannel"]','channels','strong'],['[data-action="openDm"]','direct_messages','button']]){
+    for(const item of document.querySelectorAll(selector)){
+      const parent=target==='button'?item:item.querySelector(target),value=Number(unreadCounts[key][item.dataset.id]||0);
+      if(!parent)continue;
+      let chip=parent.querySelector('.unread-badge');
+      if(!value){chip?.remove();continue;}
+      if(!chip){chip=document.createElement('i');chip.className='unread-badge';parent.append(chip);}
+      chip.textContent=value;
+    }
   }
 }
 
@@ -187,22 +362,28 @@ async function refresh() {
   if(!self.error&&self.data)me=self.data;
   roleReady=!!me&&'application_type' in me;
   if(previous!==`${me?.membership_status}:${me?.role}`)return signedIn(session);
-  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();route();return;}
+  if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();route();return;}
   if(investor()){
-    const results=await Promise.allSettled(['investor_updates','investor_inquiries'].map(n=>read(n,q=>q.order('created_at',{ascending:false}))));
-    cache={profiles:[me],investor_updates:results[0].status==='fulfilled'?results[0].value:[],investor_inquiries:results[1].status==='fulfilled'?results[1].value:[]};
-    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
+    const results=await Promise.allSettled(['investor_updates','investor_inquiries','privacy_requests'].map(readRecords));
+    cache={profiles:[me],investor_updates:results[0].status==='fulfilled'?results[0].value:[],investor_inquiries:results[1].status==='fulfilled'?results[1].value:[],privacy_requests:results[2].status==='fulfilled'?results[2].value:[]};
+    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;privacyReady=results[2].status==='fulfilled';inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
     if(previous!==`${me.membership_status}:${me.role}`||!['home','about','founders','investors','investor-portal','privacy'].includes(page)) {route();return;}
     render();return;
   }
-  const names=['profiles','projects','project_tasks','topics','replies','courses','learning_materials','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes','direct_messages','direct_message_reads','investor_updates','investor_inquiries','inventory_items'];
+  const names=['profiles','projects','project_tasks','topics','replies','courses','learning_materials','course_enrollments','course_submissions','course_completions','privacy_requests','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes','direct_messages','direct_message_reads','investor_updates','investor_inquiries','inventory_items'];
   if(founder())names.push('inventory_movements','finance_entries','finance_reviews');
   const unordered=new Set(['channel_reads','project_members','event_rsvps','founder_meeting_rsvps']);
-  const records=new Set(['inventory_items','inventory_movements','finance_entries','finance_reviews']);
-  const results=await Promise.allSettled(names.map(n=>records.has(n)?readRecords(n):read(n,q=>unordered.has(n)?q:q.order('created_at',{ascending:false}))));
+  const records=new Set(['profiles','projects','project_tasks','topics','replies','courses','learning_materials','events','announcements','founders','channels','documents','news_posts','founder_invites','founder_meetings','notifications','project_milestones','document_versions','reports','audit_events','investor_updates','investor_inquiries','course_enrollments','course_submissions','course_completions','privacy_requests','inventory_items','inventory_movements','finance_entries','finance_reviews']);
+  const previews={channel_messages:120,direct_messages:120,activity_posts:50,activity_comments:1,activity_likes:1,message_reactions:1,notifications:100};
+  const results=await Promise.allSettled(names.map(n=>records.has(n)?readRecords(n):read(n,q=>{
+    if(!unordered.has(n))q=q.order('created_at',{ascending:false});
+    return Object.hasOwn(previews,n)?q.limit(previews[n]):q;
+  })));
   results.forEach((r,i)=>{ if(r.status==='fulfilled') cache[names[i]]=r.value; else {cache[names[i]]=[];console.error(names[i],r.reason);} });
   if(admin()){
-    adminPendingCount=(cache.profiles||[]).filter(p=>p.membership_status==='pending').length;
+    const pending=await db.from('profiles').select('id',{count:'exact',head:true}).eq('membership_status','pending');
+    if(pending.error)console.error('Pending application count',pending.error);
+    else adminPendingCount=pending.count||0;
     if(results[names.indexOf('notifications')].status==='fulfilled')receiveAdminApplications(cache.notifications);
   }
   communityReady=results[names.indexOf('channels')].status==='fulfilled';
@@ -210,16 +391,23 @@ async function refresh() {
   feedReady=results[names.indexOf('activity_posts')].status==='fulfilled';
   dmReady=results[names.indexOf('direct_messages')].status==='fulfilled';
   learningReady=results[names.indexOf('learning_materials')].status==='fulfilled';
+  courseReady=['course_enrollments','course_submissions','course_completions'].every(n=>results[names.indexOf(n)].status==='fulfilled');
+  privacyReady=results[names.indexOf('privacy_requests')].status==='fulfilled';
   inventoryReady=results[names.indexOf('inventory_items')].status==='fulfilled'&&(!founder()||results[names.indexOf('inventory_movements')].status==='fulfilled');
   financeReady=founder()&&results[names.indexOf('finance_entries')].status==='fulfilled';
   const {error:catalogError}=inventoryReady?await db.from('inventory_items').select('item_type').limit(1):{error:true};
   inventoryCatalogReady=!catalogError;
   financeApprovalsReady=financeReady&&results[names.indexOf('finance_reviews')].status==='fulfilled';
+  await refreshUnreadCounts();
+  if(page==='feed'&&feedReady)await loadFeedPage(false);
+  if(page==='channels'&&communityReady&&activeChannelId)await loadChannelHistory(false);
+  if(page==='messages'&&dmReady&&activePeerId)await loadDmThread(false);
   const {error:mediaError}=feedReady?await db.from('activity_posts').select('image_path').limit(1):{error:true};
   mediaReady=!mediaError;
   const {error:avatarError}=mediaReady?await db.from('profiles').select('avatar_path').eq('id',session.user.id).limit(1):{error:true};
   avatarReady=!avatarError;
   await hydrateMedia();
+  if(page==='applications'&&admin())void loadAdminApplicationPages();
   if(previous!==`${me.membership_status}:${me.role}`){route();return;}
   if(page==='notifications' && document.activeElement?.closest('#content')) { render(); return; }
   if(page==='channels' && document.activeElement?.closest('#chatComposer')) { renderChatMessages(); return; }
@@ -228,13 +416,13 @@ async function refresh() {
 }
 async function refreshChat() {
   if(!session || !clubAccess() || !communityReady) return;
-  try { cache.channel_messages=await read('channel_messages',q=>q.order('created_at',{ascending:false}).limit(250));await hydrateMedia();
+  try { cache.channel_messages=await read('channel_messages',q=>q.order('created_at',{ascending:false}).limit(120));if(page==='channels'&&activeChannelId)await loadChannelHistory(false);await refreshUnreadCounts();await hydrateMedia();
     if(page==='channels') renderChatMessages();
   } catch(e) { console.error(e); }
 }
 async function loadPublic() {
   if (!db) return;
-  try { cache.founders=await read('founders',q=>q.order('sort_order',{ascending:true})); } catch(e) { console.error(e); }
+  try { cache.founders=(await readRecords('founders')).sort((a,b)=>a.sort_order-b.sort_order); } catch(e) { console.error(e); }
   render();
 }
 async function touchPresence(online=true) {
@@ -245,6 +433,9 @@ async function touchPresence(online=true) {
 async function signedIn(newSession) {
   const generation=++authGeneration;
   session=newSession;
+  unreadCounts={channels:{},direct_messages:{},direct_peers:[],direct_total:0};unreadCountsReady=false;
+  applicationVerification=new Map();applicationsOwner=null;feedOwner=null;channelHistoryId=null;dmThreadPeer=null;
+  applicationRows=[];approvedAccountRows=[];channelHistoryRows=[];dmThreadRows=[];
   authReady=true;
   clearInterval(pollTimer); clearInterval(presenceTimer);
   clearInterval(chatTimer);clearInterval(adminAlertTimer);dismissAdminAlert();
@@ -286,7 +477,7 @@ async function signedIn(newSession) {
           void refreshAdminAlerts();
         }).subscribe();
     }
-  } else { me=null;roleReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); if(!['home','about','founders','investors'].includes(page)) page='home'; await loadPublic(); }
+  } else { me=null;roleReady=false;courseReady=false;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); if(!['home','about','founders','investors'].includes(page)) page='home'; await loadPublic(); }
   if(session&&!approved()&&!['about','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
   if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='founder-room'&&!founder()) {page='founders';history.replaceState(null,'','#founders');}
@@ -336,6 +527,10 @@ function route() {
   if(page==='founder-room'&&authReady&&!founder()){page='founders';history.replaceState(null,'','#founders');show('Founder access required.');}
   if(['admin','applications','moderation'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   $('#sidebar').classList.remove('open');render();
+  if(page==='applications'&&admin())void loadAdminApplicationPages();
+  if(page==='feed'&&feedReady)void loadFeedPage();
+  if(page==='channels'&&communityReady&&activeChannelId)void loadChannelHistory();
+  if(page==='messages'&&dmReady&&activePeerId)void loadDmThread();
 }
 function render() {
   $('#authButton').textContent=session?'Sign out':'Join / sign in';
@@ -358,14 +553,14 @@ function render() {
   updateAdminAlertControls();
   const pendingFinance=founderOnly()&&financeApprovalsReady?(cache.finance_entries||[]).filter(x=>financeStatus(x)==='pending').length:0;
   const financeBadge=$('#financeReviewBadge');if(financeBadge){financeBadge.textContent=pendingFinance;financeBadge.hidden=!pendingFinance;}
-  const unreadDm=(cache.direct_messages||[]).filter(m=>m.recipient_id===session?.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;
+  const unreadDm=unreadCountsReady?unreadCounts.direct_total:(cache.direct_messages||[]).filter(m=>m.recipient_id===session?.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;
   $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
   const views={home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').innerHTML=views[page]();
   if(page==='inventory')applyInventorySearch();
   $('#content').classList.toggle('view-enter',page!==lastRenderedPage);lastRenderedPage=page;
-  if(page==='channels'){const stream=$('#messageStream');if(stream)stream.scrollTop=stream.scrollHeight;if(activeChannelId&&enhancedReady)markChannelRead(activeChannelId);}
-  if(page==='messages'){const stream=$('#dmStream');if(stream)stream.scrollTop=stream.scrollHeight;if(activePeerId&&dmReady)markDmRead(activePeerId);}
+  if(page==='channels'){const stream=$('#messageStream');if(stream)stream.scrollTop=channelPage>0?0:stream.scrollHeight;if(channelPage===0&&activeChannelId&&enhancedReady)markChannelRead(activeChannelId);}
+  if(page==='messages'){const stream=$('#dmStream');if(stream)stream.scrollTop=dmPage>0?0:stream.scrollHeight;if(dmPage===0&&activePeerId&&dmReady)markDmRead(activePeerId);}
 }
 function home() {
   if(investor())return `${head('INNOVATEX PARTNERS','Welcome, '+(me?.full_name||'investor'),'Your approved investor space brings together curated updates and a direct inquiry form.')}<div class="grid grid-2"><a class="card feature-card" href="#investor-portal"><span class="feature-icon">${iconSvg('investors')}</span><h3>Investor portal</h3><p>Read updates the club has approved for investors and send a question to the team.</p><span class="link">Open portal →</span></a><a class="card feature-card" href="#founders"><span class="feature-icon">${iconSvg('founders')}</span><h3>Meet the founders</h3><p>Learn about the people guiding InnovateX.</p><span class="link">View founders →</span></a></div>`;
@@ -374,7 +569,7 @@ function home() {
   const upcoming=(cache.events||[]).filter(e=>new Date(e.starts_at)>new Date()).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at)).slice(0,3);
   return `<section class="hero"><div class="hero-copy"><span class="eyebrow">A COMMUNITY FOR ENGINEERS &amp; MAKERS</span><h1>Ideas become<br>working systems.</h1><p>Learn control, automation, electronics, software and robotics. Build prototypes together and prepare for regional and national competitions.</p><div class="hero-actions">${session?`<a class="button" href="#projects">Explore projects ↗</a>`:button('Join the workspace ↗','login')}<a class="button button-outline" href="#about">About the club</a></div></div><div class="hero-graphic">IX✦</div></section>
   <div class="section-heading"><div><span class="eyebrow">CLUB PULSE</span><h2>${session?'Your workspace at a glance':'Built for makers and innovators'}</h2></div><p>${session?`Welcome back, ${esc(me?.full_name||session.user.email)}.`:'A community of makers sharing practical skills and projects.'}</p></div>
-  <div class="grid grid-4"><div class="stat"><small>Members</small><b>${session?count('profiles'):'—'}</b><span>Across disciplines</span></div><div class="stat"><small>Online now</small><b>${session?(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length:'—'}</b><span>Active in the last minute</span></div><div class="stat"><small>Active projects</small><b>${session?count('projects'):'—'}</b><span>Ideas in motion</span></div><div class="stat"><small>Upcoming events</small><b>${session?upcoming.length:'—'}</b><span>Sessions and meetups</span></div></div>
+  <div class="grid grid-4"><div class="stat"><small>Visible profiles</small><b>${session?count('profiles'):'—'}</b><span>In your workspace</span></div><div class="stat"><small>Visible online</small><b>${session?(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length:'—'}</b><span>Active in the last minute</span></div><div class="stat"><small>Active projects</small><b>${session?count('projects'):'—'}</b><span>Ideas in motion</span></div><div class="stat"><small>Upcoming events</small><b>${session?upcoming.length:'—'}</b><span>Sessions and meetups</span></div></div>
   <div class="section-heading"><div><span class="eyebrow">OUR MISSION</span><h2>From the workbench to the world.</h2></div></div><div class="grid grid-3">${[['courses','Learn','Hands-on courses in Arduino, Proteus, CAD, OpenPLC and electrical systems.'],['projects','Build','Plan and test real prototypes with multidisciplinary teams and mentors.'],['founder-room','Compete','Turn the strongest projects into competition-ready demonstrations.']].map(x=>`<div class="card mission-card"><div class="icon-box">${iconSvg(x[0])}</div><h3>${x[1]}</h3><p>${x[2]}</p></div>`).join('')}</div>
   <section class="studio-banner"><img src="assets/robotics-workbench.webp" alt="Concept artwork of hands assembling a robotics prototype" loading="lazy"><div><span class="eyebrow">ENGINEERING INSPIRATION · CONCEPT ARTWORK</span><h2>Make something that works.</h2><p>Find your team, share your next test and turn a good idea into a working prototype.</p><a class="button" href="${session?'#projects':'#about'}">${session?'Explore club projects':'Discover the club'} →</a></div></section>
   ${session?`<div class="section-heading"><h2>Your community</h2><p>Find a conversation or share what you’re learning.</p></div><div class="grid grid-4"><a class="card feature-card" href="#feed"><span class="feature-icon">${iconSvg('feed')}</span><h3>Activity feed</h3><p>Share progress and hear from club members.</p><span class="link">Open feed →</span></a><a class="card feature-card" href="#channels"><span class="feature-icon">${iconSvg('channels')}</span><h3>Member channels</h3><p>Get help and work through ideas together.</p><span class="link">Open channels →</span></a><a class="card feature-card" href="#library"><span class="feature-icon">${iconSvg('library')}</span><h3>Document library</h3><p>Notes, schematics and useful resources in one place.</p><span class="link">Browse files →</span></a><a class="card feature-card" href="#news"><span class="feature-icon">${iconSvg('news')}</span><h3>Technology news</h3><p>Discover engineering stories worth discussing.</p><span class="link">Read stories →</span></a></div>`:''}
@@ -439,10 +634,12 @@ function investorPortal(){
 }
 function members() {
   const people=(cache.profiles||[]).filter(p=>(!('membership_status' in p)||p.membership_status==='approved')&&p.role!=='investor'); const online=p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000;
+  memberDirectoryPage=Math.min(memberDirectoryPage,Math.max(0,Math.ceil(people.length/50)-1));
+  const pageMembers=people.sort((a,b)=>Number(online(b))-Number(online(a))||a.full_name.localeCompare(b.full_name)).slice(memberDirectoryPage*50,memberDirectoryPage*50+50);
   const invite=(cache.founder_invites||[]).find(i=>i.email===session?.user.email?.toLowerCase()&&!i.accepted_at);
-  return `${head('COMMUNITY','Members','See who is around and connect with the people building InnovateX.',`<div class="profile-buttons">${avatarReady?button('Change photo','avatarForm','button-outline'):''}${button('Edit my profile','profileForm')}</div>`)}
+  return `${head('COMMUNITY','Members','See who is around and connect with the people building InnovateX.',`<div class="profile-buttons">${avatarReady?button('Change photo','avatarForm','button-outline'):''}${button('Edit my profile','profileForm')}<a class="button button-outline" href="#privacy">Privacy settings</a></div>`)}
   ${invite?`<div class="founder-invite-banner"><div><span class="eyebrow">FOUNDER INVITATION</span><h3>You’ve been invited to join the founding team.</h3><p>Accept with your verified account to open founder meetings and planning.</p></div>${button('Accept invitation','acceptFounder')}</div>`:''}
-  <div class="grid grid-4"><div class="stat"><small>Registered members</small><b>${people.length}</b><span>Club workspace</span></div><div class="stat"><small>Online now</small><b>${people.filter(online).length}</b><span>Seen within 65 seconds</span></div></div><div class="section-heading"><h2>Member directory</h2><p>Presence updates while the workspace is open.</p></div><div class="profile-grid">${people.length?people.sort((a,b)=>Number(online(b))-Number(online(a))).map(p=>`<div class="card person">${memberAvatar(p.id)}<div><h3>${esc(p.full_name||'New member')}</h3>${roleBadge(p)}<p class="subtle">${esc(p.headline||p.programme||'Member')}</p></div>${online(p)?'<span class="online-dot" title="Online"></span>':''}<button class="text-button" data-action="memberProfile" data-id="${esc(p.id)}">Profile</button></div>`).join(''):empty('No members yet','Member profiles will appear after signup.')}</div>`;
+  <div class="grid grid-4"><div class="stat"><small>Visible members</small><b>${people.length}</b><span>In your directory</span></div><div class="stat"><small>Visible online</small><b>${people.filter(online).length}</b><span>Seen within 65 seconds</span></div></div><div class="section-heading"><h2>Member directory</h2><p>Presence updates while the workspace is open. Private profiles appear only to their owner and administrators.</p></div><div class="profile-grid">${people.length?pageMembers.map(p=>`<div class="card person">${memberAvatar(p.id)}<div><h3>${esc(p.full_name||'New member')}</h3>${roleBadge(p)}<p class="subtle">${esc(p.headline||p.programme||'Member')}</p></div>${online(p)?'<span class="online-dot" title="Online"></span>':''}<button class="text-button" data-action="memberProfile" data-id="${esc(p.id)}">Profile</button></div>`).join(''):empty('No members yet','Member profiles will appear after signup.')}</div>${recordsPager('memberDirectory',memberDirectoryPage,people.length)}`;
 }
 function memberProfile(id) {
   const p=(cache.profiles||[]).find(x=>x.id===id&&x.membership_status==='approved'&&x.role!=='investor');if(!p)return;
@@ -451,24 +648,31 @@ function memberProfile(id) {
 }
 function messages() {
   if(!dmReady)return head('MEMBER CONNECTIONS','Direct messages','Private conversations with club members.')+communityNotice();
-  const people=(cache.profiles||[]).filter(p=>p.id!==session.user.id&&p.membership_status==='approved'&&p.role!=='investor');
   const history=cache.direct_messages||[];
   const peers=new Set(history.map(m=>m.sender_id===session.user.id?m.recipient_id:m.sender_id));
+  if(unreadCountsReady)for(const id of unreadCounts.direct_peers)peers.add(id);
+  const people=(cache.profiles||[]).filter(p=>p.id!==session.user.id&&p.membership_status==='approved'&&p.role!=='investor');
+  for(const id of peers)if(id!==session.user.id&&!people.some(p=>p.id===id))people.push({id,full_name:'Private member',headline:'Profile not shared',private_placeholder:true});
+  if(activePeerId&&activePeerId!==session.user.id&&!people.some(p=>p.id===activePeerId))people.push({id:activePeerId,full_name:'Private member',headline:'Profile not shared',private_placeholder:true});
   const ordered=people.slice().sort((a,b)=>Number(peers.has(b.id))-Number(peers.has(a.id))||a.full_name.localeCompare(b.full_name));
   const peer=people.find(p=>p.id===activePeerId);
-  const thread=peer?history.filter(m=>(m.sender_id===session.user.id&&m.recipient_id===peer.id)||(m.recipient_id===session.user.id&&m.sender_id===peer.id)).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)):[];
+  const thread=peer?(dmThreadPeer===peer.id?dmThreadRows:history.filter(m=>(m.sender_id===session.user.id&&m.recipient_id===peer.id)||(m.recipient_id===session.user.id&&m.sender_id===peer.id))).slice().sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)):[];
   return `${head('MEMBER CONNECTIONS','Direct messages','Discuss a project with another approved club member.')}
-    <div class="dm-layout"><div class="dm-list"><div class="dm-heading">Members <span>${people.length}</span></div><div class="dm-search"><label class="sr-only" for="dmFilter">Find a member</label><input id="dmFilter" placeholder="Find a member"></div>${ordered.map(p=>{const last=history.filter(m=>m.sender_id===p.id||m.recipient_id===p.id).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];const seen=(cache.direct_message_reads||[]).find(r=>r.peer_id===p.id)?.last_read_at;const unread=history.filter(m=>m.sender_id===p.id&&(!seen||new Date(m.created_at)>new Date(seen))).length;return `<button class="dm-peer ${p.id===activePeerId?'selected':''}" data-action="openDm" data-id="${esc(p.id)}">${memberAvatar(p.id)}<span><strong>${esc(p.full_name)}</strong><small>${esc(last?.body||p.headline||p.programme||'Start a conversation')}</small></span>${unread?`<i class="unread-badge">${unread}</i>`:''}</button>`}).join('')||empty('No other members','Approved members will appear here.')}</div>
-    <div class="dm-conversation">${peer?`<div class="chat-head"><div><h2>${esc(peer.full_name)}</h2><p>${esc(peer.headline||peer.programme||'Club member')}</p></div><button class="text-button" data-action="memberProfile" data-id="${esc(peer.id)}">View profile</button></div><div id="dmStream" class="dm-stream">${thread.length?thread.map(m=>{const photo=mediaUrl(m.image_path);return `<div class="dm-bubble ${m.sender_id===session.user.id?'mine':''}">${m.sender_id!==session.user.id?memberAvatar(peer.id):''}<div><p>${esc(m.body)}</p>${photo?`<a href="${esc(photo)}" target="_blank" rel="noopener noreferrer" aria-label="Open private image"><img class="dm-photo" src="${esc(photo)}" loading="lazy" alt="Image shared in this conversation"></a>`:''}<small>${dateTime(m.created_at)}</small></div></div>`}).join(''):empty('Start a conversation','Send a message about a club project or upcoming event.')}</div><form id="dmComposer" class="chat-composer">${mediaReady?`<label class="gallery-picker" title="Choose an image from your gallery">▧<span class="sr-only">Choose image</span><input name="dm_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>`:''}<label class="sr-only" for="dmBody">Message</label><input id="dmBody" name="body" maxlength="3000" placeholder="Message ${esc(peer.full_name)}" ${mediaReady?'':'required'} autocomplete="off"><button class="button" type="submit">Send ↗</button>${mediaReady?`<span id="dmImageName" class="chat-image-name" hidden></span>`:''}</form>`:empty('Choose a member','Select someone to start a private conversation.')}</div></div>`;
+    ${!unreadCountsReady?'<div class="notice">Unread counts may be incomplete while the club finishes setup. Contact an administrator if a conversation seems missing.</div>':''}
+    <div class="dm-layout"><div class="dm-list"><div class="dm-heading">Members <span>${people.length}</span></div><div class="dm-search"><label class="sr-only" for="dmFilter">Find a member</label><input id="dmFilter" placeholder="Find a member"></div>${ordered.map(p=>{const last=history.filter(m=>m.sender_id===p.id||m.recipient_id===p.id).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];const seen=(cache.direct_message_reads||[]).find(r=>r.peer_id===p.id)?.last_read_at;const unread=unreadCountsReady?Number(unreadCounts.direct_messages[p.id]||0):history.filter(m=>m.sender_id===p.id&&(!seen||new Date(m.created_at)>new Date(seen))).length;return `<button class="dm-peer ${p.id===activePeerId?'selected':''}" data-action="openDm" data-id="${esc(p.id)}">${memberAvatar(p.id)}<span><strong>${esc(p.full_name)}</strong><small>${esc(last?.body||p.headline||p.programme||'Start a conversation')}</small></span>${unread?`<i class="unread-badge">${unread}</i>`:''}</button>`}).join('')||empty('No other members','Approved members will appear here.')}</div>
+    <div class="dm-conversation">${peer?`<div class="chat-head"><div><h2>${esc(peer.full_name)}</h2><p>${esc(peer.headline||peer.programme||'Club member')}</p></div>${peer.private_placeholder?'':`<button class="text-button" data-action="memberProfile" data-id="${esc(peer.id)}">View profile</button>`}</div>${dmThreadError?`<div class="notice">${esc(dmThreadError)} <button class="text-button" data-action="reloadDmThread">Retry</button></div>`:''}${dmTotal>50?`<div class="records-toolbar"><small class="subtle">Messages ${dmPage*50+1}–${Math.min(dmTotal,dmPage*50+50)} of ${dmTotal}</small><div class="records-actions"><button class="button button-outline button-sm" data-action="dmOlder" ${(dmPage+1)*50>=dmTotal||dmThreadLoading?'disabled':''}>← Older</button><button class="button button-outline button-sm" data-action="dmNewer" ${dmPage===0||dmThreadLoading?'disabled':''}>Newer →</button></div></div>`:''}<div id="dmStream" class="dm-stream">${thread.length?thread.map(m=>{const photo=mediaUrl(m.image_path);return `<div class="dm-bubble ${m.sender_id===session.user.id?'mine':''}">${m.sender_id!==session.user.id?memberAvatar(peer.id):''}<div><p>${esc(m.body)}</p>${photo?`<a href="${esc(photo)}" target="_blank" rel="noopener noreferrer" aria-label="Open private image"><img class="dm-photo" src="${esc(photo)}" loading="lazy" alt="Image shared in this conversation"></a>`:''}<small>${dateTime(m.created_at)}</small></div></div>`}).join(''):dmThreadLoading?empty('Loading messages','Fetching this part of the conversation…'):empty('Start a conversation','Send a message about a club project or upcoming event.')}</div><form id="dmComposer" class="chat-composer">${mediaReady?`<label class="gallery-picker" title="Choose an image from your gallery">▧<span class="sr-only">Choose image</span><input name="dm_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>`:''}<label class="sr-only" for="dmBody">Message</label><input id="dmBody" name="body" maxlength="3000" placeholder="Message ${esc(peer.full_name)}" ${mediaReady?'':'required'} autocomplete="off"><button class="button" type="submit">Send ↗</button>${mediaReady?`<span id="dmImageName" class="chat-image-name" hidden></span>`:''}</form>`:empty('Choose a member','Select someone to start a private conversation.')}</div></div>`;
 }
 async function markDmRead(peerId) {
   if(!dmReady||!session||!peerId)return;
-  const stamp=new Date().toISOString();try{const {error}=await db.from('direct_message_reads').upsert({user_id:session.user.id,peer_id:peerId,last_read_at:stamp},{onConflict:'user_id,peer_id'});if(error)throw error;cache.direct_message_reads=(cache.direct_message_reads||[]).filter(r=>r.peer_id!==peerId).concat({user_id:session.user.id,peer_id:peerId,last_read_at:stamp});$('#dmBadge').textContent=(cache.direct_messages||[]).filter(m=>m.recipient_id===session.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;}catch(e){console.error(e);}
+  const stamp=new Date().toISOString();try{const {error}=await db.from('direct_message_reads').upsert({user_id:session.user.id,peer_id:peerId,last_read_at:stamp},{onConflict:'user_id,peer_id'});if(error)throw error;cache.direct_message_reads=(cache.direct_message_reads||[]).filter(r=>r.peer_id!==peerId).concat({user_id:session.user.id,peer_id:peerId,last_read_at:stamp});await refreshUnreadCounts();}catch(e){console.error(e);}
 }
 function projects() {
   const list=cache.projects||[];
+  projectListPage=Math.min(projectListPage,Math.max(0,Math.ceil(list.length/50)-1));
+  const visible=list.slice(projectListPage*50,projectListPage*50+50);
   return `${head('BUILD TOGETHER','Projects','Plan prototypes, track work and move ideas toward the next demonstration.',button('+ New project','projectForm'))}
-  <div class="grid grid-3">${list.length?list.map(p=>`<div class="card"><div class="row"><span class="tag ${p.status==='complete'?'blue':p.status==='planning'?'gold':''}">${esc(p.status)}</span><span class="subtle">${date(p.created_at)}</span></div><h3 style="margin-top:17px">${esc(p.title)}</h3><p>${esc(p.summary||'No summary yet.')}</p><div class="progress"><span style="width:${Math.max(0,Math.min(100,Number(p.progress)||0))}%"></span></div><div class="card-footer"><span>${esc(p.progress)}% complete</span><button class="text-button" data-action="projectDetail" data-id="${esc(p.id)}">Open plan →</button></div></div>`).join(''):empty('No projects yet','Start the first prototype plan.')}</div>`;
+  ${list.length?'':'<div class="notice">Project concepts below are suggestions for members to develop. They are not active club projects; an approved member must take ownership and create a plan.</div>'}
+  <div class="grid grid-3">${list.length?visible.map(p=>`<div class="card"><div class="row"><span class="tag ${p.status==='complete'?'blue':p.status==='planning'?'gold':''}">${esc(p.status)}</span><span class="subtle">${date(p.created_at)}</span></div><h3 style="margin-top:17px">${esc(p.title)}</h3><p>${esc(p.summary||'No summary yet.')}</p><div class="progress"><span style="width:${Math.max(0,Math.min(100,Number(p.progress)||0))}%"></span></div><div class="card-footer"><span>${esc(p.progress)}% complete</span><button class="text-button" data-action="projectDetail" data-id="${esc(p.id)}">Open plan →</button></div></div>`).join(''):`<article class="card"><span class="tag gold">Proposed concept · owner needed</span><h3 style="margin-top:17px">Instrumented low-voltage energy bench</h3><p>Measure a safe low-voltage load, check readings against a reference meter, and show power estimates and alerts on a dashboard.</p><div class="card-footer"><span>Controls · Software · Electronics</span><button class="text-button" data-action="projectForm">Start a plan →</button></div></article><article class="card"><span class="tag gold">Proposed concept · owner needed</span><h3 style="margin-top:17px">Workshop inventory scanner</h3><p>Prototype QR or barcode check-out and return with sample items. Test duplicate scans and offline behavior before using real stock.</p><div class="card-footer"><span>Software · Electronics</span><button class="text-button" data-action="projectForm">Start a plan →</button></div></article>`}</div>${recordsPager('projectList',projectListPage,list.length)}`;
 }
 function discussions() {
   const list=cache.topics||[];
@@ -478,20 +682,48 @@ function courses() {
   const list=cache.courses||[];
   const materials=learningReady?(cache.learning_materials||[]).filter(m=>!m.hidden_at):[];
   const visible=courseTrack==='all'?list:list.filter(c=>courseTrackFor(c)===courseTrack);
+  const enrolled=courseReady?(cache.course_enrollments||[]).filter(e=>e.learner_id===session?.user.id):[];
+  const completed=enrolled.filter(e=>e.status==='completed');
   return `${head('LEARN BY BUILDING','Practical courses','Choose a learning track, build a real project and share what works.',teacher()?`<div class="profile-buttons">${button('+ Publish workshop','courseForm')}${button('+ Upload material','learningForm','button-outline')}</div>`:'')}
+  ${courseReady?`<div class="course-summary"><strong>${enrolled.length} enrolled</strong><span>${completed.length} completed project${completed.length===1?'':'s'}</span><a href="#teaching" ${teacher()?'':'hidden'}>Open teaching studio →</a></div>`:'<div class="notice">Enrollment, project submissions and completion records become available after the course journey migration is installed.</div>'}
   <div class="course-tracks">${courseTracks.map((t,i)=>`<button class="course-track ${courseTrack===t.name?'selected':''}" data-action="courseTrack" data-track="${esc(t.name)}" aria-pressed="${courseTrack===t.name}"><span>0${i+1} / LEARNING TRACK</span><strong>${esc(t.name)}</strong><small>${esc(t.example)}</small><em>${list.filter(c=>courseTrackFor(c)===t.name).length} ${list.filter(c=>courseTrackFor(c)===t.name).length===1?'workshop':'workshops'} ↗</em></button>`).join('')}</div>
   <div class="section-heading"><div><span class="eyebrow">HANDS-ON WORKSHOPS</span><h2>${courseTrack==='all'?'All practical workshops':esc(courseTrack)}</h2></div>${courseTrack!=='all'?`<button class="text-button" data-action="courseTrack" data-track="all">Show all tracks</button>`:''}</div>
-  <div class="grid grid-3">${visible.length?visible.map(c=>`<div class="card course-card"><span class="tag blue">${esc(c.level)}</span><h3 style="margin-top:18px">${esc(c.title)}</h3><p>${esc(c.description||'Practical workshop details coming soon.')}</p><div class="pill-row"><span class="subtle">${esc(courseTrackFor(c))}</span></div>${materials.filter(m=>m.course_id===c.id).map(materialRow).join('')}<div class="card-footer"><span>${date(c.starts_at)}</span>${c.resource_url?`<a class="link" href="${esc(cleanUrl(c.resource_url))}" target="_blank" rel="noopener noreferrer">Resource link ↗</a>`:''}</div></div>`).join(''):empty('No workshops published yet','Approved teachers can publish a practical session in this track.')}</div>
+  <div class="grid grid-3">${visible.length?visible.map(c=>`<div class="card course-card"><span class="tag blue">${esc(c.level)}</span><h3 style="margin-top:18px">${esc(c.title)}</h3><p>${esc(c.description||'Practical workshop details coming soon.')}</p><div class="pill-row"><span class="subtle">${esc(courseTrackFor(c))}</span></div>${materials.filter(m=>m.course_id===c.id).map(materialRow).join('')}${courseReady?courseJourney(c):''}<div class="card-footer"><span>${date(c.starts_at)}</span>${c.resource_url?`<a class="link" href="${esc(cleanUrl(c.resource_url))}" target="_blank" rel="noopener noreferrer">Resource link ↗</a>`:''}</div></div>`).join(''):!list.length?proposedWorkshops.filter(w=>courseTrack==='all'||w.track===courseTrack).map(w=>`<div class="card course-card course-proposal"><span class="tag gold">Proposed workshop</span><h3>${esc(w.title)}</h3><small>${esc(w.track)}</small><p>${esc(w.detail)}</p><div class="card-footer"><span>Planning draft · Date and teacher to be confirmed</span></div></div>`).join(''):empty('No workshops in this track yet','Approved teachers can publish a practical session in this track.')}</div>
   ${materials.some(m=>!m.course_id)?`<div class="section-heading"><h2>Club learning library</h2></div><div class="grid grid-2">${materials.filter(m=>!m.course_id).map(m=>`<div class="card">${materialRow(m)}</div>`).join('')}</div>`:''}`;
+}
+function courseJourney(c){
+  const enrollment=(cache.course_enrollments||[]).find(e=>e.course_id===c.id&&e.learner_id===session?.user.id);
+  if(!enrollment)return `<div class="course-journey"><strong>Build this project</strong><small>Enroll to submit your prototype and receive teacher feedback.</small><button class="button button-sm" data-action="enrollCourse" data-id="${esc(c.id)}">Enroll in workshop</button></div>`;
+  const attempts=(cache.course_submissions||[]).filter(s=>s.course_id===c.id&&s.learner_id===session.user.id).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+  const latest=attempts[0],completion=(cache.course_completions||[]).find(x=>x.course_id===c.id&&x.learner_id===session.user.id);
+  return `<div class="course-journey"><strong>${completion?'Project completed':latest?.review_status==='submitted'?'Project awaiting feedback':latest?.review_status==='revision_requested'?'Revise your project':'You are enrolled'}</strong>
+    ${completion?`<small>Completed ${date(completion.completed_at)} · Assessed by ${esc(memberName(completion.assessed_by))}</small>`:latest?.review_status==='submitted'?'<small>Your teacher will review your latest submission.</small>':'<small>Share your build notes and a link or evidence file when ready.</small>'}
+    ${latest?.teacher_feedback?`<p class="course-feedback"><b>Teacher feedback</b> ${esc(latest.teacher_feedback)}</p>`:''}
+    ${latest?.evidence_path?`<button class="text-button" data-action="downloadCourseEvidence" data-id="${esc(latest.id)}">Open my evidence ↗</button>`:''}
+    ${!completion&&latest?.review_status!=='submitted'?`<button class="button button-sm" data-action="submitCourseForm" data-id="${esc(c.id)}">${latest?'Submit revision':'Submit project'} →</button>`:''}
+    ${attempts.length>1?`<small>${attempts.length} attempts recorded</small>`:''}
+  </div>`;
 }
 function materialRow(m){return `<div class="learning-row"><span class="tag blue">${esc(m.kind)}</span><div><strong>${esc(m.title)}</strong><small>${esc(m.file_name)} · ${fileSize(m.file_size)} · ${date(m.created_at)}</small>${m.description?`<p>${esc(m.description)}</p>`:''}</div>${m.hidden_at?'<span class="tag gold">Hidden</span>':`<button class="text-button" data-action="downloadLearning" data-id="${esc(m.id)}">Download ↓</button>`}</div>`;}
 function teaching(){
   if(!teacher())return '';
-  if(!learningReady)return head('TEACHING','Teaching studio','Upload slides and learning materials.')+communityNotice();
-  const items=(cache.learning_materials||[]).filter(m=>admin()||m.uploaded_by===session.user.id);
-  return `${head('TEACHING','Teaching studio','Share notes, presentations and guides with approved club members.',button('+ Upload material','learningForm'))}
+  const items=learningReady?(cache.learning_materials||[]).filter(m=>admin()||m.uploaded_by===session.user.id):[];
+  const workshops=(cache.courses||[]).filter(c=>admin()||c.instructor_id===session.user.id),courseIds=new Set(workshops.map(c=>c.id));
+  const submissions=courseReady?(cache.course_submissions||[]).filter(s=>courseIds.has(s.course_id)):[];
+  const pending=submissions.filter(s=>s.review_status==='submitted');
+  const completions=courseReady?(cache.course_completions||[]).filter(x=>courseIds.has(x.course_id)):[];
+  return `${head('TEACHING','Teaching studio','Review practical project submissions and share learning resources.',learningReady?button('+ Upload material','learningForm'):'')}
+  ${courseReady?`<div class="course-summary"><strong>${workshops.length} workshops</strong><span>${pending.length} awaiting review</span><span>${completions.length} completed projects</span></div>
+    <div class="section-heading"><h2>Project submissions</h2><p>Review the build notes and evidence before recording completion.</p></div>
+    <div class="grid grid-2">${pending.length?pending.map(s=>courseSubmissionCard(s,true)).join(''):empty('No submissions waiting','New project submissions appear here when learners finish a build.')}</div>
+    ${admin()?`<div class="section-heading"><h2>Workshop teachers</h2><p>Assign an approved teacher to older or reassigned workshops.</p></div><div class="grid grid-2">${(cache.courses||[]).map(c=>`<div class="card course-assignment"><strong>${esc(c.title)}</strong><small>${esc(c.instructor_id?memberName(c.instructor_id):'Not assigned')}</small><button class="text-button" data-action="assignCourseForm" data-id="${esc(c.id)}">Assign teacher →</button></div>`).join('')||empty('No workshops','Publish a practical workshop first.')}</div>`:''}
+    ${submissions.some(s=>s.review_status!=='submitted')?`<div class="section-heading"><h2>Reviewed projects</h2></div><div class="grid grid-2">${submissions.filter(s=>s.review_status!=='submitted').slice(0,12).map(s=>courseSubmissionCard(s,false)).join('')}</div>`:''}`:'<div class="notice">Run the course journey migration to enable enrollment, project reviews and completion records.</div>'}
   <div class="notice">Only approved teachers and administrators can publish learning files. Approved club members can download visible materials.</div>
   <div class="section-heading"><h2>${admin()?'All learning materials':'Materials I uploaded'}</h2><p>PDF, PPT, PPTX, DOC or DOCX · up to 20 MB</p></div><div class="grid grid-2">${items.length?items.map(m=>`<div class="card teaching-card">${materialRow(m)}<div class="card-footer"><span>${m.course_id?esc((cache.courses||[]).find(c=>c.id===m.course_id)?.title||'Course'):'General learning library'} · ${esc(memberName(m.uploaded_by))}</span>${admin()?`<button class="text-button" data-action="toggleLearning" data-id="${esc(m.id)}">${m.hidden_at?'Restore':'Hide'}</button>`:''}</div></div>`).join(''):empty('No materials yet','Upload a presentation, lesson notes or a guide to begin.')}</div>`;
+}
+function courseSubmissionCard(s,waiting){
+  const course=(cache.courses||[]).find(c=>c.id===s.course_id);
+  return `<div class="card course-review"><div class="row"><span class="tag ${waiting?'gold':'blue'}">${waiting?'Awaiting review':s.review_status==='accepted'?'Accepted':'Revision requested'}</span><small>${dateTime(s.created_at)}</small></div><h3>${esc(course?.title||'Workshop')}</h3><small>Submitted by ${esc(memberName(s.learner_id))}</small><p>${esc(s.details)}</p>${s.evidence_url?`<a class="link" href="${esc(cleanUrl(s.evidence_url))}" target="_blank" rel="noopener noreferrer">Open project link ↗</a>`:''}${s.evidence_path?`<button class="text-button" data-action="downloadCourseEvidence" data-id="${esc(s.id)}">Open ${esc(s.evidence_name||'evidence')} ↗</button>`:''}${s.teacher_feedback?`<p class="course-feedback"><b>Teacher feedback</b> ${esc(s.teacher_feedback)}</p>`:''}${waiting&&s.learner_id!==session.user.id?`<div class="course-review-actions"><button class="button button-sm" data-action="reviewCourseForm" data-status="accepted" data-id="${esc(s.id)}">Accept project</button><button class="button button-outline button-sm" data-action="reviewCourseForm" data-status="revision_requested" data-id="${esc(s.id)}">Request revision</button></div>`:''}</div>`;
 }
 const recordMoney = cents => new Intl.NumberFormat('en-GH',{style:'currency',currency:'GHS'}).format(cents/100);
 const recordDate = value => value ? date(`${value}T12:00:00`) : '—';
@@ -615,12 +847,43 @@ function announcements() {
   <div class="grid">${list.length?list.map(a=>`<div class="card"><div class="row"><span class="tag ${a.priority==='urgent'?'gold':''}">${esc(a.priority)}</span><span class="subtle">${date(a.created_at)}</span></div><h3 style="margin-top:15px">${esc(a.title)}</h3><p class="detail">${esc(a.body)}</p></div>`).join(''):empty('No alerts yet','Official updates will appear here.')}</div>`;
 }
 
+let privacyRequestLoading=false;
+async function loadPrivacyRequests(){
+  if(!db||!session||privacyRequestLoading)return;
+  privacyRequestLoading=true;
+  const userId=session.user.id;
+  try{
+    const data=await readRecords('privacy_requests');
+    if(session?.user.id!==userId)return;
+    cache.privacy_requests=data||[];privacyReady=true;
+    if(page==='privacy')render();
+  }catch(error){console.error('Privacy requests',error);}
+  finally{privacyRequestLoading=false;}
+}
+const privacyRequestLabel=type=>type==='account_removal'?'Account and data removal':'Specific content removal';
+function privacyRequestCard(request,adminView=false){
+  const status=request.status.replace('_',' '),open=request.status==='open',reviewing=request.status==='in_review';
+  const owner=(cache.profiles||[]).find(p=>p.id===request.requester_id);
+  return `<article class="card privacy-request"><div class="row"><span class="tag ${open||reviewing?'gold':'blue'}">${esc(status)}</span><small class="subtle">${dateTime(request.created_at)}</small></div>
+    <h3>${esc(privacyRequestLabel(request.request_type))}</h3>
+    ${adminView?`<p class="subtle">From ${esc(owner?.full_name|| (request.requester_id?'Member':'Account removed'))} · Auth user ID ${esc(request.requester_auth_id||'Removed')} · Request ${esc(request.id)}</p>`:''}
+    ${request.details?`<p class="profile-bio">${esc(request.details)}</p>`:''}
+    ${request.review_note?`<p class="privacy-review-note"><strong>Administrator response:</strong> ${esc(request.review_note)}</p>`:''}
+    ${adminView&&(open||reviewing)?`<div class="profile-buttons">${open?`<button class="button button-outline button-sm" data-action="reviewPrivacy" data-status="in_review" data-id="${esc(request.id)}">Start review</button>`:request.request_type==='account_removal'&&request.requester_id?'<span class="hint">Complete after account removal.</span>':`<button class="button button-sm" data-action="reviewPrivacy" data-status="completed" data-id="${esc(request.id)}">Mark completed</button>`}<button class="button button-outline button-sm" data-action="reviewPrivacy" data-status="declined" data-id="${esc(request.id)}">Decline with reason</button></div>`:''}</article>`;
+}
 function privacy() {
-  return `${head('CLUB TRUST','Privacy & conduct','How the InnovateX workspace should be used.')}
-  <div class="grid grid-2"><div class="card"><h3>Who can see your information?</h3><p>Your name, headline, bio, background, skills, project activity and approximate online status are visible to approved club members. Direct messages are visible to their two participants. Founder bios are public only after an administrator publishes them with consent. Founder meetings are restricted to accepted founders and administrators.</p></div>
-  <div class="card"><h3>What can you share?</h3><p>Share work you have permission to distribute. Do not upload passwords, private member records, personal contact lists or copyrighted files without permission. Files in the club library are available to all approved members.</p></div>
+  if(session&&!approved()&&!privacyReady&&!privacyRequestLoading)void loadPrivacyRequests();
+  const requests=(cache.privacy_requests||[]),myRequests=requests.filter(r=>r.requester_id===session?.user.id);
+  const adminRequests=admin()?requests.filter(r=>r.status==='open'||r.status==='in_review'):[];
+  return `${head('CLUB TRUST','Privacy & conduct','Decide how your profile appears and ask an administrator to handle your data.')}
+  <div class="grid grid-2"><div class="card"><h3>Who can see your information?</h3><p>Listed profiles show approved club members your name, headline, bio, background, skills and approximate online status. Set your profile to private to remove it from other members’ directory and profile search. Administrators can still see it. Existing direct messages remain available to their participants. Posts, replies and files you already shared remain visible where you shared them. Published founder bios are separate public content.</p></div>
+  <div class="card"><h3>What can you share?</h3><p>Share work you have permission to distribute. Do not upload passwords, private member records, personal contact lists or copyrighted files without permission. Shared club files are available to approved members.</p></div>
   <div class="card"><h3>Community conduct</h3><p>Keep feedback constructive and relevant to engineering work. Credit sources and collaborators. Use the Report button when a message, article or document needs administrator review.</p></div>
-  <div class="card"><h3>Accounts and decisions</h3><p>New members apply for approval after verifying their email. Administrators can approve, reject or suspend membership. For account or data removal, contact a club administrator; an automated deletion request flow is not yet available.</p></div></div>`;
+  <div class="card"><h3>Accounts and decisions</h3><p>New members apply after verifying their email. Administrators review applications. An account or content removal request starts a manual review; submitting one does not instantly delete anything. An administrator must also handle uploaded files and connected records.</p></div></div>
+  ${session?`<div class="section-heading"><h2>My privacy controls</h2></div>
+    ${'profile_visibility' in (me||{})?`<form class="card privacy-settings form-stack privacy-editor" data-kind="profileVisibility"><h3>Profile visibility</h3><p>Private hides your member profile from other members. You and administrators can still view it.</p><div class="field"><label for="profile_visibility">Show my profile to</label><select id="profile_visibility" name="profile_visibility"><option value="club" ${me.profile_visibility==='club'?'selected':''}>Approved club members</option><option value="private" ${me.profile_visibility==='private'?'selected':''}>Only me and administrators</option></select></div><button class="button" type="submit">Save visibility</button></form>`:communityNotice()}
+    ${privacyReady?`<div class="grid grid-2 privacy-request-layout"><form class="card form-stack privacy-editor" data-kind="privacyRequest"><h3>Request account or content removal</h3><p>Tell an administrator what you want removed. They will review the request and record a response here.</p><div class="field"><label for="request_type">Request type</label><select name="request_type" id="request_type"><option value="account_removal">Remove my account and associated data</option><option value="content_removal">Remove specific content I shared</option></select></div><div class="field"><label for="request_details">Details (optional for account removal)</label><textarea id="request_details" name="details" maxlength="2000" placeholder="For content removal, describe the posts or files you mean."></textarea></div><button class="button" type="submit">Send request</button></form><div class="card"><h3>What happens next?</h3><p>Your request appears in the administrator’s private queue. The administrator reviews it, removes the applicable information using Supabase administration tools, and records the outcome. Content posted by others and records that must be retained may need separate review.</p><p class="hint">Only you and administrators can see your request and its response.</p></div></div><div class="section-heading"><h2>My requests</h2></div><div class="grid grid-2">${myRequests.length?myRequests.map(r=>privacyRequestCard(r)).join(''):empty('No privacy requests yet','Requests you send will appear here.')}</div>`:communityNotice()}
+    ${admin()&&privacyReady?`<div class="section-heading" id="privacy-admin-queue"><h2>Administrator queue</h2><p>${adminRequests.length} awaiting action</p></div><div class="grid grid-2">${adminRequests.length?adminRequests.map(r=>privacyRequestCard(r,true)).join(''):empty('No open requests','Member privacy requests will appear here.')}</div>`:''}`:'<div class="notice" style="margin-top:22px">Sign in to manage your profile or send a request to an administrator.</div>'}`;
 }
 function feed() {
   if(!feedReady)return head('CLUB COMMUNITY','Activity feed','Member projects, questions and progress.')+communityNotice();
@@ -631,7 +894,7 @@ function feed() {
   return `${head('COMMUNITY PULSE','Activity feed','Share builds, ask for feedback and follow what members are creating.')}
   <div class="feed-layout">
     <aside class="feed-rail"><section class="card feed-side"><div class="row"><h2>Recent stories</h2><a class="link" href="#news">See all</a></div>${recentNews.length?recentNews.map(n=>`<a class="feed-story" href="${esc(cleanUrl(n.url))}" target="_blank" rel="noopener noreferrer"><span class="feed-story-icon">◈</span><span><strong>${esc(n.title)}</strong><small>${esc(n.category)}</small></span></a>`).join(''):empty('No stories yet','Share a technology article for review.')}</section><section class="card feed-side"><h2>Explore together</h2><p>Find the right space for a deeper discussion.</p><a class="feed-shortcut" href="#projects">▥ &nbsp; Project plans →</a><a class="feed-shortcut" href="#channels">▣ &nbsp; Member channels →</a><a class="feed-shortcut" href="#events">▦ &nbsp; Club events →</a></section></aside>
-    <section class="feed-main" aria-label="Member posts"><div class="card feed-composer">${memberAvatar(session.user.id)}<button class="feed-composer-prompt" data-action="feedPostForm">What are you building, ${esc(me?.full_name?.split(' ')[0]||'member')}?</button>${button('Share update','feedPostForm','button-sm')}</div><div class="feed-posts">${posts.length?posts.map(feedPostCard).join(''):empty('Start the conversation','Share a project milestone, question or useful resource with the club.')}</div></section>
+    <section class="feed-main" aria-label="Member posts"><div class="card feed-composer">${memberAvatar(session.user.id)}<button class="feed-composer-prompt" data-action="feedPostForm">What are you building, ${esc(me?.full_name?.split(' ')[0]||'member')}?</button>${button('Share update','feedPostForm','button-sm')}</div>${feedError?`<div class="notice">${esc(feedError)} <button class="text-button" data-action="reloadFeed">Retry</button></div>`:''}<div class="feed-posts">${posts.length?posts.map(feedPostCard).join(''):feedLoading?empty('Loading posts','Fetching this page of club activity…'):empty('Start the conversation','Share a project milestone, question or useful resource with the club.')}</div>${feedTotal>30?`<div class="records-toolbar"><small class="subtle">Posts ${feedPage*30+1}–${Math.min(feedTotal,feedPage*30+30)} of ${feedTotal}</small><div class="records-actions"><button class="button button-outline button-sm" data-action="feedPrev" ${feedPage===0||feedLoading?'disabled':''}>← Newer</button><button class="button button-outline button-sm" data-action="feedNext" ${(feedPage+1)*30>=feedTotal||feedLoading?'disabled':''}>Older →</button></div></div>`:''}</section>
     <aside class="feed-rail"><section class="card feed-side"><h2>Latest updates</h2>${updates.length?updates.map(u=>`<div class="feed-update"><span class="feed-update-mark">${u.kind==='Alert'?'◈':'▧'}</span><div>${u.id?`<button class="text-button" data-action="jumpPost" data-id="${esc(u.id)}">${esc(u.title)}</button>`:`<a class="link" href="#${esc(u.page)}">${esc(u.title)}</a>`}<small>${dateTime(u.at)} · ${esc(u.kind)}</small></div></div>`).join(''):empty('No updates yet','New activity appears here.')}</section><section class="card feed-side"><h2>Recently active members</h2><div class="feed-people">${people.length?people.map(p=>`<div class="feed-person" title="${esc(p.full_name)}">${memberAvatar(p.id)}<span>${esc(p.full_name)}</span>${Date.now()-new Date(p.last_seen_at)<65000?'<i class="online-dot"></i>':''}</div>`).join(''):empty('No recent activity','Members appear here after signing in.')}</div><a class="link" href="#members">View directory →</a></section></aside>
   </div>`;
 }
@@ -667,24 +930,31 @@ function application() {
 function applications() {
   if(!admin())return '';
   if(!enhancedReady)return head('ADMINISTRATION','Applications','Review club membership.')+communityNotice();
-  const applicants=(cache.profiles||[]).filter(p=>p.membership_status!=='approved');
+  const applicants=applicationsOwner===session.user.id?applicationRows:[];
+  const accounts=applicationsOwner===session.user.id?approvedAccountRows:[];
   return `${head('ADMINISTRATION','Applications','Review new accounts and submitted details before granting club access.')}
-    <div class="grid grid-2">${applicants.length?applicants.map(p=>`<div class="card"><div class="row"><span class="tag ${p.membership_status==='pending'?'gold':''}">${esc(p.membership_status)}</span><span class="tag blue">${esc(p.application_type||'member')}</span><small class="subtle">${date(p.created_at)}</small></div><h3 style="margin-top:14px">${esc(p.full_name)}</h3><p>${esc(p.programme||'Background not provided')}</p><p class="detail">${esc(p.application_reason||'No reason submitted yet.')}</p><div class="card-footer"><span>${esc(p.skills||'')}</span><div><button class="text-button" data-action="reviewMember" data-status="approved" data-id="${esc(p.id)}">Approve</button> · <button class="text-button" data-action="reviewMember" data-status="rejected" data-id="${esc(p.id)}">Reject</button></div></div></div>`).join(''):empty('No applications waiting','New accounts will appear here.')}</div>
-    <div class="section-heading"><h2>Approved accounts</h2><p>Pause access if needed.</p></div><div class="profile-grid">${(cache.profiles||[]).filter(p=>p.membership_status==='approved'&&p.id!==session.user.id).map(p=>`<div class="card person">${memberAvatar(p.id)}<div><strong>${esc(p.full_name)}</strong>${roleBadge(p)}<small class="subtle">${esc(p.role)} · ${esc(p.handle||'')}</small></div><button class="text-button" data-action="reviewMember" data-status="suspended" data-id="${esc(p.id)}">Suspend</button></div>`).join('')}</div>`;
+    ${applicationsError?`<div class="notice">${esc(applicationsError)} <button class="text-button" data-action="reloadApplications">Retry</button></div>`:''}
+    ${applicationVerificationError?`<div class="notice">${esc(applicationVerificationError)}</div>`:''}
+    <div class="section-heading"><h2>Applications (${applicationTotal})</h2><p>All pending, rejected and suspended accounts, newest first.</p></div>
+    <div class="grid grid-2">${applicants.length?applicants.map(p=>{const eligibility=applicationVerification.get(p.id),verified=eligibility?.verified,previouslyApproved=eligibility?.previouslyApproved===true,submitted=!!p.application_reason?.trim();return `<div class="card"><div class="row"><span class="tag ${p.membership_status==='pending'?'gold':''}">${esc(p.membership_status)}</span><span class="tag blue">${esc(p.application_type||'member')}</span><small class="subtle">${date(p.created_at)}</small></div><h3 style="margin-top:14px">${esc(p.full_name)}</h3><div class="row"><span class="tag ${verified===true?'blue':'gold'}">${verified===true?'Email verified':verified===false?'Verify email first':'Email status unknown'}</span><span class="tag ${submitted?'blue':'gold'}">${submitted?'Application submitted':previouslyApproved?'Prior member: reason not recorded':'Application incomplete'}</span></div><p>${esc(p.programme||'Background not provided')}</p><p class="detail">${esc(p.application_reason||'No reason submitted yet.')}</p><div class="card-footer"><span>${esc(p.skills||'')}</span><div><button class="text-button" data-action="reviewMember" data-status="approved" data-id="${esc(p.id)}" ${verified!==true||!submitted&&!previouslyApproved?'disabled':''}>Approve</button> · <button class="text-button" data-action="reviewMember" data-status="rejected" data-id="${esc(p.id)}">Reject</button></div></div></div>`}).join(''):applicationsLoading?empty('Loading applications','Fetching this page of accounts…'):applicationTotal?empty('Page unavailable','Use Previous or retry loading.'):empty('No applications waiting','New accounts will appear here.')}</div>
+    ${recordsPager('applications',applicationsPage,applicationTotal)}
+    <div class="section-heading"><h2>Approved accounts (${approvedAccountTotal})</h2><p>Pause access if needed.</p></div><div class="profile-grid">${accounts.map(p=>`<div class="card person">${avatar(p.full_name,false,p.avatar_path)}<div><strong>${esc(p.full_name)}</strong>${roleBadge(p)}<small class="subtle">${esc(p.role)} · ${esc(p.handle||'')}</small></div><button class="text-button" data-action="reviewMember" data-status="suspended" data-id="${esc(p.id)}">Suspend</button></div>`).join('')||empty('No approved accounts','Approved accounts will appear here.')}</div>${recordsPager('approvedAccounts',approvedAccountsPage,approvedAccountTotal)}`;
 }
 function adminDashboard(){
   if(!admin())return '';
   const profiles=cache.profiles||[],pending=profiles.filter(p=>p.membership_status==='pending');
   const reports=(cache.reports||[]).filter(r=>r.status==='open');
+  const privacyQueue=(cache.privacy_requests||[]).filter(r=>['open','in_review'].includes(r.status));
   const inquiries=(cache.investor_inquiries||[]).filter(q=>q.status==='new');
   const posts=cache.activity_posts||[],projects=cache.projects||[];
   const exports=[['profiles','Applications & members'],['projects','Projects'],['events','Events'],['activity_posts','Activity posts'],['reports','Reports'],['investor_inquiries','Investor inquiries'],['audit_events','Audit log']];
   return `${head('ADMINISTRATION','Club oversight','Review membership, community activity, founder planning and investor communication.')}
   ${!roleReady?'<div class="notice">Run the roles and investors migration to enable applicant types and the investor portal.</div>':''}
-  <div class="grid grid-4"><a class="stat dashboard-stat" href="#applications"><small>Pending applications</small><b>${pending.length}</b><span>Review requests →</span></a><a class="stat dashboard-stat" href="#moderation"><small>Open reports</small><b>${reports.length}</b><span>Moderate content →</span></a><a class="stat dashboard-stat" href="#feed"><small>Activity posts</small><b>${posts.length}</b><span>View feed →</span></a><a class="stat dashboard-stat" href="#projects"><small>Projects</small><b>${projects.length}</b><span>View plans →</span></a></div>
-  <div class="grid grid-2 admin-overview"><div class="card"><h2>Needs attention</h2>${pending.slice(0,5).map(p=>`<div class="list-item"><span class="tag gold">${esc(p.application_type||'member')}</span><div><strong>${esc(p.full_name)}</strong><small>Applied ${date(p.created_at)}</small></div></div>`).join('')||'<p class="muted">No pending applications.</p>'}${reports.length?`<p class="subtle">${reports.length} open ${reports.length===1?'report':'reports'} await review.</p>`:''}${inquiries.length?`<p class="subtle">${inquiries.length} new investor ${inquiries.length===1?'inquiry':'inquiries'} await review.</p>`:''}<div class="profile-buttons"><a class="button button-sm" href="#applications">Review applications</a><a class="button button-outline button-sm" href="#investor-portal">Investor portal</a></div></div>
+  <div class="grid grid-4"><a class="stat dashboard-stat" href="#applications"><small>Pending applications</small><b>${adminPendingCount}</b><span>Review requests →</span></a><a class="stat dashboard-stat" href="#moderation"><small>Open reports</small><b>${reports.length}</b><span>Moderate content →</span></a><a class="stat dashboard-stat" href="#feed"><small>Recent activity posts</small><b>${posts.length}</b><span>View feed →</span></a><a class="stat dashboard-stat" href="#projects"><small>Projects</small><b>${projects.length}</b><span>View plans →</span></a></div>
+  ${privacyQueue.length?`<div class="notice privacy-admin-notice"><strong>${privacyQueue.length} privacy ${privacyQueue.length===1?'request needs':'requests need'} review.</strong> <a href="#privacy">Open the administrator queue →</a></div>`:''}
+  <div class="grid grid-2 admin-overview"><div class="card"><h2>Needs attention</h2>${pending.slice(0,5).map(p=>`<div class="list-item"><span class="tag gold">${esc(p.application_type||'member')}</span><div><strong>${esc(p.full_name)}</strong><small>Applied ${date(p.created_at)}</small></div></div>`).join('')||`<p class="muted">${adminPendingCount?`${adminPendingCount} pending applications. Open Applications to review every page.`:'No pending applications.'}</p>`}${reports.length?`<p class="subtle">${reports.length} open ${reports.length===1?'report':'reports'} await review.</p>`:''}${inquiries.length?`<p class="subtle">${inquiries.length} new investor ${inquiries.length===1?'inquiry':'inquiries'} await review.</p>`:''}<div class="profile-buttons"><a class="button button-sm" href="#applications">Review applications</a><a class="button button-outline button-sm" href="#investor-portal">Investor portal</a></div></div>
   <div class="card"><h2>Club activity</h2><div class="admin-quick"><a href="#founder-room">Founder meetings <strong>${(cache.founder_meetings||[]).length} →</strong></a><a href="#events">Events <strong>${(cache.events||[]).length} →</strong></a><a href="#channels">Channels <strong>${(cache.channels||[]).length} →</strong></a><a href="#news">Technology stories <strong>${(cache.news_posts||[]).length} →</strong></a><a href="#library">Shared documents <strong>${(cache.documents||[]).length} →</strong></a></div><p class="hint">Private direct messages remain visible only to their participants.</p></div></div>
-  <div class="section-heading"><h2>Download CSV</h2><p>Exports contain rows currently loaded in this browser, usually up to the Supabase query limit.</p></div><div class="card"><div class="export-actions">${exports.map(([key,label])=>`<button class="button button-outline button-sm" data-action="exportCsv" data-table="${key}">${esc(label)} CSV ↓</button>`).join('')}</div><p class="hint">CSV files exclude authentication records, direct messages and uploaded file contents. For a full backup, use Supabase backups.</p></div>
+  <div class="section-heading"><h2>Download CSV</h2><p>Each CSV fetches all records you are authorized to see, in batches, when you click Download.</p></div><div class="card"><div class="export-actions">${exports.map(([key,label])=>`<button class="button button-outline button-sm" data-action="exportCsv" data-table="${key}">${esc(label)} CSV ↓</button>`).join('')}</div><p class="hint">CSV files exclude authentication records, direct messages and uploaded file contents. Preserve Storage files separately; use database backups for recovery.</p></div>
   <div class="section-heading"><h2>Recent administrator actions</h2></div><div class="card">${(cache.audit_events||[]).slice(0,8).map(a=>`<div class="list-item"><div><strong>${esc(a.action.replaceAll('_',' '))}</strong><small>${dateTime(a.created_at)} · ${esc(memberName(a.actor_id))}</small></div></div>`).join('')||'<p class="muted">No actions recorded yet.</p>'}</div>`;
 }
 function notifications() {
@@ -701,7 +971,7 @@ function moderation() {
   if(!admin())return '';
   if(!enhancedReady)return head('ADMINISTRATION','Moderation','Community reports.')+communityNotice();
   const reports=(cache.reports||[]).filter(r=>r.status==='open');
-  return `${head('ADMINISTRATION','Moderation','Review reports and keep discussions useful.',button('Export content JSON','exportData','button-outline'))}
+  return `${head('ADMINISTRATION','Moderation','Review reports and keep discussions useful.',button('Download current view JSON','exportData','button-outline'))}
     <div class="grid">${reports.length?reports.map(r=>`<div class="card"><div class="row"><span class="tag gold">${esc(r.target_type)}</span><span class="subtle">${dateTime(r.created_at)}</span></div><h3 style="margin-top:12px">Report from ${esc(memberName(r.reporter_id))}</h3><p>${esc(r.reason)}</p><div class="card-footer"><span>Content ID: ${esc(r.target_id)}</span><div><button class="text-button" data-action="moderateContent" data-id="${esc(r.id)}">Remove content</button> · <button class="text-button" data-action="resolveReport" data-id="${esc(r.id)}">Resolve</button></div></div></div>`).join(''):empty('No open reports','Member reports will appear here.')}</div>
     <div class="section-heading"><h2>Recent administrator actions</h2></div><div class="card">${(cache.audit_events||[]).slice(0,15).map(a=>`<div class="list-item"><div><strong>${esc(a.action.replaceAll('_',' '))}</strong><small>${dateTime(a.created_at)} · ${esc(memberName(a.actor_id))}</small></div></div>`).join('')||'<p class="muted">No actions recorded yet.</p>'}</div>`;
 }
@@ -714,26 +984,29 @@ function channels() {
   if(!list.some(c=>c.id===activeChannelId)) activeChannelId=list[0]?.id||null;
   const selected=list.find(c=>c.id===activeChannelId);
   return `${head('CLUB CONVERSATIONS','Channels','Focused spaces for ideas, help and project updates.',admin()?button('+ Create channel','channelForm'):'')}
-    <div class="chat-layout"><div class="channel-list"><div class="channel-label">YOUR CHANNELS</div>${list.map(c=>{const seen=(cache.channel_reads||[]).find(r=>r.channel_id===c.id)?.last_read_at;const unread=enhancedReady?(cache.channel_messages||[]).filter(m=>m.channel_id===c.id&&m.author_id!==session.user.id&&(!seen||new Date(m.created_at)>new Date(seen))).length:0;return `<button class="channel-button ${c.id===activeChannelId?'selected':''}" data-action="selectChannel" data-id="${esc(c.id)}"><strong># ${esc(c.name)} ${unread?`<i class="unread-badge">${unread}</i>`:''}</strong><small>${esc(c.description)}</small></button>`}).join('')}</div>
-    <div class="chat-panel">${selected?`<div class="chat-head"><div><h2># ${esc(selected.name)}</h2><p>${esc(selected.description)}</p></div><div class="chat-tools">${button('Search','searchChat','button-outline button-sm')}${button('Share file','shareDoc','button-outline button-sm')}</div></div><div id="messageStream" class="message-stream" aria-live="polite">${messageList()}</div><form id="chatComposer" class="chat-composer">${mediaReady?`<label class="gallery-picker" title="Choose an image from your gallery">▧<span class="sr-only">Choose image</span><input name="chat_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>`:''}<label class="sr-only" for="chatBody">Message</label><input id="chatBody" name="body" maxlength="3000" placeholder="Message #${esc(selected.name)} · mention @handle" ${mediaReady?'':'required'} autocomplete="off"><button class="button" type="submit">Send ↗</button>${mediaReady?`<span id="chatImageName" class="chat-image-name" hidden></span>`:''}</form>`:empty('No channels yet','An administrator can add the first channel.')}</div></div>`;
+    ${!unreadCountsReady?'<div class="notice">Unread counts may be incomplete while the club finishes setup. Contact an administrator if a conversation seems missing.</div>':''}
+    <div class="chat-layout"><div class="channel-list"><div class="channel-label">YOUR CHANNELS</div>${list.map(c=>{const seen=(cache.channel_reads||[]).find(r=>r.channel_id===c.id)?.last_read_at;const unread=unreadCountsReady?Number(unreadCounts.channels[c.id]||0):enhancedReady?(cache.channel_messages||[]).filter(m=>m.channel_id===c.id&&!m.deleted_at&&m.author_id!==session.user.id&&(!seen||new Date(m.created_at)>new Date(seen))).length:0;return `<button class="channel-button ${c.id===activeChannelId?'selected':''}" data-action="selectChannel" data-id="${esc(c.id)}"><strong># ${esc(c.name)} ${unread?`<i class="unread-badge">${unread}</i>`:''}</strong><small>${esc(c.description)}</small></button>`}).join('')}</div>
+    <div class="chat-panel">${selected?`<div class="chat-head"><div><h2># ${esc(selected.name)}</h2><p>${esc(selected.description)}</p></div><div class="chat-tools">${button('Search','searchChat','button-outline button-sm')}${button('Share file','shareDoc','button-outline button-sm')}</div></div>${channelHistoryError?`<div class="notice">${esc(channelHistoryError)} <button class="text-button" data-action="reloadChannelHistory">Retry</button></div>`:''}${channelTotal>50?`<div class="records-toolbar"><small class="subtle">Messages ${channelPage*50+1}–${Math.min(channelTotal,channelPage*50+50)} of ${channelTotal}</small><div class="records-actions"><button class="button button-outline button-sm" data-action="channelOlder" ${(channelPage+1)*50>=channelTotal||channelHistoryLoading?'disabled':''}>← Older</button><button class="button button-outline button-sm" data-action="channelNewer" ${channelPage===0||channelHistoryLoading?'disabled':''}>Newer →</button></div></div>`:''}<div id="messageStream" class="message-stream" aria-live="polite">${messageList()}</div><form id="chatComposer" class="chat-composer">${mediaReady?`<label class="gallery-picker" title="Choose an image from your gallery">▧<span class="sr-only">Choose image</span><input name="chat_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>`:''}<label class="sr-only" for="chatBody">Message</label><input id="chatBody" name="body" maxlength="3000" placeholder="Message #${esc(selected.name)} · mention @handle" ${mediaReady?'':'required'} autocomplete="off"><button class="button" type="submit">Send ↗</button>${mediaReady?`<span id="chatImageName" class="chat-image-name" hidden></span>`:''}</form>`:empty('No channels yet','An administrator can add the first channel.')}</div></div>`;
 }
 function messageList() {
-  const all=cache.channel_messages||[];
+  const all=channelHistoryId===activeChannelId?channelHistoryRows:cache.channel_messages||[];
   const list=all.filter(m=>m.channel_id===activeChannelId&&!m.parent_id).slice().sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)).slice(-100);
-  return list.length?list.map(m=>messageRow(m,true)).join(''):empty('No messages yet','Be the first to start the conversation.');
+  return list.length?list.map(m=>messageRow(m,true)).join(''):channelHistoryLoading?empty('Loading messages','Fetching this page of the channel…'):empty('No messages yet','Be the first to start the conversation.');
 }
 function messageRow(m,showThread=false) {
   const doc=m.deleted_at?null:(cache.documents||[]).find(d=>d.id===m.document_id);
-  const replies=(cache.channel_messages||[]).filter(x=>x.parent_id===m.id).length;
-  const reactions=(cache.message_reactions||[]).filter(x=>x.message_id===m.id);
+  const selected=channelHistoryId===activeChannelId&&channelHistoryRows.some(x=>x.id===m.id);
+  const replies=(selected?channelHistoryRows:cache.channel_messages||[]).filter(x=>x.parent_id===m.id).length;
+  const reactions=(selected?channelHistoryReactions:cache.message_reactions||[]).filter(x=>x.message_id===m.id);
   const photo=m.deleted_at?'':mediaUrl(m.image_path);
   return `<div class="chat-message">${memberAvatar(m.author_id)}<div><div class="message-meta"><strong>${esc(memberName(m.author_id))}</strong><time>${dateTime(m.created_at)}${m.edited_at?' · edited':''}</time></div><p>${esc(m.body)}</p>${photo?`<a href="${esc(photo)}" target="_blank" rel="noopener noreferrer" aria-label="Open shared image"><img class="chat-photo" src="${esc(photo)}" loading="lazy" alt="Image shared by ${esc(memberName(m.author_id))}"></a>`:''}${doc?`<button class="attachment" data-action="downloadDoc" data-id="${esc(doc.id)}">▤ ${esc(doc.title)} <small>${fileSize(doc.file_size)}</small></button>`:''}
   ${enhancedReady&&!m.deleted_at?`<div class="message-actions">${['👍','💡','🔥','🎯'].map(emoji=>`<button class="reaction ${reactions.some(r=>r.emoji===emoji&&r.user_id===session.user.id)?'selected':''}" data-action="react" data-id="${esc(m.id)}" data-emoji="${emoji}" aria-label="React ${emoji}">${emoji}${reactions.filter(r=>r.emoji===emoji).length||''}</button>`).join('')}${showThread?`<button class="text-button" data-action="thread" data-id="${esc(m.id)}">Reply${replies?` (${replies})`:''}</button>`:''}${m.author_id===session.user.id?`<button class="text-button" data-action="editMessage" data-id="${esc(m.id)}">Edit</button>`:''}${m.author_id===session.user.id||admin()?`<button class="text-button" data-action="removeMessage" data-id="${esc(m.id)}">Remove</button>`:''}<button class="text-button" data-action="report" data-type="message" data-id="${esc(m.id)}">Report</button></div>`:''}</div></div>`;
 }
 function threadDialog(id) {
-  const root=(cache.channel_messages||[]).find(m=>m.id===id);if(!root)return;
+  const all=channelHistoryId===activeChannelId?channelHistoryRows:cache.channel_messages||[];
+  const root=all.find(m=>m.id===id);if(!root)return;
   activeThreadId=id;
-  const replies=(cache.channel_messages||[]).filter(m=>m.parent_id===id).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+  const replies=all.filter(m=>m.parent_id===id).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
   modal(`<span class="eyebrow">CHANNEL THREAD</span><h2>Replies</h2><div class="thread-scroll">${messageRow(root)}${replies.map(m=>messageRow(m)).join('')}</div><form id="editor" data-kind="threadReply" class="form-stack">${area('Your reply','body')}<button class="button" type="submit">Post reply</button></form>`);
 }
 function renderChatMessages() {
@@ -828,6 +1101,34 @@ function actions(e) {
     else show('Application alert sounds off.');
     return;
   }
+  if(action==='reviewPrivacy'){
+    if(!admin()||!privacyReady)return;
+    const request=(cache.privacy_requests||[]).find(r=>r.id===id),status=el.dataset.status;
+    if(!request||!['in_review','completed','declined'].includes(status))return;
+    const message=status==='completed'&&request.request_type==='account_removal'
+      ?'Complete this only after you have handled the Auth account, related records and uploaded files in Supabase.'
+      :status==='completed'?'Complete this only after the requested content has been handled.':'Write a clear response; the requester can see it.';
+    return modal(`<span class="eyebrow">PRIVACY REVIEW</span><h2>${esc(privacyRequestLabel(request.request_type))}</h2><p>${esc(message)}</p><p class="hint">Request ID: ${esc(request.id)} · Auth user ID: ${esc(request.requester_auth_id||'Removed')}</p><form id="editor" data-kind="privacyReview" class="form-stack"><input type="hidden" name="request_id" value="${esc(id)}"><input type="hidden" name="decision" value="${esc(status)}"><div class="field"><label for="privacy_review_note">Response to the requester ${status==='in_review'?'(optional)':''}</label><textarea id="privacy_review_note" name="note" maxlength="2000" ${status==='in_review'?'':'required'}></textarea></div><button class="button" type="submit">${status==='in_review'?'Begin review':status==='completed'?'Mark completed':'Decline request'}</button></form>`);
+  }
+  if(action==='reloadApplications'&&admin())return loadAdminApplicationPages();
+  if(['applicationsPrev','applicationsNext','approvedAccountsPrev','approvedAccountsNext'].includes(action)){
+    if(!admin()||applicationsLoading)return;
+    const applicantPage=action.startsWith('applications');
+    const current=applicantPage?applicationsPage:approvedAccountsPage;
+    const total=applicantPage?applicationTotal:approvedAccountTotal;
+    const next=current+(action.endsWith('Next')?1:-1);
+    if(next<0||next*50>=total)return;
+    if(applicantPage)applicationsPage=next;else approvedAccountsPage=next;
+    return loadAdminApplicationPages();
+  }
+  if(action==='reloadFeed'&&clubAccess())return loadFeedPage();
+  if(action==='feedPrev'||action==='feedNext'){
+    if(!clubAccess()||feedLoading)return;
+    const next=feedPage+(action==='feedNext'?1:-1);
+    if(next<0||next*30>=feedTotal)return;
+    feedPage=next;
+    return loadFeedPage();
+  }
   if(action==='inventoryFilter'){if(!clubAccess())return;inventoryFilter=el.dataset.filter;render();return;}
   if(action==='financeFilter'){if(!admin())return;financeFilter=el.dataset.filter;financePage=0;render();return;}
   if(action==='inventoryLogPrev'||action==='inventoryLogNext'){if(!founder())return;inventoryLogPage=Math.max(0,inventoryLogPage+(action==='inventoryLogNext'?1:-1));render();return;}
@@ -857,10 +1158,31 @@ function actions(e) {
   if(action==='calendarItem')return calendarItem(el.dataset.kind,id);
   if(action==='calendarProject'){close();location.hash='#projects';projectDetail(id);return;}
   if(action==='courseTrack'){const track=el.dataset.track;if(track==='all'||courseTracks.some(t=>t.name===track)){courseTrack=track;render();}return;}
+  if(action==='enrollCourse'&&clubAccess()&&courseReady){
+    if(!(cache.courses||[]).some(c=>c.id===id))return;
+    return mutate(()=>db.from('course_enrollments').insert({course_id:id,learner_id:session.user.id}));
+  }
+  if(action==='submitCourseForm'&&clubAccess()&&courseReady){
+    const course=(cache.courses||[]).find(c=>c.id===id);
+    const enrollment=(cache.course_enrollments||[]).find(e=>e.course_id===id&&e.learner_id===session.user.id&&e.status==='enrolled');
+    if(!course||!enrollment|| (cache.course_submissions||[]).some(s=>s.course_id===id&&s.learner_id===session.user.id&&s.review_status==='submitted'))return;
+    return modal(`<span class="eyebrow">PRACTICAL WORKSHOP</span><h2>Submit your project</h2><p class="muted">${esc(course.title)} · Explain what you built, how you tested it, and what you learned. You may attach a PDF or image up to 10 MB.</p><form id="editor" data-kind="courseSubmission" class="form-stack"><input type="hidden" name="course_id" value="${esc(id)}">${area('Build notes and test results','details')}${field('Project or demo URL (optional)','evidence_url','url','',false)}<div class="field"><label for="course_file">Evidence file (optional)</label><input id="course_file" name="course_file" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp"></div><button class="button" type="submit">Send project for review</button></form>`);
+  }
+  if(action==='downloadCourseEvidence'&&clubAccess()&&courseReady)return downloadCourseEvidence(id);
+  if(action==='reviewCourseForm'&&teacher()&&courseReady){
+    const attempt=(cache.course_submissions||[]).find(s=>s.id===id&&s.review_status==='submitted'),course=(cache.courses||[]).find(c=>c.id===attempt?.course_id);
+    const decision=el.dataset.status;if(!attempt||!course||attempt.learner_id===session.user.id||(!admin()&&course.instructor_id!==session.user.id)||!['accepted','revision_requested'].includes(decision))return;
+    return modal(`<span class="eyebrow">TEACHER FEEDBACK</span><h2>${decision==='accepted'?'Complete this project':'Request a revision'}</h2><p class="muted">${esc(course.title)} · ${esc(memberName(attempt.learner_id))}</p><p>${esc(attempt.details)}</p><form id="editor" data-kind="courseReview" class="form-stack"><input type="hidden" name="submission_id" value="${esc(id)}"><input type="hidden" name="decision" value="${esc(decision)}">${area('Practical feedback for the learner','feedback')}<button class="button" type="submit">${decision==='accepted'?'Accept and record completion':'Send revision request'}</button></form>`);
+  }
+  if(action==='assignCourseForm'&&admin()&&courseReady){
+    const course=(cache.courses||[]).find(c=>c.id===id);if(!course)return;
+    const teachers=(cache.profiles||[]).filter(p=>p.membership_status==='approved'&&['teacher','admin'].includes(p.role));
+    return modal(`<span class="eyebrow">TEACHING STUDIO</span><h2>Assign workshop teacher</h2><p class="muted">${esc(course.title)}</p><form id="editor" data-kind="courseInstructor" class="form-stack"><input type="hidden" name="course_id" value="${esc(id)}"><div class="field"><label for="teacher_id">Approved teacher</label><select id="teacher_id" name="teacher_id" required>${teachers.map(p=>`<option value="${esc(p.id)}" ${p.id===course.instructor_id?'selected':''}>${esc(p.full_name)} · ${esc(p.role)}</option>`).join('')}</select></div><button class="button" type="submit">Assign teacher</button></form>`);
+  }
   if(action==='login'||action==='signup')return signInDialog('signup');
   if(action==='signin')return signInDialog('signin');
   if(action==='memberProfile')return memberProfile(id);
-  if(action==='openDm'){if(!dmReady)return;activePeerId=id;if($('#modal').open)close();location.hash='#messages';render();markDmRead(id);return;}
+  if(action==='openDm'){if(!dmReady)return;activePeerId=id;if($('#modal').open)close();location.hash='#messages';render();void loadDmThread();markDmRead(id);return;}
   if(action==='feedPostForm'){
     if(!feedReady)return show('Activate the Supabase activity feed migration first.');
     const options='<option value="">No document attached</option>'+(cache.documents||[]).map(d=>`<option value="${esc(d.id)}">${esc(d.title)}</option>`).join('');
@@ -875,13 +1197,37 @@ function actions(e) {
   if(action==='likeFeedPost')return toggleFeedLike(id);
   if(action==='jumpPost')return document.getElementById(`post-${id}`)?.scrollIntoView({behavior:'smooth',block:'center'});
   if(action==='allFeedComments')return allFeedComments(id);
-  if(action==='selectChannel'){activeChannelId=id;render();markChannelRead(id);return;}
+  if(action==='selectChannel'){activeChannelId=id;render();void loadChannelHistory();markChannelRead(id);return;}
+  if(action==='reloadChannelHistory'&&clubAccess())return loadChannelHistory();
+  if(action==='channelOlder'||action==='channelNewer'){
+    if(!clubAccess()||channelHistoryLoading)return;
+    const next=channelPage+(action==='channelOlder'?1:-1);
+    if(next<0||next*50>=channelTotal)return;
+    channelPage=next;return loadChannelHistory();
+  }
+  if(action==='reloadDmThread'&&clubAccess())return loadDmThread();
+  if(action==='dmOlder'||action==='dmNewer'){
+    if(!clubAccess()||dmThreadLoading)return;
+    const next=dmPage+(action==='dmOlder'?1:-1);
+    if(next<0||next*50>=dmTotal)return;
+    dmPage=next;return loadDmThread();
+  }
+  if(['memberDirectoryPrev','memberDirectoryNext','projectListPrev','projectListNext'].includes(action)){
+    if(!clubAccess())return;
+    const memberList=action.startsWith('memberDirectory');
+    const current=memberList?memberDirectoryPage:projectListPage;
+    const total=memberList?(cache.profiles||[]).filter(p=>p.membership_status==='approved'&&p.role!=='investor').length:(cache.projects||[]).length;
+    const next=current+(action.endsWith('Next')?1:-1);
+    if(next<0||next*50>=total)return;
+    if(memberList)memberDirectoryPage=next;else projectListPage=next;
+    render();return;
+  }
   if(action==='thread')return threadDialog(id);
   if(action==='react')return toggleReaction(id,el.dataset.emoji);
-  if(action==='editMessage'){const m=(cache.channel_messages||[]).find(x=>x.id===id);if(m)return form('Edit message','Update your message in this channel.','editMessage',area('Message','body',m.body)+`<input type="hidden" name="message_id" value="${esc(id)}">`);return;}
+  if(action==='editMessage'){const m=(channelHistoryRows||[]).find(x=>x.id===id)||(cache.channel_messages||[]).find(x=>x.id===id);if(m)return form('Edit message','Update your message in this channel.','editMessage',area('Message','body',m.body)+`<input type="hidden" name="message_id" value="${esc(id)}">`);return;}
   if(action==='removeMessage')return removeMessage(id);
   if(action==='searchChat')return form('Search messages','Find a conversation across club channels.','searchChat',field('Search term','term'));
-  if(action==='openChannel'){close();activeChannelId=id;location.hash='#channels';render();markChannelRead(id);return;}
+  if(action==='openChannel'){close();activeChannelId=id;location.hash='#channels';render();void loadChannelHistory();markChannelRead(id);return;}
   if(action==='report'){activeReportTarget={type:el.dataset.type,id};return form('Report content','Tell administrators what needs attention.','report',area('Reason for report','reason'));}
   if(action==='reviewMember')return reviewMember(id,el.dataset.status);
   if(action==='readNotification')return markNotification(id);
@@ -946,7 +1292,7 @@ function actions(e) {
   if(action==='removeAvatar')return removeAvatar();
   if(action==='profileForm'){
     const basic=field('Full name','full_name','text',me?.full_name||'')+(enhancedReady?field('Unique handle (for mentions)','handle','text',me?.handle||''):'')+field('Background / organization','programme','text',me?.programme||'',false)+field('Skills / interests','skills','text',me?.skills||'',false);
-    const extra=dmReady?field('Headline / role','headline','text',me?.headline||'',false)+`<div class="field"><label for="bio">About me</label><textarea id="bio" name="bio" maxlength="1200">${esc(me?.bio||'')}</textarea></div>`+select('Availability','availability',['available','busy','away'],me?.availability||'available'):'';
+    const extra=(dmReady?field('Headline / role','headline','text',me?.headline||'',false)+`<div class="field"><label for="bio">About me</label><textarea id="bio" name="bio" maxlength="1200">${esc(me?.bio||'')}</textarea></div>`+select('Availability','availability',['available','busy','away'],me?.availability||'available'):'')+('profile_visibility' in (me||{})?`<div class="field"><label for="profile_visibility">Profile visibility</label><select id="profile_visibility" name="profile_visibility"><option value="club" ${me.profile_visibility==='club'?'selected':''}>Approved club members</option><option value="private" ${me.profile_visibility==='private'?'selected':''}>Only me and administrators</option></select></div>`:'');
     return form('My profile','Help other members recognize your work.','profile',basic+extra);
   }
   if(action==='projectForm')return form('New project','Start with a clear problem and the first test.','project',field('Project title','title')+field('One-line summary','summary')+area('Description and goal','description'));
@@ -985,6 +1331,7 @@ async function openNotification(id) {
   else if(n.target_type==='meeting')location.hash='#founder-room';
   else if(n.target_type==='event')location.hash='#events';
   else if(n.target_type==='application')location.hash=admin()?'#applications':'#application';
+  else if(n.target_type==='privacy_request'){location.hash='#privacy';if(admin())setTimeout(()=>document.getElementById('privacy-admin-queue')?.scrollIntoView({behavior:'smooth',block:'start'}),80);}
   else if(n.target_type==='post'){location.hash='#feed';setTimeout(()=>document.getElementById(`post-${n.target_id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),80);}
   else if(n.target_type==='direct_message'){activePeerId=n.target_id;location.hash='#messages';render();markDmRead(activePeerId);}
 }
@@ -1001,11 +1348,11 @@ function exportClubContent() {
   if(!admin())return;
   const names=['profiles','projects','project_tasks','project_members','project_milestones','topics','replies','channels','channel_messages','documents','document_versions','news_posts','events','event_rsvps','founder_meetings','founder_meeting_rsvps','announcements','courses','reports','audit_events','activity_posts','activity_comments','activity_likes'];
   const data=Object.fromEntries(names.map(n=>[n,cache[n]||[]]));
-  const blob=new Blob([JSON.stringify({exported_at:new Date().toISOString(),note:'Content export; excludes authentication records and file bytes.',data},null,2)],{type:'application/json'});
+  const blob=new Blob([JSON.stringify({exported_at:new Date().toISOString(),note:'Current browser view only: not all database rows, authentication records or uploaded file bytes. This is not a backup.',data},null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`innovatex-content-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
-function exportCsv(table){
-  if(!admin()&&!(founderOnly()&&['inventory_items','inventory_movements'].includes(table)))return;
+async function exportCsv(table){
+  if(!session||!admin()&&!(founderOnly()&&['inventory_items','inventory_movements'].includes(table)))return;
   const columns={
     profiles:['id','full_name','application_type','role','membership_status','programme','skills','application_reason','created_at'],
     projects:['id','title','summary','status','progress','owner_id','created_at'],
@@ -1021,31 +1368,72 @@ function exportCsv(table){
   if(!Object.hasOwn(columns,table))return;
   const safe=value=>{
     let cell=typeof value==='object'&&value!==null?JSON.stringify(value):String(value??'');
+    // A quoted formula is still evaluated by spreadsheet apps. Prefix any
+    // formula-like cell with an apostrophe, including leading whitespace.
     if(/^[\s]*[=+@-]/.test(cell))cell="'"+cell;
     return `"${cell.replaceAll('"','""')}"`;
   };
   const headers=columns[table];
-  const rows=(cache[table]||[]).map(row=>{
-    const review=table==='finance_entries'?financeReviewFor(row):null;
-    const record=table==='finance_entries'?{...row,approval_status:financeStatus(row),reviewed_by:review?.reviewer_id,reviewed_at:review?.created_at,review_note:review?.note}:row;
-    return headers.map(key=>safe(record[key])).join(',');
-  });
-  const csv='\ufeff'+headers.join(',')+'\r\n'+rows.join('\r\n')+'\r\n';
-  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
-  const a=document.createElement('a');a.href=url;a.download=`innovatex-${table}-${new Date().toISOString().slice(0,10)}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  const dataColumns=headers.filter(key=>!['approval_status','reviewed_by','reviewed_at','review_note'].includes(key));
+  const userId=session.user.id;
+  const parts=['\ufeff',headers.join(','),'\r\n'];
+  const pageSize=500;
+  let offset=0,total=null;
+  show('Preparing CSV export…');
+  try{
+    do{
+      if(session?.user.id!==userId||!admin()&&!(founderOnly()&&['inventory_items','inventory_movements'].includes(table)))throw Error('Your session changed. Please start the export again.');
+      const {data,error,count}=await db.from(table).select(dataColumns.join(','),{count:'exact'}).order('created_at',{ascending:true}).order('id',{ascending:true}).range(offset,offset+pageSize-1);
+      if(error)throw error;
+      if(total===null)total=count;
+      if(total===null)throw Error('Could not determine export size. Please retry.');
+      if(count!==total)throw Error('The records changed during export. Please retry to download a complete CSV.');
+      if(!data?.length&&offset<total)throw Error('The export stopped before all rows were downloaded. Please retry.');
+      let reviews=new Map();
+      if(table==='finance_entries'&&data?.length){
+        // Review rows are fetched for this batch, rather than relying on the
+        // browser's first page of cached finance approvals.
+        const ids=data.map(row=>row.id);
+        for(let i=0;i<ids.length;i+=100){
+          const subset=ids.slice(i,i+100);
+          let reviewOffset=0,reviewTotal=null;
+          do{
+            const result=await db.from('finance_reviews').select('entry_id,decision,reviewer_id,created_at,note',{count:'exact'}).in('entry_id',subset).order('entry_id',{ascending:true}).range(reviewOffset,reviewOffset+99);
+            if(result.error)throw result.error;
+            if(reviewTotal===null)reviewTotal=result.count;
+            if(reviewTotal===null||!result.data?.length&&reviewOffset<reviewTotal)throw Error('Could not load all finance approvals. Please retry.');
+            for(const review of result.data||[])reviews.set(review.entry_id,review);
+            reviewOffset+=(result.data||[]).length;
+          }while(reviewOffset<reviewTotal);
+        }
+      }
+      for(const row of data||[]){
+        const review=reviews.get(row.id);
+        const record=table==='finance_entries'?{...row,approval_status:review?.decision||'pending',reviewed_by:review?.reviewer_id,reviewed_at:review?.created_at,review_note:review?.note}:row;
+        parts.push(headers.map(key=>safe(record[key])).join(','),'\r\n');
+      }
+      offset+=(data||[]).length;
+    }while(offset<total);
+    const url=URL.createObjectURL(new Blob(parts,{type:'text/csv;charset=utf-8'}));
+    const a=document.createElement('a');a.href=url;a.download=`innovatex-${table}-${new Date().toISOString().slice(0,10)}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);
+    show(`Downloaded ${offset} ${table.replaceAll('_',' ')} records.`);
+  }catch(error){fail(error);}
 }
 async function markChannelRead(id) {
   if(!enhancedReady||!session)return;
   const stamp=new Date().toISOString();
   try {const {error}=await db.from('channel_reads').upsert({channel_id:id,user_id:session.user.id,last_read_at:stamp},{onConflict:'channel_id,user_id'});if(error)throw error;
     cache.channel_reads=(cache.channel_reads||[]).filter(r=>r.channel_id!==id).concat({channel_id:id,user_id:session.user.id,last_read_at:stamp});
+    await refreshUnreadCounts();
   }catch(e){console.error(e);}
 }
 async function toggleReaction(id,emoji) {
   if(!enhancedReady||!['👍','💡','🔥','🎯'].includes(emoji))return;
-  const old=(cache.message_reactions||[]).some(r=>r.message_id===id&&r.user_id===session.user.id&&r.emoji===emoji);
+  const selected=channelHistoryRows.some(m=>m.id===id);
+  const old=(selected?channelHistoryReactions:cache.message_reactions||[]).some(r=>r.message_id===id&&r.user_id===session.user.id&&r.emoji===emoji);
   try {const q=db.from('message_reactions');const {error}=old?await q.delete().eq('message_id',id).eq('user_id',session.user.id).eq('emoji',emoji):await q.insert({message_id:id,user_id:session.user.id,emoji});if(error)throw error;
-    cache.message_reactions=await read('message_reactions');if(page==='channels')renderChatMessages();
+    if(selected)await loadChannelHistory(false);else cache.message_reactions=await read('message_reactions');
+    if(page==='channels')renderChatMessages();
     if(activeThreadId&&$('#modal').open)threadDialog(activeThreadId);
   }catch(e){fail(e);}
 }
@@ -1093,6 +1481,12 @@ async function downloadLearning(id){
     const a=document.createElement('a');a.href=data.signedUrl;a.target='_blank';a.rel='noopener noreferrer';document.body.appendChild(a);a.click();a.remove();
   }catch(e){fail(e);}
 }
+async function downloadCourseEvidence(id){
+  const attempt=(cache.course_submissions||[]).find(s=>s.id===id&&s.evidence_path);if(!attempt)return;
+  try{const {data,error}=await db.storage.from('club-course-evidence').createSignedUrl(attempt.evidence_path,120);
+    if(error)throw error;const a=document.createElement('a');a.href=data.signedUrl;a.target='_blank';a.rel='noopener noreferrer';document.body.appendChild(a);a.click();a.remove();
+  }catch(error){fail(error);}
+}
 function documentVersions(id) {
   const doc=(cache.documents||[]).find(d=>d.id===id);if(!doc)return;
   const versions=(cache.document_versions||[]).filter(v=>v.document_id===id).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
@@ -1110,7 +1504,7 @@ async function submit(e) {
   if(e.target.id==='dmComposer'){
     e.preventDefault();const input=e.target.elements.body,body=input.value.trim(),file=e.target.querySelector('[name=dm_image]')?.files?.[0],send=e.target.querySelector('[type=submit]');
     if(!dmReady||!activePeerId||(!body&&!file))return;send.disabled=true;let path=null;
-    try{if(file)path=await uploadClubImage(file);const record={sender_id:session.user.id,recipient_id:activePeerId,body:body||'Shared an image'};if(mediaReady)record.image_path=path;const {error}=await db.from('direct_messages').insert(record);if(error)throw error;input.value='';input.blur();if(file)e.target.querySelector('[name=dm_image]').value='';await refresh();}catch(error){if(path)await db.storage.from('club-media').remove([path]);fail(error);}finally{send.disabled=false;}return;
+    try{if(file)path=await uploadClubImage(file);const record={sender_id:session.user.id,recipient_id:activePeerId,body:body||'Shared an image'};if(mediaReady)record.image_path=path;const {error}=await db.from('direct_messages').insert(record);if(error)throw error;input.value='';input.blur();if(file)e.target.querySelector('[name=dm_image]').value='';dmPage=0;await refresh();if(page==='messages')await loadDmThread();}catch(error){if(path)await db.storage.from('club-media').remove([path]);fail(error);}finally{send.disabled=false;}return;
   }
   if(e.target.classList.contains('feed-comment-form')){
     e.preventDefault();const formEl=e.target,body=formEl.elements.body.value.trim(),post_id=formEl.dataset.post,send=formEl.querySelector('[type=submit]');
@@ -1122,10 +1516,10 @@ async function submit(e) {
     e.preventDefault(); if(!session||!activeChannelId)return;
     const input=e.target.querySelector('[name=body]'),body=input.value.trim(),file=e.target.querySelector('[name=chat_image]')?.files?.[0],send=e.target.querySelector('[type=submit]');
     if(!body&&!file)return;send.disabled=true;let path=null;
-    try {if(file)path=await uploadClubImage(file);const record={channel_id:activeChannelId,author_id:session.user.id,body:body||'Shared an image'};if(mediaReady)record.image_path=path;const {error}=await db.from('channel_messages').insert(record);if(error)throw error;input.value='';if(file)e.target.querySelector('[name=chat_image]').value='';const label=$('#chatImageName');if(label)label.hidden=true;await refreshChat();}
+    try {if(file)path=await uploadClubImage(file);const record={channel_id:activeChannelId,author_id:session.user.id,body:body||'Shared an image'};if(mediaReady)record.image_path=path;const {error}=await db.from('channel_messages').insert(record);if(error)throw error;input.value='';if(file)e.target.querySelector('[name=chat_image]').value='';const label=$('#chatImageName');if(label)label.hidden=true;channelPage=0;await refreshChat();if(page==='channels')render();}
     catch(error){if(path)await db.storage.from('club-media').remove([path]);fail(error);}finally{send.disabled=false;}return;
   }
-  if(e.target.id!=='editor')return; e.preventDefault(); if(!db)return;
+  if(e.target.id!=='editor'&&!e.target.matches('.privacy-editor'))return; e.preventDefault(); if(!db)return;
   const formEl=e.target,kind=formEl.dataset.kind,values=Object.fromEntries(new FormData(formEl));
   const submitBtn=formEl.querySelector('[type=submit]'); submitBtn.disabled=true;
   try {
@@ -1141,6 +1535,60 @@ async function submit(e) {
     const payload={...values};
     for(const key of ['starts_at','ends_at','due_at']) if(key in payload) payload[key]=payload[key]?new Date(payload[key]).toISOString():null;
     for(const key of ['link_url','resource_url','meet_url']) if(key in payload) payload[key]=payload[key]?cleanUrl(payload[key]):null;
+    if(kind==='profileVisibility'){
+      if(!session||!me||!('profile_visibility' in me)||!['club','private'].includes(payload.profile_visibility))throw Error('Select a profile visibility option.');
+      const {error}=await db.from('profiles').update({profile_visibility:payload.profile_visibility}).eq('id',session.user.id);
+      if(error)throw error;
+      me.profile_visibility=payload.profile_visibility;await refresh();show('Profile visibility saved.');return;
+    }
+    if(kind==='privacyRequest'){
+      if(!session||!privacyReady)throw Error('Privacy request form is not ready.');
+      const details=String(payload.details||'').trim();
+      if(!['account_removal','content_removal'].includes(payload.request_type)||details.length>2000||payload.request_type==='content_removal'&&details.length<10)throw Error('Describe the content to remove in at least 10 characters.');
+      if((cache.privacy_requests||[]).some(r=>r.requester_id===session.user.id&&r.request_type===payload.request_type&&['open','in_review'].includes(r.status)))throw Error('You already have an open request of this type. Follow its status below.');
+      const {error}=await db.from('privacy_requests').insert({requester_id:session.user.id,request_type:payload.request_type,details});
+      if(error)throw error;
+      await refresh();if(!approved())await loadPrivacyRequests();show('Privacy request sent to administrators.');return;
+    }
+    if(kind==='privacyReview'){
+      if(!admin()||!privacyReady)throw Error('Administrator access required.');
+      const note=String(payload.note||'').trim();
+      if(!['in_review','completed','declined'].includes(payload.decision)||note.length>2000||payload.decision!=='in_review'&&!note)throw Error('Explain the request outcome.');
+      const {error}=await db.rpc('review_privacy_request',{p_request:payload.request_id,p_status:payload.decision,p_note:note});
+      if(error)throw error;
+      close();await refresh();show('Privacy request updated.');return;
+    }
+    if(kind==='courseSubmission'){
+      if(!clubAccess()||!courseReady)throw Error('Course enrollment is required before submitting.');
+      const courseId=String(payload.course_id||''),enrollment=(cache.course_enrollments||[]).find(e=>e.course_id===courseId&&e.learner_id===session.user.id&&e.status==='enrolled');
+      if(!enrollment)throw Error('You must be enrolled in this workshop.');
+      const details=String(payload.details||'').trim(),evidenceUrl=String(payload.evidence_url||'').trim();
+      if(details.length<20||details.length>5000)throw Error('Write at least 20 characters about your build and tests.');
+      const url=evidenceUrl?cleanUrl(evidenceUrl):null;
+      if(evidenceUrl&&!url)throw Error('Enter an HTTPS project URL.');
+      const file=formEl.querySelector('[name=course_file]')?.files?.[0];
+      const ext={'application/pdf':'pdf','image/jpeg':'jpg','image/png':'png','image/webp':'webp'}[file?.type];
+      if(file?.size&&(!ext||file.size>10485760))throw Error('Choose a PDF, JPG, PNG or WebP evidence file up to 10 MB.');
+      const path=file?.size?`${session.user.id}/${courseId}/${crypto.randomUUID()}.${ext}`:null;
+      try{
+        if(path){const {error}=await db.storage.from('club-course-evidence').upload(path,file,{upsert:false,contentType:file.type});if(error)throw error;}
+        const {error}=await db.from('course_submissions').insert({course_id:courseId,learner_id:session.user.id,details,evidence_url:url,evidence_path:path,evidence_name:path?file.name.slice(0,240):null});
+        if(error)throw error;
+      }catch(error){if(path){const removed=await db.storage.from('club-course-evidence').remove([path]);if(removed.error)console.error(removed.error);}throw error;}
+      close();await refresh();show('Project sent to your teacher for review.');return;
+    }
+    if(kind==='courseReview'){
+      if(!teacher()||!courseReady)throw Error('Teacher access is required.');
+      const submissionId=String(payload.submission_id||''),decision=String(payload.decision||''),feedback=String(payload.feedback||'').trim();
+      if(!['accepted','revision_requested'].includes(decision)||feedback.length<5||feedback.length>3000)throw Error('Choose a decision and write useful feedback.');
+      const {error}=await db.rpc('review_course_submission',{p_submission:submissionId,p_decision:decision,p_feedback:feedback});if(error)throw error;
+      close();await refresh();show(decision==='accepted'?'Project accepted. Completion recorded.':'Revision request sent to the learner.');return;
+    }
+    if(kind==='courseInstructor'){
+      if(!admin()||!courseReady)throw Error('Administrator access is required.');
+      const {error}=await db.rpc('assign_course_instructor',{p_course:String(payload.course_id||''),p_teacher:String(payload.teacher_id||'')});if(error)throw error;
+      close();await refresh();show('Workshop teacher assigned.');return;
+    }
     if(kind==='inventoryItem'){
       if(!admin()||!inventoryCatalogReady)throw Error('Administrator access and the stock catalog migration are required.');
       const count=Number(payload.quantity_total),reorder=Number(payload.reorder_level);
@@ -1264,7 +1712,7 @@ async function submit(e) {
       close();await refreshChat();show('Message edited.');return;
     }
     if(kind==='threadReply'){
-      const parent=(cache.channel_messages||[]).find(m=>m.id===activeThreadId);if(!parent)throw Error('Thread not found.');
+      const parent=channelHistoryRows.find(m=>m.id===activeThreadId)||(cache.channel_messages||[]).find(m=>m.id===activeThreadId);if(!parent)throw Error('Thread not found.');
       const {error}=await db.from('channel_messages').insert({channel_id:parent.channel_id,parent_id:parent.id,author_id:session.user.id,body:String(payload.body).trim()});if(error)throw error;
       await refreshChat();threadDialog(parent.id);return;
     }

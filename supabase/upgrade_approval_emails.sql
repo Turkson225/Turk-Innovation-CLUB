@@ -36,7 +36,8 @@ grant select on public.approval_email_outbox to service_role;
 
 -- Keep a separate registry so accounts already approved before this migration
 -- do not receive an inaccurate first-time email after being suspended and
--- reapproved. Preexisting suspended accounts are treated as prior approvals.
+-- reapproved. A suspended account needs an approval audit event to prove it
+-- was approved previously; suspension alone does not prove that.
 create table if not exists public.approval_email_history (
   user_id uuid primary key references public.profiles(id) on delete cascade,
   source text not null check (source in ('preexisting','email_queued')),
@@ -47,13 +48,25 @@ revoke all on public.approval_email_history from public,anon,authenticated;
 insert into public.approval_email_history(user_id,source)
 select p.id,'preexisting'
   from public.profiles p
- where p.membership_status in ('approved','suspended')
+ where p.membership_status='approved'
     or exists (
       select 1 from public.audit_events a
        where a.target_type='profile' and a.target_id=p.id
          and a.action ~ '^membership_approved($|_)'
     )
 on conflict (user_id) do nothing;
+-- Earlier versions marked every suspended account as a prior approval. On a
+-- rerun, remove that assumption where no approval audit or queued email can
+-- confirm it; otherwise a first-time suspended applicant could skip the form.
+delete from public.approval_email_history h using public.profiles p
+ where p.id=h.user_id and h.source='preexisting'
+   and p.membership_status<>'approved'
+   and not exists (
+     select 1 from public.audit_events a
+      where a.target_type='profile' and a.target_id=p.id
+        and a.action ~ '^membership_approved($|_)'
+   )
+   and not exists (select 1 from public.approval_email_outbox q where q.user_id=p.id);
 
 create or replace function public.queue_approval_email()
 returns trigger language plpgsql security definer set search_path = '' as $$
@@ -83,6 +96,56 @@ drop trigger if exists queue_approval_email_on_approval on public.profiles;
 create trigger queue_approval_email_on_approval
 after update of membership_status on public.profiles
 for each row execute function public.queue_approval_email();
+
+-- Protect the status transition itself, including manual administrator SQL and
+-- future approval paths that do not call review_membership(). An old approved
+-- account being restored may have no historical application reason, but still
+-- needs a confirmed email.
+create or replace function public.require_complete_application_for_approval()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  if new.membership_status = 'approved'
+     and old.membership_status is distinct from 'approved'
+     and new.role in ('member','teacher','founder','investor') then
+    if not exists (select 1 from auth.users u
+                    where u.id = new.id and u.email_confirmed_at is not null) then
+      raise exception 'Applicant must verify their email before approval';
+    end if;
+    if nullif(trim(new.application_reason),'') is null
+       and not exists (select 1 from public.approval_email_history h
+                        where h.user_id = new.id) then
+      raise exception 'Applicant must submit a reason for joining before approval';
+    end if;
+  end if;
+  return new;
+end $$;
+revoke all on function public.require_complete_application_for_approval()
+  from public,anon,authenticated;
+drop trigger if exists require_complete_application_before_approval on public.profiles;
+create trigger require_complete_application_before_approval
+before update of membership_status on public.profiles
+for each row execute function public.require_complete_application_for_approval();
+
+-- The application review page can report verification without exposing
+-- auth.users or email addresses to browser clients. Limit each call to the
+-- current page of applicants.
+create or replace function public.application_verification_status(p_users uuid[])
+returns table(user_id uuid,email_verified boolean,previously_approved boolean)
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.is_admin() then raise exception 'Administrator access required'; end if;
+  if cardinality(coalesce(p_users,array[]::uuid[]))>50 then
+    raise exception 'Review up to 50 applicants at a time';
+  end if;
+  return query
+    select p.id,u.email_confirmed_at is not null,
+           exists(select 1 from public.approval_email_history h where h.user_id=p.id)
+      from public.profiles p
+      join auth.users u on u.id=p.id
+     where p.id=any(coalesce(p_users,array[]::uuid[]));
+end $$;
+revoke all on function public.application_verification_status(uuid[]) from public,anon;
+grant execute on function public.application_verification_status(uuid[]) to authenticated;
 
 -- Approval can only complete after email verification and an application has
 -- been submitted. Restoring an existing suspended member is still possible
