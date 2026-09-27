@@ -27,6 +27,9 @@ let applicationAnswersReady = false;
 let feedPage = 0, feedTotal = 0, feedLoading = false, feedError = '', feedOwner = null, feedRequest = 0;
 let channelPage = 0, channelTotal = 0, channelHistoryId = null, channelHistoryRows = [], channelHistoryReactions = [], channelHistoryLoading = false, channelHistoryError = '', channelRequest = 0;
 let dmPage = 0, dmTotal = 0, dmThreadPeer = null, dmThreadRows = [], dmThreadLoading = false, dmThreadError = '', dmRequest = 0;
+let dmFilterTerm = '';
+let dmListScrollTop = 0;
+const dmDrafts = new Map(), dmLatestMessages = new Map(), dmThreadCoveredNotices = new Map(), dmReadInFlight = new Set(), dmSendingPeers = new Set();
 let unreadCounts = {channels:{},direct_messages:{},direct_peers:[],direct_total:0}, unreadCountsReady = false;
 let calendarMonth = new Date(new Date().getFullYear(),new Date().getMonth(),1), calendarSelected = new Date();
 let courseTrack = 'all', courseView = 'mine', activeCourseId = null, courseDetailView = 'overview';
@@ -144,7 +147,8 @@ function receiveMemberNotification(notification){
   if(!known&&inboxUnreadCount!==null&&!notification.read_at)inboxUnreadCount++;
   updateInboxIndicators();void refreshInboxUnreadCount();
   if(page==='notifications')render();
-  if(!known)showMemberAlert(notification);
+  if(!known&&notification.kind==='direct_message'&&notification.target_type==='direct_message')void refreshDmAfterNotification(notification.target_id);
+  if(!known&&!(page==='messages'&&activePeerId===notification.target_id&&!document.hidden&&notification.kind==='direct_message'))showMemberAlert(notification);
 }
 function showAdminAlert(title,message){
   if(!admin())return;
@@ -530,6 +534,7 @@ async function loadChannelHistory(renderAfter=true){
 async function loadDmThread(renderAfter=true){
   if(!clubAccess()||!dmReady||!activePeerId||!session)return;
   const peer=activePeerId,owner=session.user.id,request=++dmRequest;
+  const coveredNotices=new Set((cache.notifications||[]).filter(n=>n.kind==='direct_message'&&n.target_id===peer).map(n=>n.id));
   if(dmThreadPeer!==peer){dmThreadPeer=peer;dmPage=0;dmTotal=0;dmThreadRows=[];}
   dmThreadLoading=true;dmThreadError='';
   try{
@@ -540,9 +545,27 @@ async function loadDmThread(renderAfter=true){
     if(dmPage>0&&dmPage*50>=result.count){dmPage=Math.max(0,Math.ceil(result.count/50)-1);result=await fetchThread();if(result.error)throw result.error;}
     if(request!==dmRequest||activePeerId!==peer||session?.user.id!==owner||!clubAccess())return;
     dmThreadRows=result.data||[];dmTotal=result.count||0;
+    dmThreadCoveredNotices.set(peer,coveredNotices);
+    if(dmPage===0&&dmThreadRows[0])dmLatestMessages.set(peer,dmThreadRows[0]);
     await hydrateMedia();
   }catch(error){if(request===dmRequest)dmThreadError=error?.message||'Could not load direct messages.';}
-  finally{if(request===dmRequest){dmThreadLoading=false;if(renderAfter&&page==='messages')render();}}
+  finally{if(request===dmRequest){dmThreadLoading=false;if(renderAfter&&page==='messages'){if(document.activeElement?.closest('#dmComposer'))dmShowThreadUpdate();else render();}}}
+}
+async function refreshDmAfterNotification(peerId){
+  if(!clubAccess()||!dmReady||!peerId||!session)return;
+  const owner=session.user.id;
+  await refreshUnreadCounts();
+  if(session?.user.id!==owner||page!=='messages'||document.hidden)return;
+  if(activePeerId===peerId){await loadDmThread();return;}
+  const {data,error}=await db.from('direct_messages').select('*').in('sender_id',[owner,peerId]).in('recipient_id',[owner,peerId]).order('created_at',{ascending:false}).order('id',{ascending:false}).limit(1);
+  if(error){console.error('Conversation preview',error);return;}
+  if(session?.user.id!==owner||page!=='messages')return;
+  if(data?.[0]){
+    dmLatestMessages.set(peerId,data[0]);
+    cache.direct_messages=[data[0],...(cache.direct_messages||[]).filter(m=>m.id!==data[0].id)].slice(0,120);
+  }
+  if(document.activeElement?.closest('#dmComposer'))dmPeerPreview(peerId,data?.[0]);
+  else render();
 }
 async function refreshUnreadCounts(){
   if(!session||!clubAccess())return;
@@ -718,7 +741,7 @@ async function refresh(mode='full') {
   if(previous!==accessSignature(me)){route();return;}
   if(page==='notifications' && document.activeElement?.closest('#content')) { render(); return; }
   if(page==='channels' && document.activeElement?.closest('#chatComposer')) { renderChatMessages(); return; }
-  if(page==='messages' && document.activeElement?.closest('#dmComposer')) return;
+  if(page==='messages' && document.activeElement?.closest('#dmComposer')) {dmShowThreadUpdate();return;}
   if(page==='teaching' && document.activeElement?.closest('#teacherProfileForm')) return;
   render();
 }
@@ -750,6 +773,8 @@ async function signedIn(newSession) {
   session=newSession;
   inboxUnreadCount=null;inboxCountRequest++;dismissMemberAlert();memberDeferredNotification=null;memberNotificationPrimed=false;
   unreadCounts={channels:{},direct_messages:{},direct_peers:[],direct_total:0};unreadCountsReady=false;
+  for(const draft of dmDrafts.values())clearDmDraftFile(draft);
+  dmDrafts.clear();dmLatestMessages.clear();dmThreadCoveredNotices.clear();dmReadInFlight.clear();dmSendingPeers.clear();dmFilterTerm='';dmListScrollTop=0;activePeerId=null;dmRequest++;
   applicationVerification=new Map();applicationsOwner=null;feedOwner=null;channelHistoryId=null;dmThreadPeer=null;
   applicationRows=[];approvedAccountRows=[];channelHistoryRows=[];dmThreadRows=[];
   authReady=true;
@@ -837,6 +862,9 @@ async function init() {
   $('#authButton').onclick=()=>session ? signOut() : signInDialog();
   document.addEventListener('click',actions);
   document.addEventListener('keydown',e=>{
+    if(e.target.id==='dmBody'&&e.key==='Enter'&&!e.shiftKey&&!e.isComposing){
+      e.preventDefault();e.target.form?.requestSubmit();return;
+    }
     const tab=e.target.closest?.('.teaching-tabs [role="tab"]');
     if(!tab||!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;
     const tabs=[...tab.parentElement.querySelectorAll('[role="tab"]')];
@@ -845,10 +873,25 @@ async function init() {
     e.preventDefault();tabs[next]?.click();
   });
   document.addEventListener('submit',submit);
-  document.addEventListener('input',e=>{if(e.target.id==='dmFilter'){const term=e.target.value.toLowerCase();document.querySelectorAll('.dm-peer').forEach(b=>b.hidden=!b.textContent.toLowerCase().includes(term));}
+  document.addEventListener('scroll',e=>{
+    if(e.target.id==='dmStream'&&page==='messages'&&activePeerId&&dmPage===0)void markDmRead(activePeerId);
+  },true);
+  document.addEventListener('input',e=>{if(e.target.id==='dmFilter'){dmFilterTerm=e.target.value;const term=dmFilterTerm.toLowerCase();document.querySelectorAll('.dm-peer').forEach(b=>b.hidden=!b.querySelector('strong')?.textContent.toLowerCase().includes(term));}
+    if(e.target.id==='dmBody'&&activePeerId){dmDraftFor(activePeerId).text=e.target.value;resizeDmTextarea(e.target);}
     if(e.target.id==='inventorySearch'){inventorySearchTerm=e.target.value;applyInventorySearch();}
   });
-  document.addEventListener('change',e=>{if(['chat_image','dm_image'].includes(e.target.name)){const label=$(e.target.name==='chat_image'?'#chatImageName':'#dmImageName');if(label){label.textContent=e.target.files?.[0]?.name||'';label.hidden=!e.target.files?.length;}}
+  document.addEventListener('change',e=>{
+    if(e.target.name==='dm_image'&&activePeerId&&e.target.form?.dataset.peer===activePeerId){
+      const file=e.target.files?.[0];
+      if(file){
+        if(!['image/jpeg','image/png','image/webp','image/gif'].includes(file.type)||file.size<1||file.size>5242880){e.target.value='';show('Choose a JPG, PNG, WebP or GIF image up to 5 MB.');return;}
+        const draft=dmDraftFor(activePeerId);
+        clearDmDraftFile(draft);draft.file=file;draft.url=URL.createObjectURL(file);
+        render();
+      }
+      return;
+    }
+    if(e.target.name==='chat_image'){const label=$('#chatImageName');if(label){label.textContent=e.target.files?.[0]?.name||'';label.hidden=!e.target.files?.length;}}
     if(e.target.name==='movement_kind'&&e.target.closest('form[data-kind="inventoryMovement"]')){const member=$('#movementMember'),input=member?.querySelector('select'),needsMember=['check_out','return','issue_stock'].includes(e.target.value);if(member&&input){member.hidden=!needsMember;input.disabled=!needsMember;input.required=needsMember;if(needsMember)input.innerHTML=movementMemberOptions(e.target.form.elements.item_id.value,e.target.value);}}
   });
   route();
@@ -915,6 +958,12 @@ function route() {
   if(page==='messages'&&dmReady&&activePeerId)void loadDmThread();
 }
 function render() {
+  const previousDmStream=page==='messages'?$('#dmStream'):null;
+  const previousDmList=page==='messages'?$('.dm-list'):null;
+  if(previousDmList&&!$('#content .dm-layout.thread-open'))dmListScrollTop=previousDmList.scrollTop;
+  const sameDmThread=previousDmStream?.dataset.peer===activePeerId&&Number(previousDmStream.dataset.page)===dmPage;
+  const dmWasAtBottom=sameDmThread&&previousDmStream.scrollHeight-previousDmStream.scrollTop-previousDmStream.clientHeight<96;
+  const dmScrollTop=sameDmThread?previousDmStream.scrollTop:0;
   $('#authButton').textContent=session?'Sign out':'Join / sign in';
   $('#connectionLabel').textContent=!configured?'Setup required':session&&!approved()?'Application pending':investor()?'Investor portal live':session?'Member workspace live':'Public preview';
   $('#accountBadge').hidden=!approved();$('#accountBadge').innerHTML=approved()?roleBadge(me):'';
@@ -939,11 +988,18 @@ function render() {
   const unreadDm=unreadCountsReady?unreadCounts.direct_total:(cache.direct_messages||[]).filter(m=>m.recipient_id===session?.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;
   $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
   const views={home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
+  $('#content').classList.toggle('dm-view',page==='messages');
   $('#content').innerHTML=views[page]();
   if(page==='inventory')applyInventorySearch();
   $('#content').classList.toggle('view-enter',page!==lastRenderedPage);lastRenderedPage=page;
   if(page==='channels'){const stream=$('#messageStream');if(stream)stream.scrollTop=channelPage>0?0:stream.scrollHeight;if(channelPage===0&&activeChannelId&&enhancedReady)markChannelRead(activeChannelId);}
-  if(page==='messages'){const stream=$('#dmStream');if(stream)stream.scrollTop=dmPage>0?0:stream.scrollHeight;if(dmPage===0&&activePeerId&&dmReady)markDmRead(activePeerId);}
+  if(page==='messages'){
+    const list=$('.dm-list');if(list)list.scrollTop=dmListScrollTop;
+    const stream=$('#dmStream');
+    if(stream)stream.scrollTop=sameDmThread&&!dmWasAtBottom?dmScrollTop:dmPage>0?0:stream.scrollHeight;
+    resizeDmTextarea($('#dmBody'));
+    if(stream&&dmPage===0&&activePeerId&&dmReady&&!dmThreadLoading&&!dmThreadError)void markDmRead(activePeerId);
+  }
 }
 function homeFocusCard(icon,label,title,detail,href,action='Open details',urgent=false){
   return `<a class="home-focus-card ${urgent?'is-urgent':''}" href="${href}"><span class="home-focus-icon">${iconSvg(icon)}</span><span class="home-focus-label">${esc(label)}</span><strong>${esc(title)}</strong><span class="home-focus-detail">${esc(detail)}</span><span class="home-focus-action">${esc(action)} →</span></a>`;
@@ -1097,33 +1153,124 @@ function memberProfile(id) {
     if(changed&&trigger?.dataset.id===id&&trigger.querySelector('.avatar'))trigger.querySelector('.avatar').outerHTML=memberAvatar(id,true);
   }).catch(console.error);
 }
+function dmDraftFor(peerId){
+  if(!dmDrafts.has(peerId))dmDrafts.set(peerId,{text:'',file:null,url:''});
+  return dmDrafts.get(peerId);
+}
+function clearDmDraftFile(draft){
+  if(draft?.url)URL.revokeObjectURL(draft.url);
+  if(draft){draft.file=null;draft.url='';}
+}
+function resizeDmTextarea(input){
+  if(!input)return;
+  input.style.height='auto';
+  input.style.height=Math.min(input.scrollHeight,140)+'px';
+}
+function dmLastMessage(peerId,history){
+  const recent=history.filter(m=>m.sender_id===peerId||m.recipient_id===peerId);
+  if(dmThreadPeer===peerId&&dmPage===0)recent.push(...dmThreadRows);
+  if(dmLatestMessages.has(peerId))recent.push(dmLatestMessages.get(peerId));
+  return recent.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)||String(b.id).localeCompare(String(a.id)))[0];
+}
+function dmThreadFor(peerId,history){
+  const rows=dmThreadPeer===peerId?dmThreadRows:history.filter(m=>(m.sender_id===session.user.id&&m.recipient_id===peerId)||(m.recipient_id===session.user.id&&m.sender_id===peerId));
+  return rows.slice().sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)||String(a.id).localeCompare(String(b.id)));
+}
+function dmDayLabel(value){
+  const day=new Date(value),today=new Date(),yesterday=new Date(today);
+  yesterday.setDate(today.getDate()-1);
+  return day.toDateString()===today.toDateString()?'Today':day.toDateString()===yesterday.toDateString()?'Yesterday':date(value);
+}
+function dmMessageMarkup(message,peer){
+  const mine=message.sender_id===session.user.id,photo=mediaUrl(message.image_path);
+  const image=message.image_path?(photo?`<a href="${esc(photo)}" data-action="viewImage" data-media-path="${esc(message.image_path)}" data-caption="Image shared in this conversation" target="_blank" rel="noopener noreferrer" aria-label="View private image full screen"><img class="dm-photo" src="${esc(photo)}" loading="lazy" alt="Image shared in this conversation"></a>`:'<span class="subtle">Loading photo…</span>'):'';
+  const body=message.image_path&&message.body==='Shared an image'?'':`<p>${esc(message.body)}</p>`;
+  const when=new Date(message.created_at).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+  return `<div class="dm-bubble ${mine?'mine':''}" data-message-id="${esc(message.id)}">${mine?'':memberAvatar(peer.id)}<div>${body}${image}<small>${esc(when)}</small></div></div>`;
+}
+function dmStreamMarkup(peer,history){
+  const thread=dmThreadFor(peer.id,history);
+  if(!thread.length)return dmThreadLoading?empty('Loading messages','Fetching this part of the conversation…'):empty('Start a conversation','Send a message about a club project or upcoming event.');
+  let day='';
+  return thread.map(message=>{
+    const key=new Date(message.created_at).toDateString();
+    const label=key!==day?`<div class="dm-day"><span>${esc(dmDayLabel(message.created_at))}</span></div>`:'';
+    day=key;
+    return label+dmMessageMarkup(message,peer);
+  }).join('');
+}
+function dmPreviewText(message){
+  if(!message)return '';
+  if(message.image_path)return message.body==='Shared an image'?'Photo':`${message.body} · Photo`;
+  return message.body||'';
+}
+function dmPeerPreview(peerId,message){
+  const row=[...document.querySelectorAll('.dm-peer[data-id]')].find(item=>item.dataset.id===peerId);
+  const preview=row?.querySelector('small');
+  if(preview&&message)preview.textContent=dmPreviewText(message);
+}
+function dmShowThreadUpdate(forceBottom=false){
+  if(page!=='messages'||!activePeerId)return;
+  const stream=$('#dmStream');
+  if(!stream||stream.dataset.peer!==activePeerId||Number(stream.dataset.page)!==dmPage){
+    render();
+    if(forceBottom&&$('#dmStream'))$('#dmStream').scrollTop=$('#dmStream').scrollHeight;
+    return;
+  }
+  const nearBottom=stream.scrollHeight-stream.scrollTop-stream.clientHeight<96;
+  const priorTop=stream.scrollTop;
+  const peer=(cache.profiles||[]).find(p=>p.id===activePeerId)||{id:activePeerId,full_name:'Private member'};
+  stream.innerHTML=dmStreamMarkup(peer,cache.direct_messages||[]);
+  stream.scrollTop=dmPage===0&&(nearBottom||forceBottom)?stream.scrollHeight:priorTop;
+  dmPeerPreview(activePeerId,dmLastMessage(activePeerId,cache.direct_messages||[]));
+  if(dmPage===0&&!dmThreadLoading&&!dmThreadError)void markDmRead(activePeerId);
+}
 function messages() {
   if(!dmReady)return head('MEMBER CONNECTIONS','Direct messages','Private conversations with club members.')+communityNotice();
   const history=cache.direct_messages||[];
   const peers=new Set(history.map(m=>m.sender_id===session.user.id?m.recipient_id:m.sender_id));
   if(unreadCountsReady)for(const id of unreadCounts.direct_peers)peers.add(id);
+  for(const id of dmLatestMessages.keys())peers.add(id);
   const people=(cache.profiles||[]).filter(p=>p.id!==session.user.id&&p.membership_status==='approved'&&p.role!=='investor');
   for(const id of peers)if(id!==session.user.id&&!people.some(p=>p.id===id))people.push({id,full_name:'Private member',headline:'Profile not shared',private_placeholder:true});
   if(activePeerId&&activePeerId!==session.user.id&&!people.some(p=>p.id===activePeerId))people.push({id:activePeerId,full_name:'Private member',headline:'Profile not shared',private_placeholder:true});
-  const ordered=people.slice().sort((a,b)=>Number(peers.has(b.id))-Number(peers.has(a.id))||a.full_name.localeCompare(b.full_name));
-  const peer=people.find(p=>p.id===activePeerId);
-  const thread=peer?(dmThreadPeer===peer.id?dmThreadRows:history.filter(m=>(m.sender_id===session.user.id&&m.recipient_id===peer.id)||(m.recipient_id===session.user.id&&m.sender_id===peer.id))).slice().sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)):[];
+  const latest=new Map(people.map(p=>[p.id,dmLastMessage(p.id,history)]));
+  const ordered=people.slice().sort((a,b)=>Number(!!latest.get(b.id))-Number(!!latest.get(a.id))||new Date(latest.get(b.id)?.created_at||0)-new Date(latest.get(a.id)?.created_at||0)||a.full_name.localeCompare(b.full_name));
+  const peer=people.find(p=>p.id===activePeerId),draft=peer?dmDraftFor(peer.id):null;
+  const online=peer?.last_seen_at&&Date.now()-new Date(peer.last_seen_at).getTime()<65000;
+  const preview=draft?.file?`<div class="dm-image-preview"><img src="${esc(draft.url)}" alt="Selected image preview"><span>${esc(draft.file.name)}<small>Ready to share</small></span><button type="button" class="dm-preview-remove" data-action="removeDmImage" aria-label="Remove selected image">×</button></div>`:'';
   return `${head('MEMBER CONNECTIONS','Direct messages','Discuss a project with another approved club member.')}
     ${!unreadCountsReady?'<div class="notice">Unread counts may be incomplete while the club finishes setup. Contact an administrator if a conversation seems missing.</div>':''}
-    <div class="dm-layout"><div class="dm-list"><div class="dm-heading">Members <span>${people.length}</span></div><div class="dm-search"><label class="sr-only" for="dmFilter">Find a member</label><input id="dmFilter" placeholder="Find a member"></div>${ordered.map(p=>{const last=history.filter(m=>m.sender_id===p.id||m.recipient_id===p.id).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];const seen=(cache.direct_message_reads||[]).find(r=>r.peer_id===p.id)?.last_read_at;const unread=unreadCountsReady?Number(unreadCounts.direct_messages[p.id]||0):history.filter(m=>m.sender_id===p.id&&(!seen||new Date(m.created_at)>new Date(seen))).length;return `<button class="dm-peer ${p.id===activePeerId?'selected':''}" data-action="openDm" data-id="${esc(p.id)}">${memberAvatar(p.id)}<span><strong>${esc(p.full_name)}</strong><small>${esc(last?.body||p.headline||p.programme||'Start a conversation')}</small></span>${unread?`<i class="unread-badge">${unread}</i>`:''}</button>`}).join('')||empty('No other members','Approved members will appear here.')}</div>
-    <div class="dm-conversation">${peer?`<div class="chat-head"><div><h2>${esc(peer.full_name)}</h2><p>${esc(peer.headline||peer.programme||'Club member')}</p></div>${peer.private_placeholder?'':`<button class="text-button" data-action="memberProfile" data-id="${esc(peer.id)}">View profile</button>`}</div>${dmThreadError?`<div class="notice">${esc(dmThreadError)} <button class="text-button" data-action="reloadDmThread">Retry</button></div>`:''}${dmTotal>50?`<div class="records-toolbar"><small class="subtle">Messages ${dmPage*50+1}–${Math.min(dmTotal,dmPage*50+50)} of ${dmTotal}</small><div class="records-actions"><button class="button button-outline button-sm" data-action="dmOlder" ${(dmPage+1)*50>=dmTotal||dmThreadLoading?'disabled':''}>← Older</button><button class="button button-outline button-sm" data-action="dmNewer" ${dmPage===0||dmThreadLoading?'disabled':''}>Newer →</button></div></div>`:''}<div id="dmStream" class="dm-stream">${thread.length?thread.map(m=>{const photo=mediaUrl(m.image_path);return `<div class="dm-bubble ${m.sender_id===session.user.id?'mine':''}">${m.sender_id!==session.user.id?memberAvatar(peer.id):''}<div><p>${esc(m.body)}</p>${photo?`<a href="${esc(photo)}" data-action="viewImage" data-media-path="${esc(m.image_path)}" data-caption="Image shared in this conversation" target="_blank" rel="noopener noreferrer" aria-label="View private image full screen"><img class="dm-photo" src="${esc(photo)}" loading="lazy" alt="Image shared in this conversation"></a>`:''}<small>${dateTime(m.created_at)}</small></div></div>`}).join(''):dmThreadLoading?empty('Loading messages','Fetching this part of the conversation…'):empty('Start a conversation','Send a message about a club project or upcoming event.')}</div><form id="dmComposer" class="chat-composer">${mediaReady?`<label class="gallery-picker" title="Choose an image from your gallery">▧<span class="sr-only">Choose image</span><input name="dm_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>`:''}<label class="sr-only" for="dmBody">Message</label><input id="dmBody" name="body" maxlength="3000" placeholder="Message ${esc(peer.full_name)}" ${mediaReady?'':'required'} autocomplete="off"><button class="button" type="submit">Send ↗</button>${mediaReady?`<span id="dmImageName" class="chat-image-name" hidden></span>`:''}</form>`:empty('Choose a member','Select someone to start a private conversation.')}</div></div>`;
+    <div class="dm-layout ${peer?'thread-open':''}"><div class="dm-list"><div class="dm-heading">Conversations <span>${people.length}</span></div><div class="dm-search"><label class="sr-only" for="dmFilter">Find a member</label><input id="dmFilter" type="search" value="${esc(dmFilterTerm)}" placeholder="Search members" autocomplete="off"></div>${ordered.map(p=>{
+      const last=latest.get(p.id),seen=(cache.direct_message_reads||[]).find(r=>r.peer_id===p.id)?.last_read_at;
+      const unread=unreadCountsReady?Number(unreadCounts.direct_messages[p.id]||0):history.filter(m=>m.sender_id===p.id&&(!seen||new Date(m.created_at)>new Date(seen))).length;
+      const hidden=dmFilterTerm&&!p.full_name.toLowerCase().includes(dmFilterTerm.toLowerCase())?'hidden':'';
+      return `<button type="button" class="dm-peer ${p.id===activePeerId?'selected':''}" data-action="openDm" data-id="${esc(p.id)}" ${hidden}>${memberAvatar(p.id)}<span><strong>${esc(p.full_name)}</strong><small>${esc(dmPreviewText(last)||p.headline||p.programme||'Start a conversation')}</small></span>${unread?`<i class="unread-badge">${unread}</i>`:''}</button>`;
+    }).join('')||empty('No other members','Approved members will appear here.')}</div>
+    <div class="dm-conversation">${peer?`<div class="chat-head"><button type="button" class="dm-back" data-action="closeDm" aria-label="Back to conversations">←</button><div class="dm-head-person">${memberAvatar(peer.id)}<div class="dm-head-copy"><h2>${esc(peer.full_name)}</h2><p>${online?'Online':esc(peer.headline||peer.programme||'Club member')}</p></div></div>${peer.private_placeholder?'':`<button type="button" class="text-button" data-action="memberProfile" data-id="${esc(peer.id)}">Profile</button>`}</div>${dmThreadError?`<div class="notice">${esc(dmThreadError)} <button class="text-button" data-action="reloadDmThread">Retry</button></div>`:''}${dmTotal>50?`<div class="records-toolbar"><small class="subtle">Messages ${dmPage*50+1}–${Math.min(dmTotal,dmPage*50+50)} of ${dmTotal}</small><div class="records-actions"><button class="button button-outline button-sm" data-action="dmOlder" ${(dmPage+1)*50>=dmTotal||dmThreadLoading?'disabled':''}>← Older</button><button class="button button-outline button-sm" data-action="dmNewer" ${dmPage===0||dmThreadLoading?'disabled':''}>Newer →</button></div></div>`:''}<div id="dmStream" class="dm-stream" data-peer="${esc(peer.id)}" data-page="${dmPage}" role="log" aria-label="Messages with ${esc(peer.full_name)}">${dmStreamMarkup(peer,history)}</div><form id="dmComposer" class="chat-composer" data-peer="${esc(peer.id)}">${preview}${mediaReady?`<label class="gallery-picker" title="Choose an image from your gallery">▧<span class="sr-only">Choose image</span><input name="dm_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>`:''}<label class="sr-only" for="dmBody">Message</label><textarea id="dmBody" name="body" rows="1" maxlength="3000" placeholder="Message ${esc(peer.full_name)}" aria-label="Write a message" enterkeyhint="send">${esc(draft.text)}</textarea><button class="button" type="submit" aria-label="Send message">➤</button></form>`:empty('Choose a member','Select someone to start a private conversation.')}</div></div>`;
 }
 async function markDmRead(peerId) {
-  if(!dmReady||!session||!peerId)return;
+  if(!dmReady||!session||!peerId||page!=='messages'||activePeerId!==peerId||document.hidden||dmPage!==0||dmThreadPeer!==peerId||dmThreadLoading||dmThreadError||dmReadInFlight.has(peerId))return;
+  const stream=$('#dmStream');
+  if(!stream||stream.dataset.peer!==peerId||stream.scrollHeight-stream.scrollTop-stream.clientHeight>=96)return;
+  const latest=dmThreadRows.find(m=>m.sender_id===peerId);
+  const readAt=(cache.direct_message_reads||[]).find(r=>r.peer_id===peerId)?.last_read_at;
+  const unreadNotices=(cache.notifications||[]).filter(n=>n.kind==='direct_message'&&n.target_id===peerId&&!n.read_at);
+  const coveredNotices=dmThreadCoveredNotices.get(peerId);
+  if(unreadNotices.some(n=>!coveredNotices?.has(n.id)))return;
+  if(!unreadNotices.length&&(!latest||readAt&&new Date(latest.created_at)<=new Date(readAt)))return;
   const stamp=new Date().toISOString(),owner=session.user.id;
+  dmReadInFlight.add(peerId);
   try{
     const {error}=await db.from('direct_message_reads').upsert({user_id:owner,peer_id:peerId,last_read_at:stamp},{onConflict:'user_id,peer_id'});if(error)throw error;
+    if(session?.user.id!==owner)return;
     cache.direct_message_reads=(cache.direct_message_reads||[]).filter(r=>r.peer_id!==peerId).concat({user_id:owner,peer_id:peerId,last_read_at:stamp});
-    const notices=await db.from('notifications').update({read_at:stamp}).eq('user_id',owner).eq('kind','direct_message').eq('target_id',peerId).is('read_at',null);
+    const notices=await db.from('notifications').update({read_at:stamp}).eq('user_id',owner).eq('kind','direct_message').eq('target_id',peerId).is('read_at',null).lte('created_at',stamp);
     if(notices.error)console.error('Mark message alerts read',notices.error);
-    else for(const n of cache.notifications||[])if(n.kind==='direct_message'&&n.target_id===peerId&&!n.read_at)n.read_at=stamp;
+    else for(const n of cache.notifications||[])if(n.kind==='direct_message'&&n.target_id===peerId&&!n.read_at&&new Date(n.created_at)<=new Date(stamp))n.read_at=stamp;
     await refreshUnreadCounts();void refreshInboxUnreadCount();
   }catch(e){console.error(e);}
+  finally{dmReadInFlight.delete(peerId);}
 }
 function projects() {
   const list=cache.projects||[];
@@ -1981,7 +2128,28 @@ function actions(e) {
   if(action==='login'||action==='signup')return signInDialog('signup');
   if(action==='signin')return signInDialog('signin');
   if(action==='memberProfile')return memberProfile(id);
-  if(action==='openDm'){if(!dmReady)return;activePeerId=id;if($('#modal').open)close();location.hash='#messages';render();void loadDmThread();markDmRead(id);return;}
+  if(action==='openDm'){
+    if(!clubAccess()||!dmReady||!id||id===session.user.id)return;
+    activePeerId=id;
+    if($('#modal').open)close();
+    if(location.hash!=='#messages'){location.hash='#messages';return;}
+    render();void loadDmThread();
+    return;
+  }
+  if(action==='closeDm'){
+    if(page!=='messages')return;
+    activePeerId=null;dmRequest++;dmThreadLoading=false;render();
+    return;
+  }
+  if(action==='removeDmImage'){
+    const draft=dmDraftFor(activePeerId);
+    clearDmDraftFile(draft);
+    const picker=$('#dmComposer [name=dm_image]');
+    if(picker)picker.value='';
+    $('#dmComposer .dm-image-preview')?.remove();
+    $('#dmBody')?.focus({preventScroll:true});
+    return;
+  }
   if(action==='feedPostForm'){
     if(!feedReady)return show('Activate the Supabase activity feed migration first.');
     const options='<option value="">No document attached</option>'+(cache.documents||[]).map(d=>`<option value="${esc(d.id)}">${esc(d.title)}</option>`).join('');
@@ -2251,7 +2419,11 @@ async function openNotification(id) {
   }
   else if(n.target_type==='privacy_request'){location.hash='#privacy';if(admin())setTimeout(()=>document.getElementById('privacy-admin-queue')?.scrollIntoView({behavior:'smooth',block:'start'}),80);}
   else if(n.target_type==='post'){location.hash='#feed';setTimeout(()=>document.getElementById(`post-${n.target_id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),80);}
-  else if(n.target_type==='direct_message'){activePeerId=n.target_id;location.hash='#messages';render();markDmRead(activePeerId);}
+  else if(n.target_type==='direct_message'){
+    activePeerId=n.target_id;
+    if(location.hash==='#messages'){render();void loadDmThread();}
+    else location.hash='#messages';
+  }
 }
 async function resolveReport(id) {
   if(!admin())return;
@@ -2431,9 +2603,55 @@ function uploadRevisionDialog(id) {
 }
 async function submit(e) {
   if(e.target.id==='dmComposer'){
-    e.preventDefault();const input=e.target.elements.body,body=input.value.trim(),file=e.target.querySelector('[name=dm_image]')?.files?.[0],send=e.target.querySelector('[type=submit]');
-    if(!dmReady||!activePeerId||(!body&&!file))return;send.disabled=true;let path=null;
-    try{if(file)path=await uploadClubImage(file);const record={sender_id:session.user.id,recipient_id:activePeerId,body:body||'Shared an image'};if(mediaReady)record.image_path=path;const {error}=await db.from('direct_messages').insert(record);if(error)throw error;input.value='';input.blur();if(file)e.target.querySelector('[name=dm_image]').value='';dmPage=0;await refresh();if(page==='messages')await loadDmThread();}catch(error){if(path)await db.storage.from('club-media').remove([path]);fail(error);}finally{send.disabled=false;}return;
+    e.preventDefault();
+    const form=e.target,peer=form.dataset.peer,input=form.elements.body,body=input.value.trim(),draft=dmDraftFor(peer);
+    const file=draft.file||form.querySelector('[name=dm_image]')?.files?.[0],send=form.querySelector('[type=submit]');
+    if(!clubAccess()||!dmReady||!peer||peer!==activePeerId||(!body&&!file)||dmSendingPeers.has(peer))return;
+    draft.text=input.value;
+    dmSendingPeers.add(peer);send.disabled=true;send.textContent='…';
+    const owner=session.user.id;
+    let path=null,inserted=false;
+    try{
+      if(file)path=await uploadClubImage(file);
+      const record={sender_id:owner,recipient_id:peer,body:body||'Shared an image'};
+      if(mediaReady)record.image_path=path;
+      const {data,error}=await db.from('direct_messages').insert(record).select('*').single();
+      if(error)throw error;
+      inserted=true;
+      if(session?.user.id!==owner)return;
+      if(draft.file===file)clearDmDraftFile(draft);
+      if(input.value.trim()===body){draft.text='';input.value='';}
+      if(form.isConnected){
+        const picker=form.querySelector('[name=dm_image]');if(picker)picker.value='';
+        form.querySelector('.dm-image-preview')?.remove();
+      }
+      dmLatestMessages.set(peer,data);
+      cache.direct_messages=[data,...(cache.direct_messages||[]).filter(m=>m.id!==data.id)].slice(0,120);
+      if(page==='messages'&&activePeerId===peer){
+        dmRequest++;dmThreadLoading=false;dmThreadError='';
+        const wasOnOlderPage=dmPage>0,sameThread=dmThreadPeer===peer;
+        const older=sameThread&&!wasOnOlderPage?dmThreadRows:(cache.direct_messages||[]).filter(m=>m.id!==data.id&&((m.sender_id===owner&&m.recipient_id===peer)||(m.sender_id===peer&&m.recipient_id===owner)));
+        const alreadyCounted=sameThread&&dmThreadRows.some(m=>m.id===data.id);
+        dmThreadPeer=peer;dmPage=0;dmTotal=Math.max((sameThread?dmTotal:older.length)+(alreadyCounted?0:1),older.filter(m=>m.id!==data.id).length+1);
+        dmThreadRows=[data,...older.filter(m=>m.id!==data.id)].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)||String(b.id).localeCompare(String(a.id))).slice(0,50);
+        if(path)await hydrateMedia([path]);
+        dmShowThreadUpdate(true);
+        if(wasOnOlderPage||!sameThread)void loadDmThread();
+        resizeDmTextarea($('#dmBody'));
+        $('#dmBody')?.focus({preventScroll:true});
+      }else if(page==='messages')dmPeerPreview(peer,data);
+    }catch(error){
+      if(path&&!inserted)await db.storage.from('club-media').remove([path]);
+      if(inserted){
+        console.error('Message sent but conversation did not refresh',error);
+        show('Message sent. Reopen this conversation if it does not appear yet.');
+        if(page==='messages'&&activePeerId===peer)void loadDmThread();
+      }else fail(error);
+    }finally{
+      dmSendingPeers.delete(peer);
+      if(send.isConnected){send.disabled=false;send.textContent='➤';}
+    }
+    return;
   }
   if(e.target.classList.contains('feed-comment-form')){
     e.preventDefault();const formEl=e.target,body=formEl.elements.body.value.trim(),post_id=formEl.dataset.post,send=formEl.querySelector('[type=submit]');

@@ -506,3 +506,71 @@ nav a span svg,.icon-box svg{vertical-align:middle;transition:transform .22s eas
 @media(max-width:800px){.course-classroom-layout{grid-template-columns:1fr}.course-class-list{display:flex;overflow-x:auto;scroll-snap-type:x proximity;padding-bottom:3px}.course-class-choice{flex:0 0 min(76vw,240px);scroll-snap-align:start}}
 @media(max-width:560px){.course-detail-switch{margin-right:-7px;margin-left:-7px}.course-detail-button{min-height:44px}.course-view-button{flex:1}.course-classroom-panel{padding:15px}.course-classroom-head{flex-direction:column}.course-steps{gap:8px}.course-steps>div{padding:13px}.course-view-panel .course-tracks{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:360px){.course-view-panel .course-tracks{grid-template-columns:1fr}.course-view-button{padding:10px 8px}.course-classroom-meta{align-items:flex-start;flex-direction:column}}
+
+/* Direct messages: a roomy two-pane inbox on desktop and one screen at a time on phones. */
+.dm-layout{height:clamp(540px,calc(100dvh - 235px),780px);min-height:0;gap:14px}
+.dm-list,.dm-conversation{min-height:0;background:var(--white)}
+.dm-list{overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.dm-heading{position:sticky;top:0;z-index:1;display:flex;justify-content:space-between;align-items:center;padding:20px 18px 12px;background:var(--white);font:700 18px/1.3 'Space Grotesk',sans-serif}
+.dm-heading span{font:700 11px/1 'DM Sans',sans-serif;padding:6px 9px;border-radius:30px;background:color-mix(in srgb,var(--teal) 12%,var(--white));color:var(--deep)}
+.dm-search{position:sticky;top:55px;z-index:1;padding:6px 13px 14px;background:var(--white);border-bottom:1px solid var(--line)}
+.dm-search input{height:43px;padding:10px 14px;border-radius:12px;background:var(--bg);font-size:14px;outline:0}
+.dm-search input:focus-visible{border-color:var(--teal);box-shadow:0 0 0 3px color-mix(in srgb,var(--teal) 18%,transparent)}
+.dm-peer{gap:12px;min-height:70px;padding:12px 14px;border-bottom:1px solid var(--line);transition:background-color .18s ease}
+.dm-peer .avatar{width:45px;height:45px;border-radius:50%;font-size:14px}
+.dm-peer strong{font-size:14px;line-height:1.35}.dm-peer small{font-size:12px;line-height:1.4;margin-top:3px}
+.dm-peer.selected{background:color-mix(in srgb,var(--teal) 12%,var(--white));box-shadow:inset 3px 0 var(--teal)}
+.dm-peer .unread-badge{float:none;align-self:center;min-width:20px;text-align:center;font-size:11px}
+.dm-conversation{min-width:0;overflow:hidden}
+.dm-conversation .chat-head{flex:none;min-height:73px;padding:12px 19px;background:var(--white)}
+.dm-head-person{display:flex;align-items:center;gap:11px;min-width:0}.dm-head-person .avatar{width:42px;height:42px;border-radius:50%}
+.dm-head-copy{min-width:0}.dm-head-copy h2{font-size:17px;margin:0 0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dm-head-copy p{font-size:11px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+.dm-conversation .chat-head .text-button{flex:none;font-size:12px}.dm-back{display:none}
+.dm-conversation .records-toolbar{flex:none;margin:0;padding:8px 16px;border-bottom:1px solid var(--line)}
+.dm-stream{flex:1;min-height:0;height:auto;padding:21px clamp(14px,2vw,26px);overscroll-behavior:contain;scrollbar-width:thin;background:radial-gradient(circle at 95% 0%,color-mix(in srgb,var(--teal) 6%,transparent),transparent 33%),color-mix(in srgb,var(--bg) 55%,var(--white))}
+.dm-bubble{max-width:min(77%,610px);gap:7px}.dm-bubble>div{min-width:0;max-width:100%;padding:10px 14px;border:1px solid color-mix(in srgb,var(--line) 83%,transparent);border-radius:16px 16px 16px 5px;background:var(--white);box-shadow:0 2px 9px rgba(17,48,56,.04)}
+.dm-bubble.mine>div{background:color-mix(in srgb,var(--teal) 14%,var(--white));border-color:color-mix(in srgb,var(--teal) 20%,var(--line));border-radius:16px 16px 5px 16px}
+.dm-bubble p{font-size:14px;line-height:1.48;color:var(--ink)}.dm-bubble small{font-size:10px;margin-top:6px;text-align:right}
+.dm-bubble .avatar{width:28px;height:28px;border-radius:50%}
+.dm-day{align-self:center;padding:5px 11px;border:1px solid var(--line);border-radius:20px;background:var(--white);color:var(--muted);font-size:11px;font-weight:800}
+.dm-unread-line{display:flex;align-items:center;gap:10px;color:var(--deep);font-size:11px;font-weight:800}.dm-unread-line:before,.dm-unread-line:after{content:'';height:1px;flex:1;background:color-mix(in srgb,var(--teal) 44%,var(--line))}
+#dmComposer{flex:none;display:flex;align-items:end;flex-wrap:wrap;gap:9px;padding:12px 16px 14px;background:var(--white)}
+#dmComposer .gallery-picker{height:44px;flex-basis:44px;border-radius:13px}
+#dmComposer #dmBody{min-height:44px;max-height:130px;flex:1;min-width:0;resize:none;padding:11px 14px;border:1px solid var(--line);border-radius:17px;background:var(--bg);color:var(--ink);font-size:16px;line-height:1.35;outline:0}
+#dmComposer #dmBody:focus-visible{border-color:var(--teal);box-shadow:0 0 0 3px color-mix(in srgb,var(--teal) 15%,transparent)}
+#dmComposer .button{min-height:44px;padding:10px 16px;border-radius:13px;font-size:13px}
+.dm-image-preview{order:-1;flex-basis:100%;display:flex;align-items:center;gap:9px;min-width:0;padding:8px 11px;border:1px solid var(--line);border-radius:12px;background:color-mix(in srgb,var(--teal) 7%,var(--white));font-size:12px;color:var(--ink)}
+.dm-image-preview[hidden]{display:none}.dm-image-preview img{width:44px;height:44px;object-fit:cover;border-radius:8px}.dm-image-preview span{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dm-preview-remove{flex:none;display:grid;place-items:center;width:30px;height:30px;border:0;border-radius:8px;background:var(--white);color:var(--ink);font-size:18px}.dm-preview-remove:hover{color:var(--deep)}
+.dm-photo{max-width:min(320px,100%);max-height:330px}.dm-layout :is(button,input,textarea):focus-visible{outline:2px solid var(--deep);outline-offset:2px}
+[data-theme=dark] .dm-peer:hover,[data-theme=dark] .dm-peer.selected{background:#23453f}
+[data-theme=dark] .dm-stream{background:radial-gradient(circle at 95% 0%,rgba(21,135,120,.12),transparent 37%),#1b252b}
+[data-theme=dark] .dm-bubble>div{background:#2d3940;border-color:#3f5055}[data-theme=dark] .dm-bubble.mine>div{background:#164e48;border-color:#236459}
+@media(max-width:740px){
+  /* Page entry transforms otherwise rebase the fixed mobile chat on its content box. */
+  .content.dm-view{animation:none!important;transform:none!important}
+  .dm-layout{position:fixed;inset:64px 0 0;z-index:15;display:block;width:100%;height:auto;min-height:0;margin:0;padding:0;background:var(--white)}
+  .dm-list,.dm-conversation{width:100%;height:100%;max-height:none;border:0;border-radius:0;box-shadow:none}
+  .dm-list{display:block;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .dm-conversation{display:none}
+  .dm-layout.thread-open .dm-list{display:none}
+  .dm-layout.thread-open .dm-conversation{display:flex}
+  .dm-heading{padding:20px 18px 14px;font-size:21px}.dm-search{top:63px;padding:7px 16px 15px}
+  .dm-peer{min-height:78px;padding:13px 17px}.dm-peer .avatar{width:48px;height:48px}
+  .dm-conversation .chat-head{min-height:64px;padding:9px 13px;gap:7px;box-shadow:0 2px 12px rgba(16,45,53,.05)}
+  .dm-back{display:grid;place-items:center;flex:none;width:42px;height:42px;margin-left:-4px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--ink);font-size:24px;line-height:1}
+  .dm-back:hover{background:color-mix(in srgb,var(--teal) 10%,var(--white))}
+  .dm-head-person{flex:1;gap:9px}.dm-head-person .avatar{width:38px;height:38px}.dm-head-copy h2{font-size:15px}.dm-head-copy p{font-size:10px}
+  .dm-conversation .chat-head .text-button{max-width:63px;white-space:normal;line-height:1.15;font-size:10px;text-align:right}
+  .dm-stream{min-height:0;height:auto;padding:15px 12px 19px;-webkit-overflow-scrolling:touch}
+  .dm-bubble{max-width:91%}.dm-bubble p{font-size:14px}.dm-bubble>div{padding:9px 12px}
+  .dm-bubble:not(.mine){margin-right:12px}.dm-bubble.mine{margin-left:30px}
+  #dmComposer{gap:8px;padding:9px 10px calc(10px + env(safe-area-inset-bottom,0px));box-shadow:0 -3px 14px rgba(12,43,52,.04)}
+  #dmComposer .gallery-picker{flex-basis:42px;height:43px}
+  #dmComposer #dmBody{min-height:43px;max-height:112px}
+  #dmComposer .button{min-height:43px;padding:9px 12px}
+  .dm-conversation .records-toolbar{padding:6px 10px}.dm-conversation .records-toolbar .button{padding:6px 8px}
+}
+@media(max-width:360px){.dm-conversation .chat-head .text-button{display:none}.dm-bubble{max-width:93%}#dmComposer{gap:6px}#dmComposer .button{padding:9px 10px}}
+@media(prefers-reduced-motion:reduce){.dm-peer{transition:none}}
