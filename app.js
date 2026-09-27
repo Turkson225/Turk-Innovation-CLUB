@@ -842,7 +842,13 @@ async function init() {
   $('#themeButton').onclick=()=>{const next=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=next;try{localStorage.setItem('innovatex.theme',next);}catch{}updateThemeButton();};
   updateThemeButton();
   $('#todayLabel').textContent=new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
-  $('#menuBtn').onclick=()=>$('#sidebar').classList.toggle('open');
+  $('#menuBtn').onclick=()=>setSidebarOpen(!$('#sidebar').classList.contains('open'));
+  $('#sidebar').addEventListener('click',e=>{
+    if(e.target.closest('a[href],button[data-action]'))setSidebarOpen(false);
+  });
+  document.addEventListener('click',e=>{
+    if($('#sidebar').classList.contains('open')&&!e.target.closest('#sidebar,#menuBtn'))setSidebarOpen(false);
+  });
   $('#installAppButton').onclick=installInnovateX;
   updateInstallButton();
   window.addEventListener('beforeinstallprompt',event=>{
@@ -932,6 +938,11 @@ async function installInnovateX(){
   modal(`<span class="eyebrow">INNOVATEX ON YOUR PHONE</span><h2>Install the club app</h2><p>Keep InnovateX on your home screen and open it without a browser tab.</p><ol class="install-steps">${directions}</ol><p class="subtle">Chats, courses, account approvals and shared files still need an internet connection.</p>`);
 }
 function updateThemeButton(){const dark=document.documentElement.dataset.theme==='dark';$('#themeButton').textContent=dark?'☀':'☾';$('#themeButton').setAttribute('aria-label',dark?'Switch to light theme':'Switch to dark theme');}
+function setSidebarOpen(open){
+  $('#sidebar').classList.toggle('open',open);
+  $('#menuBtn').setAttribute('aria-expanded',String(open));
+  $('#menuBtn').setAttribute('aria-label',open?'Close menu':'Open menu');
+}
 function route() {
   const requested=location.hash.slice(1).split('/')[0] || 'home';page=pages.includes(requested)?requested:'home';
   const protectedGuestPage=!session&&!['home','about','founders','investors','privacy'].includes(page);
@@ -950,7 +961,7 @@ function route() {
   if(page==='finance-review'&&authReady&&!founderOnly()){page=admin()?'finance':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
   if(page==='founder-room'&&authReady&&!founder()){page='founders';history.replaceState(null,'','#founders');show('Founder access required.');}
   if(['admin','applications','moderation'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
-  $('#sidebar').classList.remove('open');render();
+  setSidebarOpen(false);render();
   if(protectedGuestPage&&(authReady||!configured))signInDialog('signin');
   if(page==='applications'&&admin())void loadAdminApplicationPages();
   if(page==='feed'&&feedReady)void loadFeedPage();
