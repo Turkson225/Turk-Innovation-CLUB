@@ -352,6 +352,17 @@ nav a span svg,.icon-box svg{vertical-align:middle;transition:transform .22s eas
 .teacher-roster-row small{color:var(--muted);font-size:11px}
 .teacher-workshop-actions{display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin-top:16px}
 .teacher-workshop-actions .button{white-space:normal;text-align:center}
+.teaching-workshop-card.is-past{border-top:3px solid var(--accent-orange-bright)}
+.teacher-workshop-actions .subtle{flex-basis:100%;font-size:11px}
+.course-remove-button{color:#9d3c22}
+.course-remove-button:hover,.course-remove-button:focus-visible{color:#76240f;text-decoration:underline}
+.button-danger{background:#9d3c22;border-color:#9d3c22;color:#fff}
+.button-danger:hover,.button-danger:focus-visible{background:#76240f;border-color:#76240f;color:#fff}
+.course-review.is-new{border-left:4px solid var(--accent-orange-bright)}
+.course-review-actions{align-items:center}
+.course-seen-at{color:var(--muted);font-size:11px;line-height:1.4}
+.course-classroom-status{display:flex;align-items:flex-start;justify-content:flex-end;flex-wrap:wrap;gap:7px;max-width:45%}
+@media(max-width:560px){.course-classroom-status{max-width:100%;justify-content:flex-start}}
 @media(hover:hover){.enrollment-card:hover,.teaching-workshop-card:hover{transform:translateY(-2px);border-color:var(--accent-orange-bright);box-shadow:0 16px 34px rgba(9,39,51,.1)}}
 .enrollment-card:focus-within,.teaching-workshop-card:focus-within,.teacher-roster-row:focus-within{border-color:var(--accent-orange-bright)}
 @media(max-width:760px){.teaching-overview,.teaching-workshops{grid-template-columns:1fr}}

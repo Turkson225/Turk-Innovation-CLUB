@@ -9,7 +9,7 @@ const cleanUrl = (s) => { try { const u = new URL(s); return u.protocol === 'htt
 const date = (s) => s ? new Date(s).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : 'TBD';
 const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'TBD';
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
-let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, courseReady = false, coursePlanningReady = false, teacherProfileReady = false, teacherProfile = null, privacyReady = false, inventoryReady = false, inventoryCatalogReady = false, financeReady = false, financeApprovalsReady = false, activePeerId = null, lastRenderedPage = '';
+let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, courseReady = false, coursePlanningReady = false, courseLifecycleReady = false, courseSeenReady = false, teacherProfileReady = false, teacherProfile = null, privacyReady = false, inventoryReady = false, inventoryCatalogReady = false, financeReady = false, financeApprovalsReady = false, activePeerId = null, lastRenderedPage = '';
 let adminAlertTimer = null, adminAlertDismissTimer = null, adminAudioContext = null, adminDeferredAlert = null;
 let deferredInstallPrompt = null;
 let memberNoticeRealtime = null, memberAlertTimer = null, memberAlertNotificationId = null, memberDeferredNotification = null, memberNotificationPrimed = false;
@@ -613,14 +613,14 @@ async function refresh(mode='full') {
     if(session?.user.id!==owner||generation!==authGeneration)return;
     cache={profiles:me?[me]:[],founders:publicFounders};
     if(!scoped||page==='founders')await detectFounderPortraits();
-    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();route();return;
+    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();route();return;
   }
   if(investor()){
     const results=await Promise.allSettled(['investor_updates','investor_inquiries','privacy_requests','founders'].map(readRecords));
     if(session?.user.id!==owner||generation!==authGeneration)return;
     cache={profiles:[me],investor_updates:results[0].status==='fulfilled'?results[0].value:[],investor_inquiries:results[1].status==='fulfilled'?results[1].value:[],privacy_requests:results[2].status==='fulfilled'?results[2].value:[],founders:results[3].status==='fulfilled'?results[3].value:[]};
     await detectFounderPortraits();
-    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=results[2].status==='fulfilled';inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
+    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=results[2].status==='fulfilled';inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
     if(previous!==accessSignature(me)||!['home','about','founders','investors','investor-portal','privacy'].includes(page)) {route();return;}
     render();return;
   }
@@ -679,6 +679,10 @@ async function refresh(mode='full') {
   if(!scoped||names.includes('courses')){
     const planningProbe=courseReady?await db.from('courses').select('submission_due_at').limit(1):{error:true};
     coursePlanningReady=!planningProbe.error;
+    const lifecycleProbe=courseReady?await db.from('courses').select('status').limit(1):{error:true};
+    courseLifecycleReady=!lifecycleProbe.error;
+    const seenProbe=courseReady?await db.from('course_submissions').select('seen_at').limit(1):{error:true};
+    courseSeenReady=!seenProbe.error;
   }
   if(!scoped||page==='teaching')cache.course_roster=[];
   if(coursePlanningReady&&teacher()&&(!scoped||page==='teaching')){
@@ -793,7 +797,7 @@ async function signedIn(newSession) {
         }).subscribe();
     }
     if(admin())adminAlertTimer=setInterval(()=>{if(!document.hidden)void refreshAdminAlerts();},10000);
-  } else { me=null;applicationAnswersReady=false;roleReady=false;courseReady=false;coursePlanningReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); await loadPublic(); }
+  } else { me=null;applicationAnswersReady=false;roleReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); await loadPublic(); }
   if(session&&!approved()&&!['about','founders','investors','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
   if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='founder-room'&&!founder()) {page='founders';history.replaceState(null,'','#founders');}
@@ -1141,9 +1145,11 @@ const courseDateInput = value => {
   return local.toISOString().slice(0,16);
 };
 const courseDeadline = c => c?.submission_due_at&&Number.isFinite(new Date(c.submission_due_at).getTime())?new Date(c.submission_due_at):null;
+const courseOpen = c => !courseLifecycleReady||c?.status==='active';
+const courseStateLabel = c => c?.status==='archived'?'Archived':c?.status==='ended'?'Ended':'Open for enrollment';
 function courseTimeline(c,active=false){
   const due=coursePlanningReady?courseDeadline(c):null,late=!!due&&due.getTime()<Date.now();
-  return `<div class="course-timeline"><span class="course-date">${c.starts_at?`Starts ${dateTime(c.starts_at)}`:'Start date to be announced'}</span>${coursePlanningReady?`<span class="course-deadline ${late&&active?'overdue':''}">${due?`${late&&active?'Past due · submissions remain open':'Project due'} ${dateTime(due)}`:'Project deadline to be announced'}</span>`:''}</div>`;
+  return `<div class="course-timeline"><span class="course-date">${c.starts_at?`Starts ${dateTime(c.starts_at)}`:'Start date to be announced'}</span>${coursePlanningReady?`<span class="course-deadline ${late&&active&&courseOpen(c)?'overdue':''}">${due?`${late&&active&&courseOpen(c)?'Past due · submissions remain open':'Project due'} ${dateTime(due)}`:'Project deadline to be announced'}</span>`:''}</div>`;
 }
 function courseLearnerName(courseId,learnerId){
   return (cache.course_roster||[]).find(r=>r.course_id===courseId&&r.learner_id===learnerId)?.full_name||memberName(learnerId);
@@ -1152,11 +1158,13 @@ function courseProgress(enrollment){
   if(enrollment.status==='completed')return 'Completed';
   const latest=(cache.course_submissions||[]).filter(s=>s.course_id===enrollment.course_id&&s.learner_id===enrollment.learner_id)
     .sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
-  return latest?.review_status==='accepted'?'Completed':latest?.review_status==='submitted'?'Awaiting feedback':latest?.review_status==='revision_requested'?'Revision needed':'In progress';
+  return latest?.review_status==='accepted'?'Completed':latest?.review_status==='submitted'?(courseSeenReady&&latest.seen_at?'Seen · feedback pending':'Awaiting feedback'):latest?.review_status==='revision_requested'?'Revision needed':'In progress';
 }
 async function enrollAndOpenCourse(id){
   const owner=session?.user.id;
   try{
+    const course=(cache.courses||[]).find(c=>c.id===id);
+    if(!course||!courseOpen(course))throw Error('This workshop is closed to new students. Choose an active workshop.');
     const {error}=await db.from('course_enrollments').insert({course_id:id,learner_id:owner});
     if(error)throw error;
     if(session?.user.id!==owner)return;
@@ -1167,6 +1175,18 @@ async function enrollAndOpenCourse(id){
     classroom?.querySelector('h2')?.focus({preventScroll:true});
     classroom?.scrollIntoView({behavior:'smooth',block:'start'});
   }catch(error){fail(error);}
+}
+async function markCourseSeen(id,buttonEl){
+  if(!teacher()||!courseReady||!courseSeenReady)return;
+  const attempt=(cache.course_submissions||[]).find(s=>s.id===id&&s.review_status==='submitted'&&!s.seen_at);
+  const course=(cache.courses||[]).find(c=>c.id===attempt?.course_id);
+  if(!attempt||!course||!admin()&&course.instructor_id!==session.user.id||attempt.learner_id===session.user.id)return;
+  buttonEl.disabled=true;
+  try{
+    const {error}=await db.rpc('mark_course_submission_seen',{p_submission:id});
+    if(error)throw error;
+    await refresh();show('Submission marked as seen. It stays in your review queue until you give feedback.');
+  }catch(error){fail(error);buttonEl.disabled=false;}
 }
 function courseAttempts(courseId) {
   return (cache.course_submissions||[]).filter(s=>s.course_id===courseId&&s.learner_id===session?.user.id)
@@ -1186,28 +1206,30 @@ function courseFeedback(c) {
     <h3>Teacher feedback</h3>
     <p class="subtle">Your teacher’s comments stay here for every reviewed attempt.</p>
     ${completion?`<div class="course-completion"><strong>Project completed</strong><span>Recorded ${date(completion.completed_at)} · Assessed by ${esc(memberName(completion.assessed_by))}</span></div>`:''}
-    ${reviewed.length?`<div class="course-feedback-list">${reviewed.map((s,i)=>`<article class="course-feedback-entry"><div class="row"><span class="tag ${s.review_status==='accepted'?'blue':'gold'}">${s.review_status==='accepted'?'Accepted':'Changes requested'}</span><small class="subtle">${dateTime(s.reviewed_at||s.created_at)}</small></div><h4>Review ${reviewed.length-i}</h4><p>${esc(s.teacher_feedback)}</p></article>`).join('')}</div>`:empty('No teacher feedback yet',attempts.some(s=>s.review_status==='submitted')?'Your project is with your teacher. Their response will appear here after review.':'Submit a practical project to receive specific feedback on your build.')}
+    ${reviewed.length?`<div class="course-feedback-list">${reviewed.map((s,i)=>`<article class="course-feedback-entry"><div class="row"><span class="tag ${s.review_status==='accepted'?'blue':'gold'}">${s.review_status==='accepted'?'Accepted':'Changes requested'}</span><small class="subtle">${dateTime(s.reviewed_at||s.created_at)}</small></div><h4>Review ${reviewed.length-i}</h4><p>${esc(s.teacher_feedback)}</p></article>`).join('')}</div>`:empty('No teacher feedback yet',attempts.some(s=>s.review_status==='submitted')?(courseSeenReady&&attempts.some(s=>s.review_status==='submitted'&&s.seen_at)?'Your teacher has seen your project. Feedback is still pending.':'Your project is with your teacher. Their response will appear here after review.'):'Submit a practical project to receive specific feedback on your build.')}
   </section>`;
 }
 function courseJourney(c){
   const enrollment=(cache.course_enrollments||[]).find(e=>e.course_id===c.id&&e.learner_id===session?.user.id);
-  if(!enrollment)return `<div class="course-journey"><strong>Join this workshop first</strong><button class="button button-sm" data-action="enrollCourse" data-id="${esc(c.id)}">Join workshop</button></div>`;
+  if(!enrollment)return `<div class="course-journey"><strong>${courseOpen(c)?'Join this workshop first':'This workshop has ended'}</strong>${courseOpen(c)?`<button class="button button-sm" data-action="enrollCourse" data-id="${esc(c.id)}">Join workshop</button>`:'<p>New enrollment is closed. Explore an active workshop instead.</p>'}</div>`;
   const attempts=courseAttempts(c.id),latest=attempts[0];
   const completion=(cache.course_completions||[]).find(x=>x.course_id===c.id&&x.learner_id===session.user.id);
   const finished=!!completion||latest?.review_status==='accepted';
-  const status=finished?'Project accepted':latest?.review_status==='submitted'?'Waiting for teacher review':latest?.review_status==='revision_requested'?'Changes requested':'Ready when you are';
-  const message=finished?'Your practical project is complete. You can review your submission history below.':latest?.review_status==='submitted'?'Your teacher has received your work. Feedback will appear in the Feedback tab.':latest?.review_status==='revision_requested'?'Read the teacher’s feedback, improve your build, then send another attempt.':'Describe what you built and tested. Attach a link or evidence file if you have one.';
+  const status=finished?'Project accepted':latest?.review_status==='submitted'?(courseSeenReady&&latest.seen_at?'Seen by your teacher · feedback pending':'Waiting for teacher review'):latest?.review_status==='revision_requested'?'Changes requested':'Ready when you are';
+  const message=finished?'Your practical project is complete. You can review your submission history below.':latest?.review_status==='submitted'?(courseSeenReady&&latest.seen_at?`Your teacher marked this project as seen on ${dateTime(latest.seen_at)}. Their feedback will appear in the Feedback tab.`:'Your teacher has received your work. Feedback will appear in the Feedback tab.'):latest?.review_status==='revision_requested'?'Read the teacher’s feedback, improve your build, then send another attempt.':'Describe what you built and tested. Attach a link or evidence file if you have one.';
   return `<section id="course-detail-panel" class="course-classroom-panel" aria-label="Project submission">
     <h3>Submit your project</h3>
+    ${courseLifecycleReady&&!courseOpen(c)?'<p class="subtle">This workshop is closed to new students. Enrolled students can keep working, submit revisions and receive feedback.</p>':''}
     <div class="course-journey"><strong>${status}</strong><p>${message}</p>
       ${latest?.review_status==='revision_requested'?`<button class="text-button" data-action="courseDetailView" data-view="feedback">Read teacher feedback →</button>`:''}
       ${!finished&&latest?.review_status!=='submitted'?`<button class="button button-sm" data-action="submitCourseForm" data-id="${esc(c.id)}">${latest?'Submit improved work':'Send project for review'} →</button>`:''}
     </div>
-    ${attempts.length?`<details class="course-submission-history"><summary>Submission history · ${attempts.length} ${attempts.length===1?'attempt':'attempts'}</summary><ol>${attempts.map(s=>`<li><div class="row"><strong>${s.review_status==='accepted'?'Accepted':s.review_status==='revision_requested'?'Changes requested':'Awaiting review'}</strong><small class="subtle">${dateTime(s.created_at)}</small></div><p>${esc(s.details)}</p>${cleanUrl(s.evidence_url)?`<a class="link" href="${esc(cleanUrl(s.evidence_url))}" target="_blank" rel="noopener noreferrer">Open project link ↗</a>`:''}${s.evidence_path?`<button class="text-button" data-action="downloadCourseEvidence" data-id="${esc(s.id)}">Open ${esc(s.evidence_name||'evidence file')} ↗</button>`:''}${s.teacher_feedback?`<p class="course-feedback"><b>Teacher feedback</b> ${esc(s.teacher_feedback)}</p>`:''}</li>`).join('')}</ol></details>`:''}
+    ${attempts.length?`<details class="course-submission-history"><summary>Submission history · ${attempts.length} ${attempts.length===1?'attempt':'attempts'}</summary><ol>${attempts.map(s=>`<li><div class="row"><strong>${s.review_status==='accepted'?'Accepted':s.review_status==='revision_requested'?'Changes requested':courseSeenReady&&s.seen_at?'Seen · feedback pending':'Awaiting review'}</strong><small class="subtle">${dateTime(s.created_at)}${courseSeenReady&&s.review_status==='submitted'&&s.seen_at?` · Seen ${dateTime(s.seen_at)}`:''}</small></div><p>${esc(s.details)}</p>${cleanUrl(s.evidence_url)?`<a class="link" href="${esc(cleanUrl(s.evidence_url))}" target="_blank" rel="noopener noreferrer">Open project link ↗</a>`:''}${s.evidence_path?`<button class="text-button" data-action="downloadCourseEvidence" data-id="${esc(s.id)}">Open ${esc(s.evidence_name||'evidence file')} ↗</button>`:''}${s.teacher_feedback?`<p class="course-feedback"><b>Teacher feedback</b> ${esc(s.teacher_feedback)}</p>`:''}</li>`).join('')}</ol></details>`:''}
   </section>`;
 }
 function courses() {
   const list=cache.courses||[];
+  const available=list.filter(courseOpen);
   const materials=learningReady?(cache.learning_materials||[]).filter(m=>!m.hidden_at):[];
   const enrolled=courseReady?(cache.course_enrollments||[]).filter(e=>e.learner_id===session?.user.id):[];
   const completed=enrolled.filter(e=>e.status==='completed');
@@ -1233,7 +1255,7 @@ function courses() {
   </section>`:'';
   const feedbackCount=selected?attempts.filter(s=>s.review_status!=='submitted'&&s.teacher_feedback).length:0;
   const classroom=selected?`<article class="course-classroom" id="course-${esc(selected.id)}">
-    <div class="course-classroom-head"><div><span class="eyebrow">YOUR CLASSROOM · ${esc(courseTrackFor(selected))}</span><h2 tabindex="-1">${esc(selected.title)}</h2><p>${esc(brief.goal||'Build and test a real project with your teacher.')}</p></div><span class="tag ${completedProject?'blue':latest?.review_status==='revision_requested'?'gold':''}">${esc(courseProgress(enrollment))}</span></div>
+    <div class="course-classroom-head"><div><span class="eyebrow">YOUR CLASSROOM · ${esc(courseTrackFor(selected))}</span><h2 tabindex="-1">${esc(selected.title)}</h2><p>${esc(brief.goal||'Build and test a real project with your teacher.')}</p></div><div class="course-classroom-status">${courseLifecycleReady&&!courseOpen(selected)?`<span class="tag gold">${esc(courseStateLabel(selected))} · no new enrollments</span>`:''}<span class="tag ${completedProject?'blue':latest?.review_status==='revision_requested'?'gold':''}">${esc(courseProgress(enrollment))}</span></div></div>
     <div class="course-classroom-meta"><span><b>Teacher</b> ${esc(selected.instructor_id?memberName(selected.instructor_id):'To be assigned')}</span>${courseTimeline(selected,enrollment.status==='enrolled')}</div>
     <div class="course-detail-switch" role="group" aria-label="Inside this workshop">${detailTab('overview','Overview')}${detailTab('materials','Materials',selectedMaterials.length)}${detailTab('submit','Submit project',attempts.length)}${detailTab('feedback','Feedback',feedbackCount)}</div>
     ${courseDetailView==='materials'?materialPanel:courseDetailView==='submit'?courseJourney(selected):courseDetailView==='feedback'?courseFeedback(selected):overview}
@@ -1241,72 +1263,98 @@ function courses() {
   const myLearning=`<section id="course-view-panel" class="course-view-panel" aria-label="My learning">
     ${courseReady?`<div class="course-summary"><strong>${enrolled.length} workshop${enrolled.length===1?'':'s'} joined</strong><span>${completed.length} completed</span>${teacher()?'<a href="#teaching">Open teaching studio →</a>':''}</div>`:`<div class="notice">Course enrollment and project submissions need the course journey database setup. You can still explore published workshops.</div>`}
     <div class="section-heading"><div><span class="eyebrow">YOUR LEARNING PLAN</span><h2>My workshops</h2></div><p>Choose a classroom to see its brief, materials, submissions and feedback.</p></div>
-    ${myCourses.length?`<div class="course-classroom-layout"><div class="course-class-list" role="group" aria-label="My enrolled workshops">${myCourses.map(({course:c,enrollment:e})=>`<button type="button" class="course-class-choice ${selected?.id===c.id?'selected':''}" data-action="courseSelect" data-id="${esc(c.id)}" aria-pressed="${selected?.id===c.id}"><small>${esc(courseTrackFor(c))}</small><strong>${esc(c.title)}</strong><span>${esc(courseProgress(e))} · ${courseDeadline(c)?`Due ${date(c.submission_due_at)}`:'Deadline to be announced'}</span></button>`).join('')}</div>${classroom}</div>`:`<div class="course-empty-state"><h3>No workshops joined yet</h3><p>Explore the four tracks, choose a practical build, and it will appear here with your materials and teacher feedback.</p><button class="button" data-action="courseView" data-view="explore">Explore workshops →</button></div>`}
+    ${myCourses.length?`<div class="course-classroom-layout"><div class="course-class-list" role="group" aria-label="My enrolled workshops">${myCourses.map(({course:c,enrollment:e})=>`<button type="button" class="course-class-choice ${selected?.id===c.id?'selected':''}" data-action="courseSelect" data-id="${esc(c.id)}" aria-pressed="${selected?.id===c.id}"><small>${esc(courseTrackFor(c))}${courseLifecycleReady&&!courseOpen(c)?` · ${esc(courseStateLabel(c))}`:''}</small><strong>${esc(c.title)}</strong><span>${esc(courseProgress(e))} · ${courseDeadline(c)?`Due ${date(c.submission_due_at)}`:'Deadline to be announced'}</span></button>`).join('')}</div>${classroom}</div>`:`<div class="course-empty-state"><h3>No workshops joined yet</h3><p>Explore the four tracks, choose a practical build, and it will appear here with your materials and teacher feedback.</p><button class="button" data-action="courseView" data-view="explore">Explore workshops →</button></div>`}
     ${materials.some(m=>!m.course_id)?`<section class="course-general-library"><div class="section-heading"><div><span class="eyebrow">FOR EVERY MEMBER</span><h2>Club learning library</h2></div><p>General notes and guides for any workshop.</p></div><div class="grid grid-2">${materials.filter(m=>!m.course_id).map(m=>`<div class="card">${materialRow(m)}</div>`).join('')}</div></section>`:''}
   </section>`;
-  const visible=courseTrack==='all'?list:list.filter(c=>courseTrackFor(c)===courseTrack);
+  const visible=courseTrack==='all'?available:available.filter(c=>courseTrackFor(c)===courseTrack);
   const explore=`<section id="course-view-panel" class="course-view-panel" aria-label="Explore workshops"><div class="course-steps"><div><b>1</b><strong>Choose a workshop</strong><small>Pick one or more tracks.</small></div><div><b>2</b><strong>Learn by doing</strong><small>Follow your teacher’s brief and materials.</small></div><div><b>3</b><strong>Share your build</strong><small>Send test notes and evidence.</small></div><div><b>4</b><strong>Improve with feedback</strong><small>Revise or record completion.</small></div></div>
     <div class="section-heading"><div><span class="eyebrow">FOUR PRACTICAL TRACKS</span><h2>Find a project to build</h2></div><p>You can join several workshops across different tracks.</p></div>
-    <div class="course-tracks"><button class="course-track course-track-all ${courseTrack==='all'?'selected':''}" data-action="courseTrack" data-track="all" aria-pressed="${courseTrack==='all'}"><strong>All tracks</strong><small>See every published workshop.</small><em>${list.length} workshop${list.length===1?'':'s'} ↗</em></button>${courseTracks.map((t,i)=>{const count=list.filter(c=>courseTrackFor(c)===t.name).length;return `<button class="course-track ${courseTrack===t.name?'selected':''}" data-action="courseTrack" data-track="${esc(t.name)}" aria-pressed="${courseTrack===t.name}"><span>0${i+1} / PRACTICAL TRACK</span><strong>${esc(t.name)}</strong><small>${esc(t.example)}</small><em>${count} workshop${count===1?'':'s'} ↗</em></button>`}).join('')}</div>
+    <div class="course-tracks"><button class="course-track course-track-all ${courseTrack==='all'?'selected':''}" data-action="courseTrack" data-track="all" aria-pressed="${courseTrack==='all'}"><strong>All tracks</strong><small>See workshops open to new students.</small><em>${available.length} workshop${available.length===1?'':'s'} ↗</em></button>${courseTracks.map((t,i)=>{const count=available.filter(c=>courseTrackFor(c)===t.name).length;return `<button class="course-track ${courseTrack===t.name?'selected':''}" data-action="courseTrack" data-track="${esc(t.name)}" aria-pressed="${courseTrack===t.name}"><span>0${i+1} / PRACTICAL TRACK</span><strong>${esc(t.name)}</strong><small>${esc(t.example)}</small><em>${count} workshop${count===1?'':'s'} ↗</em></button>`}).join('')}</div>
     <div class="section-heading"><div><span class="eyebrow">PUBLISHED WORKSHOPS</span><h2>${courseTrack==='all'?'All workshops':esc(courseTrack)}</h2></div></div>
-    <div class="grid grid-3">${visible.length?visible.map(c=>{const joined=enrolled.some(e=>e.course_id===c.id);return `<article class="card course-card" id="course-${esc(c.id)}"><span class="tag blue">${esc(c.level||'Practical')}</span><h3 tabindex="-1">${esc(c.title)}</h3><p>${esc(courseBrief(c).goal||'A practical project brief is coming soon.')}</p><div class="pill-row"><span class="subtle">${esc(courseTrackFor(c))}</span><span class="subtle">${c.instructor_id?`Teacher: ${esc(memberName(c.instructor_id))}`:'Teacher to be assigned'}</span></div>${courseTimeline(c,false)}<div class="course-catalog-action">${joined?`<button class="button button-outline button-sm" data-action="focusCourse" data-id="${esc(c.id)}">Open my classroom →</button>`:courseReady?`<button class="button button-sm" data-action="enrollCourse" data-id="${esc(c.id)}">Join workshop →</button>`:`<small class="subtle">Enrollment opens after course setup.</small>`}</div></article>`}).join(''):proposedWorkshops.filter(w=>courseTrack==='all'||w.track===courseTrack).map(w=>`<article class="card course-card course-proposal"><span class="tag gold">Proposed workshop</span><h3>${esc(w.title)}</h3><small>${esc(w.track)}</small><p>${esc(w.detail)}</p><div class="card-footer"><span>Planning draft · Date and teacher to be confirmed</span></div></article>`).join('')||empty('No workshops in this track yet','Approved teachers can publish a practical session in this track.')}</div>
+    <div class="grid grid-3">${visible.length?visible.map(c=>{const joined=enrolled.some(e=>e.course_id===c.id);return `<article class="card course-card" id="course-${esc(c.id)}"><span class="tag blue">${esc(c.level||'Practical')}</span><h3 tabindex="-1">${esc(c.title)}</h3><p>${esc(courseBrief(c).goal||'A practical project brief is coming soon.')}</p><div class="pill-row"><span class="subtle">${esc(courseTrackFor(c))}</span><span class="subtle">${c.instructor_id?`Teacher: ${esc(memberName(c.instructor_id))}`:'Teacher to be assigned'}</span></div>${courseTimeline(c,false)}<div class="course-catalog-action">${joined?`<button class="button button-outline button-sm" data-action="focusCourse" data-id="${esc(c.id)}">Open my classroom →</button>`:courseReady?`<button class="button button-sm" data-action="enrollCourse" data-id="${esc(c.id)}">Join workshop →</button>`:`<small class="subtle">Enrollment opens after course setup.</small>`}</div></article>`}).join(''):proposedWorkshops.filter(w=>courseTrack==='all'||w.track===courseTrack).map(w=>`<article class="card course-card course-proposal"><span class="tag gold">Proposed workshop</span><h3>${esc(w.title)}</h3><small>${esc(w.track)}</small><p>${esc(w.detail)}</p><div class="card-footer"><span>Planning draft · Date and teacher to be confirmed</span></div></article>`).join('')||empty('No open workshops in this track','Approved teachers can publish the next practical workshop.')}</div>
   </section>`;
   return `${head('LEARN BY BUILDING','Courses and workshops','Choose a practical build, follow your teacher’s materials and keep your feedback in one classroom.',teacher()?`<div class="profile-buttons">${button('+ Publish workshop','courseForm')}${learningReady?button('+ Upload material','learningForm','button-outline'):''}</div>`:'')}
-    <div class="course-view-switch" role="group" aria-label="Course views">${tab('mine','My learning',myCourses.length)}${tab('explore','Explore workshops',list.length)}</div>
+    <div class="course-view-switch" role="group" aria-label="Course views">${tab('mine','My learning',myCourses.length)}${tab('explore','Explore workshops',available.length)}</div>
     ${courseView==='explore'?explore:myLearning}`;
 }
 function materialRow(m){return `<div class="learning-row"><span class="tag blue">${esc(m.kind)}</span><div><strong>${esc(m.title)}</strong><small>${esc(m.file_name)} · ${fileSize(m.file_size)} · ${date(m.created_at)}</small>${m.description?`<p>${esc(m.description)}</p>`:''}</div>${m.hidden_at?'<span class="tag gold">Hidden</span>':`<button class="text-button" data-action="downloadLearning" data-id="${esc(m.id)}">Download ↓</button>`}</div>`;}
 let teachingTab = 'overview';
+function teachingWorkshopCard(c,enrollments,pending){
+  const active=courseOpen(c);
+  const students=enrollments.filter(e=>e.course_id===c.id).sort((a,b)=>Number(a.status==='completed')-Number(b.status==='completed')||new Date(b.created_at)-new Date(a.created_at));
+  const waiting=pending.filter(s=>s.course_id===c.id).length;
+  const savedWork=students.length||(cache.course_submissions||[]).some(s=>s.course_id===c.id)||(cache.course_completions||[]).some(x=>x.course_id===c.id)||(cache.learning_materials||[]).some(m=>m.course_id===c.id);
+  return `<article class="teaching-workshop-card ${active?'':'is-past'}" id="teaching-workshop-${esc(c.id)}">
+    <div class="row"><span class="tag blue">${esc(courseTrackFor(c))}</span>${courseLifecycleReady?`<span class="tag ${active?'blue':'gold'}">${esc(courseStateLabel(c))}</span>`:''}<small>${esc(c.level||'Practical')}</small></div>
+    <h3>${esc(c.title)}</h3>${admin()?`<p class="subtle">Lead: ${esc(c.instructor_id?memberName(c.instructor_id):'Not assigned')}</p>`:''}
+    <p>${esc(c.description||'Add a practical build goal so learners know what they will make.')}</p>${courseTimeline(c,active)}
+    <div class="course-summary"><strong>${students.length} student${students.length===1?'':'s'}</strong><span>${waiting} awaiting feedback</span><span>${students.filter(e=>e.status==='completed').length} completed</span></div>
+    <div class="teacher-roster-list">${students.length?students.slice(0,3).map(e=>`<div class="teacher-roster-row">${memberAvatar(e.learner_id)}<div><strong>${esc(courseLearnerName(c.id,e.learner_id))}</strong><small>${esc(courseProgress(e))}</small></div></div>`).join(''):empty('No students yet',active?'Members can enroll themselves, or you can add an approved member by email.':'This workshop had no enrolled students.')}</div>
+    ${!active?'<p class="subtle">Closed to new students. Enrolled students can still submit work and receive feedback.</p>':''}
+    <div class="teacher-workshop-actions">
+      ${coursePlanningReady&&active?`<button class="button button-sm" data-action="assignLearnerForm" data-id="${esc(c.id)}">+ Add student</button>`:''}
+      ${coursePlanningReady?`<button class="button button-outline button-sm" data-action="courseRoster" data-id="${esc(c.id)}">View all ${students.length} students</button>`:''}
+      ${coursePlanningReady&&active?`<button class="button button-outline button-sm" data-action="editCourseScheduleForm" data-id="${esc(c.id)}">Set dates</button>`:''}
+      ${active?`<button class="button button-outline button-sm" data-action="editCourseContentForm" data-id="${esc(c.id)}">Edit workshop plan</button>`:''}
+      ${learningReady?`<button class="button button-outline button-sm" data-action="learningForm" data-course="${esc(c.id)}">+ Add slides or notes</button>`:''}
+      ${waiting?`<button class="button button-outline button-sm" data-action="teachingTab" data-tab="reviews">Review ${waiting} project${waiting===1?'':'s'}</button>`:''}
+      ${active?`<button class="text-button" data-action="focusCourse" data-id="${esc(c.id)}">View course listing →</button>`:''}
+      ${courseLifecycleReady&&active?`<button class="text-button" data-action="endCourseForm" data-id="${esc(c.id)}">End enrollment</button>`:''}
+      ${courseLifecycleReady&&c.status!=='archived'?`<button class="text-button course-remove-button" data-action="deleteCourseForm" data-id="${esc(c.id)}">${savedWork?'Archive workshop':'Delete if unused'}</button>`:''}
+    </div>
+  </article>`;
+}
 function teaching(){
   if(!teacher())return '';
   const ownId=session.user.id;
   const workshops=(cache.courses||[]).filter(c=>admin()||c.instructor_id===ownId);
+  const currentWorkshops=workshops.filter(courseOpen),pastWorkshops=workshops.filter(c=>!courseOpen(c));
   const courseIds=new Set(workshops.map(c=>c.id));
   const enrollments=courseReady?(cache.course_enrollments||[]).filter(e=>courseIds.has(e.course_id)):[];
   const submissions=courseReady?(cache.course_submissions||[]).filter(s=>courseIds.has(s.course_id)):[];
-  const pending=submissions.filter(s=>s.review_status==='submitted'&&s.learner_id!==ownId).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+  const pending=submissions.filter(s=>s.review_status==='submitted'&&s.learner_id!==ownId).sort((a,b)=>Number(!!a.seen_at)-Number(!!b.seen_at)||new Date(a.created_at)-new Date(b.created_at));
+  const unseen=courseSeenReady?pending.filter(s=>!s.seen_at).length:0;
   const reviewed=submissions.filter(s=>s.review_status!=='submitted').sort((a,b)=>new Date(b.reviewed_at||b.created_at)-new Date(a.reviewed_at||a.created_at));
   const completions=courseReady?(cache.course_completions||[]).filter(x=>courseIds.has(x.course_id)):[];
   const materials=learningReady?(cache.learning_materials||[]).filter(m=>admin()||m.uploaded_by===ownId||courseIds.has(m.course_id)):[];
   const uniqueLearners=new Set(enrollments.map(e=>e.learner_id)).size;
   const now=Date.now();
-  const agenda=workshops.flatMap(c=>{
+  const agenda=currentWorkshops.flatMap(c=>{
     const starts=c.starts_at?new Date(c.starts_at).getTime():NaN;
     const due=coursePlanningReady?courseDeadline(c)?.getTime():null;
     return [Number.isFinite(starts)&&starts>=now?{course:c,label:'Workshop starts',at:starts}:null,
       Number.isFinite(due)&&due>=now?{course:c,label:'Project deadline',at:due}:null].filter(Boolean);
   }).sort((a,b)=>a.at-b.at).slice(0,5);
   const profile=admin()?'':teacherProfileReady?`<section class="card teacher-onboarding"><div class="row"><div><span class="eyebrow">YOUR TEACHING PROFILE</span><h2>${teacherProfile?'Update your teaching details':'Complete your teaching details'}</h2><p class="subtle">Describe the practical work you can lead. These details are visible only to you and administrators.</p></div><span class="tag ${teacherProfile?'blue':'gold'}">${teacherProfile?'Saved':'To complete'}</span></div><form id="teacherProfileForm" data-kind="teacherProfile" class="form-stack">${select('Primary learning track','track',courseTracks.map(t=>t.name),teacherProfile?.track||courseTracks[0].name)}<div class="field"><label for="teacher_experience">Relevant experience or skills</label><textarea id="teacher_experience" name="experience" minlength="20" maxlength="2000" required placeholder="Describe the tools, projects and topics you can teach.">${esc(teacherProfile?.experience||'')}</textarea></div><div class="field"><label for="teacher_practical_focus">Practical teaching plan</label><textarea id="teacher_practical_focus" name="practical_focus" minlength="20" maxlength="2000" required placeholder="What will members build or test with you?">${esc(teacherProfile?.practical_focus||'')}</textarea></div><div class="field"><label for="teacher_availability">Availability</label><textarea id="teacher_availability" name="availability" minlength="5" maxlength="500" required placeholder="For example, Saturdays or two sessions each month.">${esc(teacherProfile?.availability||'')}</textarea></div><button class="button" type="submit">${teacherProfile?'Save changes':'Save teaching profile'}</button></form></section>`:'<div class="notice">Run the teacher promotions migration to enable your teaching profile.</div>';
-  const tabs=[['overview','Overview'],['workshops',`Workshops (${workshops.length})`],['reviews',`To review (${pending.length})`],['materials',`Materials (${materials.length})`],...(!admin()?[['profile','My profile']]:[])];
+  const tabs=[['overview','Overview'],['workshops',`Open workshops (${currentWorkshops.length})`],...(courseLifecycleReady?[['past',`Past workshops (${pastWorkshops.length})`]]:[]),['reviews',`To review (${pending.length})`],['materials',`Materials (${materials.length})`],...(!admin()?[['profile','My profile']]:[])];
   if(!tabs.some(([key])=>key===teachingTab))teachingTab='overview';
   const panel=(key,content)=>`<section id="teaching-panel-${key}" role="tabpanel" aria-labelledby="teaching-tab-${key}" ${teachingTab===key?'':'hidden'}>${content}</section>`;
   const overview=courseReady?`<div class="teaching-overview"><section class="teaching-agenda"><span class="eyebrow">WHAT TO DO NEXT</span><h2>Your teaching checklist</h2>
     <div class="teaching-agenda-row"><div><strong>${pending.length?`${pending.length} project${pending.length===1?'':'s'} need feedback`:'Project reviews are clear'}</strong><small class="subtle">Read each build, give practical feedback, then accept it or request a revision.</small></div><button class="text-button" data-action="teachingTab" data-tab="reviews">Open reviews →</button></div>
-    <div class="teaching-agenda-row"><div><strong>${workshops.length?`${workshops.length} assigned workshop${workshops.length===1?'':'s'}`:'Publish your first workshop'}</strong><small class="subtle">Set the project goal, dates and students for each workshop.</small></div><button class="text-button" data-action="teachingTab" data-tab="workshops">Open workshops →</button></div>
+    <div class="teaching-agenda-row"><div><strong>${currentWorkshops.length?`${currentWorkshops.length} open workshop${currentWorkshops.length===1?'':'s'}`:'Publish your next workshop'}</strong><small class="subtle">Set the project goal, dates and students for each workshop. End enrollment when the next intake should use a new workshop.</small></div><button class="text-button" data-action="teachingTab" data-tab="workshops">Open workshops →</button></div>
     <div class="teaching-agenda-row"><div><strong>${materials.length} published material${materials.length===1?'':'s'}</strong><small class="subtle">Attach slides or notes to the workshop students will use them in.</small></div><button class="text-button" data-action="teachingTab" data-tab="materials">Open materials →</button></div>
     ${!admin()&&!teacherProfile?'<div class="teaching-agenda-row"><div><strong>Complete your teaching profile</strong><small class="subtle">Add your experience, practical focus and availability.</small></div><button class="text-button" data-action="teachingTab" data-tab="profile">Open profile →</button></div>':''}</section>
     <section class="teaching-agenda"><span class="eyebrow">COMING UP</span><h2>Dates and deadlines</h2>${agenda.length?agenda.map(x=>`<div class="teaching-agenda-row"><span class="tag ${x.label==='Project deadline'?'gold':'blue'}">${esc(x.label)}</span><div><strong>${esc(x.course.title)}</strong><small class="subtle">${dateTime(x.at)}</small></div></div>`).join(''):empty('Nothing scheduled yet','Set a workshop start and project deadline to help students plan.')}</section></div>
-    <div class="notice">Teach in this order: publish a practical workshop, add students, share materials, review their project submissions, and give feedback. Students can join more than one workshop.</div>`:`<div class="notice">Run the course journey migration to enable enrollment, project reviews and completion records.</div>${!admin()&&!teacherProfile?'<button class="button button-sm" data-action="teachingTab" data-tab="profile">Complete teaching profile</button>':''}`;
-  const workshopContent=courseReady?`<div class="section-heading"><div><span class="eyebrow">YOUR CLASSROOMS</span><h2>${admin()?'Club workshops':'Workshops assigned to me'}</h2></div><p>Manage students, practical plans, deadlines and materials for each workshop.</p></div>
+    <div class="notice">Teach in this order: publish a practical workshop, add students, share materials, review their project submissions, and give feedback. End enrollment when the next intake needs a new workshop; current students can still finish their projects.</div>`:`<div class="notice">Run the course journey migration to enable enrollment, project reviews and completion records.</div>${!admin()&&!teacherProfile?'<button class="button button-sm" data-action="teachingTab" data-tab="profile">Complete teaching profile</button>':''}`;
+  const workshopContent=courseReady?`<div class="section-heading"><div><span class="eyebrow">OPEN FOR ENROLLMENT</span><h2>${admin()?'Club workshops':'Workshops assigned to me'}</h2></div><p>Manage students, practical plans, deadlines and materials for each workshop.</p></div>
     ${!coursePlanningReady?'<div class="notice">Run the course planning migration to enable student assignment, complete rosters and workshop deadlines.</div>':''}
-    <div class="teaching-workshops">${workshops.length?workshops.map(c=>{
-      const students=enrollments.filter(e=>e.course_id===c.id).sort((a,b)=>Number(a.status==='completed')-Number(b.status==='completed')||new Date(b.created_at)-new Date(a.created_at));
-      const waiting=pending.filter(s=>s.course_id===c.id).length;
-      return `<article class="teaching-workshop-card" id="teaching-workshop-${esc(c.id)}"><div class="row"><span class="tag blue">${esc(courseTrackFor(c))}</span><small>${esc(c.level||'Practical')}</small></div><h3>${esc(c.title)}</h3>${admin()?`<p class="subtle">Lead: ${esc(c.instructor_id?memberName(c.instructor_id):'Not assigned')}</p>`:''}<p>${esc(c.description||'Add a practical build goal so learners know what they will make.')}</p>${courseTimeline(c,true)}<div class="course-summary"><strong>${students.length} student${students.length===1?'':'s'}</strong><span>${waiting} awaiting feedback</span><span>${students.filter(e=>e.status==='completed').length} completed</span></div><div class="teacher-roster-list">${students.length?students.slice(0,3).map(e=>`<div class="teacher-roster-row">${memberAvatar(e.learner_id)}<div><strong>${esc(courseLearnerName(c.id,e.learner_id))}</strong><small>${esc(courseProgress(e))}</small></div></div>`).join(''):empty('No students yet','Members can enroll themselves, or you can add an approved member by email.')}</div><div class="teacher-workshop-actions">${coursePlanningReady?`<button class="button button-sm" data-action="assignLearnerForm" data-id="${esc(c.id)}">+ Add student</button><button class="button button-outline button-sm" data-action="courseRoster" data-id="${esc(c.id)}">View all ${students.length} students</button><button class="button button-outline button-sm" data-action="editCourseScheduleForm" data-id="${esc(c.id)}">Set dates</button>`:''}<button class="button button-outline button-sm" data-action="editCourseContentForm" data-id="${esc(c.id)}">Edit workshop plan</button>${learningReady?`<button class="button button-outline button-sm" data-action="learningForm" data-course="${esc(c.id)}">+ Add slides or notes</button>`:''}<button class="text-button" data-action="focusCourse" data-id="${esc(c.id)}">View course listing →</button></div></article>`;
-    }).join(''):empty('No workshops assigned yet',admin()?'Publish the club’s first practical workshop.':'Publish a workshop or ask an administrator to assign one to you.')}</div>
-    <div class="teacher-workshop-actions"><button class="button button-sm" data-action="courseForm">+ Publish workshop</button></div>
-    ${admin()?`<div class="section-heading"><h2>Workshop teachers</h2><p>Assign an approved teacher to older or reassigned workshops.</p></div><div class="grid grid-2">${(cache.courses||[]).map(c=>`<div class="card course-assignment"><strong>${esc(c.title)}</strong><small>${esc(c.instructor_id?memberName(c.instructor_id):'Not assigned')}</small><button class="text-button" data-action="assignCourseForm" data-id="${esc(c.id)}">Assign teacher →</button></div>`).join('')||empty('No workshops','Publish a practical workshop first.')}</div>`:''}`:'<div class="notice">Run the course journey migration to manage workshop students and dates.</div>';
-  const reviewContent=courseReady?`<div class="section-heading"><div><span class="eyebrow">PROJECT FEEDBACK</span><h2>${pending.length} project${pending.length===1?'':'s'} to review</h2></div><p>Read the build and evidence, then accept the project or request a specific improvement.</p></div><div class="grid grid-2">${pending.length?pending.map(s=>courseSubmissionCard(s,true)).join(''):empty('All caught up','New projects from students in your workshops will appear here.')}</div>
+    ${courseReady&&!courseLifecycleReady?'<div class="notice">Run the workshop lifecycle migration to close enrollment, mark submissions seen and manage past workshops.</div>':''}
+    <div class="teaching-workshops">${currentWorkshops.length?currentWorkshops.map(c=>teachingWorkshopCard(c,enrollments,pending)).join(''):empty('No open workshops',admin()?'Publish the club’s next practical workshop.':'Publish a new workshop or ask an administrator to assign one to you.')}</div>
+    <div class="teacher-workshop-actions"><button class="button button-sm" data-action="courseForm">+ Publish next workshop</button><span class="subtle">After publishing, add enrolled members by sign-in email from its workshop card.</span></div>
+    ${admin()?`<div class="section-heading"><h2>Workshop teachers</h2><p>Assign an approved teacher to older or reassigned workshops.</p></div><div class="grid grid-2">${(cache.courses||[]).filter(c=>c.status!=='archived').map(c=>`<div class="card course-assignment"><strong>${esc(c.title)}</strong><small>${esc(c.instructor_id?memberName(c.instructor_id):'Not assigned')}</small><button class="text-button" data-action="assignCourseForm" data-id="${esc(c.id)}">Assign teacher →</button></div>`).join('')||empty('No workshops','Publish a practical workshop first.')}</div>`:''}`:'<div class="notice">Run the course journey migration to manage workshop students and dates.</div>';
+  const pastContent=courseReady&&courseLifecycleReady?`<div class="section-heading"><div><span class="eyebrow">TEACHING HISTORY</span><h2>Past workshops</h2></div><button class="button button-sm" data-action="courseForm">+ Publish next workshop</button></div><p class="subtle">These workshops are closed to new students. Existing students can still submit their work, receive feedback and keep their completion records.</p><div class="teaching-workshops">${pastWorkshops.length?pastWorkshops.map(c=>teachingWorkshopCard(c,enrollments,pending)).join(''):empty('No past workshops yet','End enrollment when a workshop is ready for the next intake.')}</div>`:'';
+  const reviewContent=courseReady?`<div class="section-heading"><div><span class="eyebrow">PROJECT FEEDBACK</span><h2>${pending.length} project${pending.length===1?'':'s'} to review</h2></div><p>${courseSeenReady?`${unseen} new · Mark as seen when you read the build, then `:'Read the build and evidence, then '}accept the project or request a specific improvement. Past workshops stay in your review queue.</p></div><div class="grid grid-2">${pending.length?pending.map(s=>courseSubmissionCard(s,true)).join(''):empty('All caught up','New projects from students in your workshops will appear here.')}</div>
     <div class="section-heading"><div><span class="eyebrow">FEEDBACK HISTORY</span><h2>Reviewed projects</h2></div><p>Accepted work has a completion record. Revision requests let students submit an updated build.</p></div><div class="grid grid-2">${reviewed.length?reviewed.map(s=>courseSubmissionCard(s,false)).join(''):empty('No completed reviews yet','Your decisions and feedback will appear here.')}</div>`:'<div class="notice">Run the course journey migration to review project submissions.</div>';
   const materialContent=learningReady?`<div class="section-heading"><div><span class="eyebrow">LEARNING MATERIALS</span><h2>${admin()?'Club materials':'Materials for my workshops'}</h2></div><button class="button button-sm" data-action="learningForm">+ Upload slides or notes</button></div><p class="subtle">Choose the related workshop when uploading a file so students can find it alongside their project. PDF, PPT, PPTX, DOC or DOCX · up to 20 MB.</p><div class="grid grid-2">${materials.length?materials.map(m=>`<div class="card teaching-card">${materialRow(m)}<div class="card-footer"><span>${m.course_id?esc((cache.courses||[]).find(c=>c.id===m.course_id)?.title||'Workshop'):'General learning library'} · ${esc(memberName(m.uploaded_by))}</span>${admin()?`<button class="text-button" data-action="toggleLearning" data-id="${esc(m.id)}">${m.hidden_at?'Restore':'Hide'}</button>`:''}</div></div>`).join(''):empty('No materials yet','Upload a presentation, worksheet or guide for your students.')}</div>`:'<div class="notice">Run the teacher materials migration to enable slides and learning files.</div>';
   return `${head('TEACHING','Teaching studio','Plan practical workshops, support enrolled students and review their project work.',`<div class="profile-buttons">${button('+ Publish workshop','courseForm')}${learningReady?button('+ Upload material','learningForm','button-outline'):''}</div>`)}
-    ${courseReady?`<div class="course-summary"><strong>${workshops.length} workshop${workshops.length===1?'':'s'}</strong><span>${uniqueLearners} student${uniqueLearners===1?'':'s'}</span><span>${pending.length} awaiting feedback</span><span>${completions.length} completed project${completions.length===1?'':'s'}</span></div>`:''}
+    ${courseReady?`<div class="course-summary"><strong>${currentWorkshops.length} open workshop${currentWorkshops.length===1?'':'s'}</strong>${courseLifecycleReady?`<span>${pastWorkshops.length} past</span>`:''}<span>${uniqueLearners} student${uniqueLearners===1?'':'s'}</span><span>${pending.length} awaiting feedback${courseSeenReady?` · ${unseen} new`:''}</span><span>${completions.length} completed project${completions.length===1?'':'s'}</span></div>`:''}
     <div class="records-tabs teaching-tabs" role="tablist" aria-label="Teaching studio sections">${tabs.map(([key,label])=>`<button type="button" role="tab" id="teaching-tab-${key}" aria-controls="teaching-panel-${key}" aria-selected="${teachingTab===key}" tabindex="${teachingTab===key?'0':'-1'}" data-action="teachingTab" data-tab="${key}" class="${teachingTab===key?'active':''}">${esc(label)}</button>`).join('')}</div>
-    <div class="teaching-panels">${panel('overview',overview)}${panel('workshops',workshopContent)}${panel('reviews',reviewContent)}${panel('materials',materialContent)}${!admin()?panel('profile',profile):''}</div>`;
+    <div class="teaching-panels">${panel('overview',overview)}${panel('workshops',workshopContent)}${courseLifecycleReady?panel('past',pastContent):''}${panel('reviews',reviewContent)}${panel('materials',materialContent)}${!admin()?panel('profile',profile):''}</div>`;
 }
 function courseSubmissionCard(s,waiting){
   const course=(cache.courses||[]).find(c=>c.id===s.course_id);
-  return `<div class="card course-review"><div class="row"><span class="tag ${waiting?'gold':'blue'}">${waiting?'Awaiting review':s.review_status==='accepted'?'Accepted':'Revision requested'}</span><small>${dateTime(s.created_at)}</small></div><h3>${esc(course?.title||'Workshop')}</h3><small>Submitted by ${esc(courseLearnerName(s.course_id,s.learner_id))}</small><p>${esc(s.details)}</p>${s.evidence_url?`<a class="link" href="${esc(cleanUrl(s.evidence_url))}" target="_blank" rel="noopener noreferrer">Open project link ↗</a>`:''}${s.evidence_path?`<button class="text-button" data-action="downloadCourseEvidence" data-id="${esc(s.id)}">Open ${esc(s.evidence_name||'evidence')} ↗</button>`:''}${s.teacher_feedback?`<p class="course-feedback"><b>Teacher feedback</b> ${esc(s.teacher_feedback)}</p>`:''}${waiting&&s.learner_id!==session.user.id?`<div class="course-review-actions"><button class="button button-sm" data-action="reviewCourseForm" data-status="accepted" data-id="${esc(s.id)}">Accept project</button><button class="button button-outline button-sm" data-action="reviewCourseForm" data-status="revision_requested" data-id="${esc(s.id)}">Request revision</button></div>`:''}</div>`;
+  const seen=courseSeenReady&&!!s.seen_at;
+  return `<div class="card course-review ${waiting&&!seen&&courseSeenReady?'is-new':''}"><div class="row"><span class="tag ${waiting&&!seen?'gold':'blue'}">${waiting?(courseSeenReady?(seen?'✓ Seen · needs feedback':'New · needs feedback'):'Awaiting review'):s.review_status==='accepted'?'Accepted':'Revision requested'}</span><small>${dateTime(s.created_at)}</small></div><h3>${esc(course?.title||'Workshop')}</h3><small>Submitted by ${esc(courseLearnerName(s.course_id,s.learner_id))}${courseLifecycleReady&&course&&!courseOpen(course)?` · ${esc(courseStateLabel(course))} workshop`:''}</small><p>${esc(s.details)}</p>${s.evidence_url?`<a class="link" href="${esc(cleanUrl(s.evidence_url))}" target="_blank" rel="noopener noreferrer">Open project link ↗</a>`:''}${s.evidence_path?`<button class="text-button" data-action="downloadCourseEvidence" data-id="${esc(s.id)}">Open ${esc(s.evidence_name||'evidence')} ↗</button>`:''}${s.teacher_feedback?`<p class="course-feedback"><b>Teacher feedback</b> ${esc(s.teacher_feedback)}</p>`:''}${waiting&&s.learner_id!==session.user.id?`<div class="course-review-actions">${courseSeenReady&&!seen?`<button class="button button-outline button-sm" data-action="markCourseSeen" data-id="${esc(s.id)}">✓ Mark as seen</button>`:seen?`<small class="course-seen-at">Seen ${dateTime(s.seen_at)}</small>`:''}<button class="button button-sm" data-action="reviewCourseForm" data-status="accepted" data-id="${esc(s.id)}">Accept project + feedback</button><button class="button button-outline button-sm" data-action="reviewCourseForm" data-status="revision_requested" data-id="${esc(s.id)}">Request revision + feedback</button></div>`:''}</div>`;
 }
 const recordMoney = cents => new Intl.NumberFormat('en-GH',{style:'currency',currency:'GHS'}).format(cents/100);
 const recordDate = value => value ? date(`${value}T12:00:00`) : '—';
@@ -1831,7 +1879,7 @@ function actions(e) {
   if(action==='teachingTab'){
     if(!teacher())return;
     const target=el.dataset.tab;
-    if(!['overview','workshops','reviews','materials',...(!admin()?['profile']:[])].includes(target))return;
+    if(!['overview','workshops',...(courseLifecycleReady?['past']:[]),'reviews','materials',...(!admin()?['profile']:[])].includes(target))return;
     teachingTab=target;render();
     if(el.getAttribute('role')==='tab')requestAnimationFrame(()=>document.getElementById(`teaching-tab-${target}`)?.focus());
     else document.getElementById(`teaching-tab-${target}`)?.scrollIntoView({behavior:'smooth',block:'start'});
@@ -1870,11 +1918,11 @@ function actions(e) {
     const course=(cache.courses||[]).find(c=>c.id===id);
     if(!course||!admin()&&course.instructor_id!==session.user.id)return;
     const learners=(cache.course_enrollments||[]).filter(e=>e.course_id===id);
-    return modal(`<span class="eyebrow">TEACHING STUDIO</span><h2>${esc(course.title)} · students</h2><p class="muted">${learners.length} enrolled member${learners.length===1?'':'s'}. Private profiles show their name here only because they are in this workshop.</p><div class="teacher-roster-list">${learners.map(e=>`<div class="teacher-roster-row"><span><strong>${esc(courseLearnerName(id,e.learner_id))}</strong><small>${esc(courseProgress(e))}</small></span>${e.status==='enrolled'&&!(cache.course_submissions||[]).some(s=>s.course_id===id&&s.learner_id===e.learner_id)?`<button type="button" class="text-button" data-action="unassignCourseForm" data-id="${esc(id)}" data-learner="${esc(e.learner_id)}">Remove</button>`:''}</div>`).join('')||empty('No learners yet','Members can add this workshop to their learning plans, or you can assign one by email.')}</div>`);
+    return modal(`<span class="eyebrow">TEACHING STUDIO</span><h2>${esc(course.title)} · students</h2><p class="muted">${learners.length} enrolled member${learners.length===1?'':'s'}. Private profiles show their name here only because they are in this workshop.</p><div class="teacher-roster-list">${learners.map(e=>`<div class="teacher-roster-row"><span><strong>${esc(courseLearnerName(id,e.learner_id))}</strong><small>${esc(courseProgress(e))}</small></span>${courseOpen(course)&&e.status==='enrolled'&&!(cache.course_submissions||[]).some(s=>s.course_id===id&&s.learner_id===e.learner_id)?`<button type="button" class="text-button" data-action="unassignCourseForm" data-id="${esc(id)}" data-learner="${esc(e.learner_id)}">Remove</button>`:''}</div>`).join('')||empty('No learners yet','Members can add this workshop to their learning plans, or you can assign one by email.')}</div>`);
   }
   if(action==='assignLearnerForm'&&teacher()&&courseReady&&coursePlanningReady){
     const course=(cache.courses||[]).find(c=>c.id===id);
-    if(!course||!admin()&&course.instructor_id!==session.user.id)return;
+    if(!course||!courseOpen(course)||!admin()&&course.instructor_id!==session.user.id)return;
     return form('Assign a member',`Add an approved club member to ${esc(course.title)} using the email they use to sign in. They will receive an in-app notification. They can still join other workshops.`,'courseLearner',`<input type="hidden" name="course_id" value="${esc(id)}">${field('Member sign-in email','email','email')}`);
   }
   if(action==='editCourseScheduleForm'&&teacher()&&courseReady&&coursePlanningReady){
@@ -1890,15 +1938,27 @@ function actions(e) {
     const build=parts?parts[1]:original,practice=parts?parts[2]:'',tools=parts?parts[3]:'';
     return form('Edit workshop plan','Describe the build, hands-on activities and tools learners need. Older freeform descriptions appear in the build goal for you to revise.','courseContent',`<input type="hidden" name="course_id" value="${esc(id)}">${field('Workshop title','title','text',course.title)}${select('Learning track','category',courseTracks.map(t=>t.name),courseTrackFor(course))}${select('Level','level',['Beginner','Intermediate','Advanced'],course.level)}${area('What will students build?','build_goal',build)}${area('Hands-on activities and tests','practice_steps',practice)}${field('Tools and materials','tools','text',tools)}${field('Resource URL (optional)','resource_url','url',course.resource_url||'',false)}`);
   }
+  if(action==='endCourseForm'&&teacher()&&courseReady&&courseLifecycleReady){
+    const course=(cache.courses||[]).find(c=>c.id===id);
+    if(!course||!courseOpen(course)||!admin()&&course.instructor_id!==session.user.id)return;
+    return modal(`<span class="eyebrow">NEXT WORKSHOP INTAKE</span><h2>End enrollment for ${esc(course.title)}?</h2><p>New students will not be able to join this workshop. Students already enrolled can finish their projects, submit revisions and receive your feedback. Their materials, submissions and completion records remain available.</p><p class="subtle">Publish a new workshop afterward and add your next group of students by email.</p><form id="editor" data-kind="courseEnd" class="form-stack"><input type="hidden" name="course_id" value="${esc(id)}"><button class="button" type="submit">End enrollment</button></form>`);
+  }
+  if(action==='deleteCourseForm'&&teacher()&&courseReady&&courseLifecycleReady){
+    const course=(cache.courses||[]).find(c=>c.id===id);
+    if(!course||course.status==='archived'||!admin()&&course.instructor_id!==session.user.id)return;
+    const hasRecords=(cache.course_enrollments||[]).some(e=>e.course_id===id)||(cache.course_submissions||[]).some(s=>s.course_id===id)||(cache.course_completions||[]).some(x=>x.course_id===id)||(cache.learning_materials||[]).some(m=>m.course_id===id);
+    return modal(`<span class="eyebrow">WORKSHOP RECORDS</span><h2>${hasRecords?'Archive':'Delete if unused'}: ${esc(course.title)}?</h2><p>${hasRecords?'This removes the workshop from the public catalog and closes new enrollment. Enrolled students keep their classroom, materials, project submissions and completion records. You can still review and give feedback from Teaching studio.':'There are no visible student or material records for this workshop. An unused workshop will be deleted. If the database finds any linked students, materials or uploaded evidence, it will archive the workshop instead and preserve their work.'}</p><form id="editor" data-kind="courseDelete" class="form-stack"><input type="hidden" name="course_id" value="${esc(id)}"><button class="button ${hasRecords?'':'button-danger'}" type="submit">${hasRecords?'Archive workshop':'Delete if unused'}</button></form>`);
+  }
+  if(action==='markCourseSeen'&&teacher()&&courseSeenReady){void markCourseSeen(id,el);return;}
   if(action==='unassignCourseForm'&&teacher()&&courseReady&&coursePlanningReady){
     const course=(cache.courses||[]).find(c=>c.id===id),learnerId=el.dataset.learner;
     const enrollment=(cache.course_enrollments||[]).find(e=>e.course_id===id&&e.learner_id===learnerId);
-    if(!course||!enrollment||!admin()&&course.instructor_id!==session.user.id)return;
+    if(!course||!courseOpen(course)||!enrollment||!admin()&&course.instructor_id!==session.user.id)return;
     if(enrollment.status!=='enrolled'||(cache.course_submissions||[]).some(s=>s.course_id===id&&s.learner_id===learnerId))return show('A student with submitted work or a completion record cannot be removed.');
     return modal(`<span class="eyebrow">TEACHING STUDIO</span><h2>Remove student</h2><p>Remove ${esc(courseLearnerName(id,learnerId))} from ${esc(course.title)}? They will receive an in-app notification. They can rejoin later. Submitted work cannot be removed.</p><form id="editor" data-kind="courseUnassign" class="form-stack"><input type="hidden" name="course_id" value="${esc(id)}"><input type="hidden" name="learner_id" value="${esc(learnerId)}"><button class="button" type="submit">Remove student</button></form>`);
   }
   if(action==='enrollCourse'&&clubAccess()&&courseReady){
-    if(!(cache.courses||[]).some(c=>c.id===id))return;
+    if(!(cache.courses||[]).some(c=>c.id===id&&courseOpen(c)))return show('This workshop is closed to new students. Explore an active workshop.');
     return enrollAndOpenCourse(id);
   }
   if(action==='submitCourseForm'&&clubAccess()&&courseReady){
@@ -2479,10 +2539,20 @@ async function submit(e) {
       if(error)throw error;
       close();await refresh();show('Schedule saved. Enrolled students have been notified.');return;
     }
+    if(kind==='courseEnd'||kind==='courseDelete'){
+      if(!teacher()||!courseReady||!courseLifecycleReady)throw Error('Teacher access and the workshop lifecycle migration are required.');
+      const course=(cache.courses||[]).find(c=>c.id===payload.course_id);
+      if(!course||!admin()&&course.instructor_id!==session.user.id)throw Error('Only the assigned teacher may manage this workshop.');
+      if(kind==='courseEnd'&&!courseOpen(course)||kind==='courseDelete'&&course.status==='archived')throw Error('The workshop status has changed. Refresh and try again.');
+      const {data,error}=await db.rpc(kind==='courseEnd'?'end_course':'delete_course',{p_course:course.id});
+      if(error)throw error;
+      close();teachingTab='past';await refresh();
+      show(kind==='courseEnd'?'Enrollment ended. Existing students can still finish their work. Publish a new workshop for the next group.':data==='deleted'?'Empty workshop deleted.':'Workshop archived. Student work and feedback remain available.');return;
+    }
     if(kind==='courseLearner'){
       if(!teacher()||!courseReady||!coursePlanningReady)throw Error('Teacher access and the course planning migration are required.');
       const course=(cache.courses||[]).find(c=>c.id===payload.course_id);
-      if(!course||!admin()&&course.instructor_id!==session.user.id)throw Error('Only the assigned teacher may enroll a member.');
+      if(!course||!courseOpen(course)||!admin()&&course.instructor_id!==session.user.id)throw Error('Only the assigned teacher may enroll a member in an open workshop.');
       const email=String(payload.email||'').trim().toLowerCase();
       if(!email||email.length>320||!email.includes('@'))throw Error('Enter the member’s sign-in email.');
       const {error}=await db.rpc('assign_course_learner',{p_course:course.id,p_email:email});
@@ -2492,7 +2562,7 @@ async function submit(e) {
     if(kind==='courseUnassign'){
       if(!teacher()||!courseReady||!coursePlanningReady)throw Error('Teacher access and the course planning migration are required.');
       const course=(cache.courses||[]).find(c=>c.id===payload.course_id);
-      if(!course||!admin()&&course.instructor_id!==session.user.id)throw Error('Only the assigned teacher may remove a member.');
+      if(!course||!courseOpen(course)||!admin()&&course.instructor_id!==session.user.id)throw Error('A student can be removed only from an open workshop by the assigned teacher.');
       const {error}=await db.rpc('unassign_course_learner',{p_course:course.id,p_learner:String(payload.learner_id||'')});
       if(error)throw error;
       close();await refresh();show('Student removed from the workshop and notified.');return;
@@ -2820,6 +2890,8 @@ async function submit(e) {
         payload.resource_url=payload.resource_url?cleanUrl(payload.resource_url):null;
         if(formEl.querySelector('[name=resource_url]').value&&!payload.resource_url)throw Error('Enter a valid HTTPS resource URL.');
         courseTrack=payload.category;
+        if(page==='teaching')teachingTab='workshops';
+        if(page==='courses')courseView='explore';
       }else if(!admin())throw Error('Only an administrator can publish this item.');
       if(kind==='event'&&new Date(payload.ends_at)<=new Date(payload.starts_at))throw Error('End time must be after start time.');
       const table={course:'courses',event:'events',announcement:'announcements'}[kind];
