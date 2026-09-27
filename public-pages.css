@@ -14,9 +14,9 @@
 .public-nav a.public-nav-join:hover { background: #087e76; }
 .public-main { width: min(1200px, calc(100% - 40px)); margin: 0 auto; padding: 38px 0 90px; }
 .public-hero { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); min-height: 475px; border-radius: 22px; background: #153342; color: #fff; overflow: hidden; box-shadow: 0 22px 70px #102c3930; }
-.public-hero-copy { align-self: center; padding: clamp(28px, 5vw, 76px); }
+.public-hero-copy { align-self: center; padding: clamp(28px, 4.2vw, 60px); }
 .public-hero .eyebrow { color: #80dfca; }
-.public-hero h1 { max-width: 660px; font-size: clamp(40px, 5.1vw, 70px); line-height: 1.02; margin: 15px 0 21px; }
+.public-hero h1 { max-width: 660px; font-size: clamp(40px, 4.5vw, 62px); line-height: 1.02; margin: 15px 0 21px; }
 .public-hero p { max-width: 590px; color: #d0e1e1; line-height: 1.8; font-size: 16px; }
 .public-hero-media { min-height: 350px; position: relative; }
 .public-hero-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
