@@ -182,6 +182,8 @@ nav a span svg,.icon-box svg{vertical-align:middle;transition:transform .22s eas
 .stock-low .inventory-stock strong,.inventory-stock.stock-low strong{color:color-mix(in srgb,#a15d1a 75%,var(--ink))}
 .inventory-card-meta{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--muted)}.inventory-card-meta strong{color:var(--ink)}
 .inventory-card-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto;padding-top:12px;border-top:1px solid var(--line)}
+.inventory-card-actions .text-button{min-height:44px;padding:8px;text-align:left}
+.field .field-label{display:block;margin-bottom:6px;font-size:12px;font-weight:700}
 .record-pill.stock-low{background:color-mix(in srgb,#d98c32 18%,var(--white));color:color-mix(in srgb,#9a5415 80%,var(--ink))}
 
 /* Founder transaction approvals and visible decision history */
