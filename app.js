@@ -76,10 +76,11 @@ const pages = ['home','about','founders','investors','investor-portal','admin','
 const approved = () => !!me && (!('membership_status' in me) || me.membership_status==='approved');
 const investor = () => approved() && me?.role==='investor';
 const clubAccess = () => approved() && !investor();
-const teacher = () => clubAccess() && ['teacher','admin'].includes(me?.role);
+const teacher = () => clubAccess() && (['teacher','admin'].includes(me?.role)||me?.role==='founder'&&me?.founder_teaching_enabled===true);
 const admin = () => approved() && me?.role === 'admin';
 const founder = () => approved() && ['founder','admin'].includes(me?.role);
 const founderOnly = () => approved() && me?.role === 'founder';
+const accessSignature = p => `${p?.membership_status}:${p?.role}:${p?.founder_teaching_enabled===true}`;
 const show = (message) => { $('#toast').textContent=message; $('#toast').classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),4200); };
 function updateAdminAlertControls(){
   const visible=admin();
@@ -169,7 +170,7 @@ const empty = (title,body) => `<div class="empty"><strong>${esc(title)}</strong>
 const head = (label,title,subtitle,action='') => `<div class="page-head"><div><span class="eyebrow">${esc(label)}</span><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${action}</div>`;
 const avatar = (name,large=false,photoPath='') => {const url=mediaUrl(photoPath);return `<span class="avatar ${large?'large':''}">${url?`<img src="${esc(url)}" alt="" loading="lazy">`:esc(initials(name))}</span>`;};
 const memberAvatar = (id,large=false) => {const p=(cache.profiles||[]).find(x=>x.id===id);return avatar(p?.full_name||'Member',large,p?.avatar_path);};
-const roleBadge = p => {const labels={member:'Member',teacher:'Teacher',founder:'Founder',investor:'Investor',admin:'Administrator'};const role=Object.hasOwn(labels,p?.role)?p.role:'member';return `<span class="member-badge badge-${role}" title="Approved ${esc(labels[role])} account">${labels[role]}</span>`;};
+const roleBadge = p => {const labels={member:'Member',teacher:'Teacher',founder:'Founder',investor:'Investor',admin:'Administrator'};const role=Object.hasOwn(labels,p?.role)?p.role:'member';return `<span class="member-badge badge-${role}" title="Approved ${esc(labels[role])} account">${labels[role]}</span>${role==='founder'&&p?.founder_teaching_enabled===true?'<span class="member-badge badge-teacher" title="Can lead practical workshops">Teaching lead</span>':''}`;};
 const iconPaths={home:'<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',founders:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',privacy:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',application:'<path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/>',members:'<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M17 5a3 3 0 0 1 0 6M19 14a5 5 0 0 1 2 4v2"/>',messages:'<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3 8.5 8.5 0 0 1 21 11.5z"/>',notifications:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',feed:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',channels:'<path d="M4 5h16v11H8l-4 4zM8 9h8M8 12h5"/>',library:'<path d="M4 4h12l4 4v12H4zM16 4v4h4M8 13h8M8 17h6"/>',news:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h4M13 12h4M7 16h10"/>',projects:'<path d="M3 7h7l2 2h9v11H3zM3 7V4h8l2 3"/>',discussions:'<path d="M4 4h16v12H8l-4 4zM8 9h8M8 12h5"/>',courses:'<path d="M3 6 12 3l9 3-9 3-9-3zM5 10v7c4 3 10 3 14 0v-7M21 7v8"/>',events:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M8 14h3M8 17h3"/>',announcements:'<path d="M3 10h4l12-5v14L7 14H3zM7 14l2 7h4l-2-6M21 9v6"/>','founder-room':'<path d="m12 2 2.5 6.5L21 11l-6.5 2.5L12 20l-2.5-6.5L3 11l6.5-2.5z"/>',applications:'<path d="M5 3h14v18H5zM8 8h8M8 13l2 2 5-5"/>',moderation:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM12 7v6M12 17h.01"/>'};
 iconPaths.investors='<path d="M3 20h18M5 16l5-5 4 3 5-7M16 7h3v3"/>';
 iconPaths.about='<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>';
@@ -357,17 +358,17 @@ async function refreshUnreadCounts(){
 
 async function refresh() {
   if (!db || !session) return;
-  const previous=`${me?.membership_status}:${me?.role}`;
+  const previous=accessSignature(me);
   const self=await db.from('profiles').select('*').eq('id',session.user.id).single();
   if(!self.error&&self.data)me=self.data;
   roleReady=!!me&&'application_type' in me;
-  if(previous!==`${me?.membership_status}:${me?.role}`)return signedIn(session);
+  if(previous!==accessSignature(me))return signedIn(session);
   if(!approved()){cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();route();return;}
   if(investor()){
     const results=await Promise.allSettled(['investor_updates','investor_inquiries','privacy_requests'].map(readRecords));
     cache={profiles:[me],investor_updates:results[0].status==='fulfilled'?results[0].value:[],investor_inquiries:results[1].status==='fulfilled'?results[1].value:[],privacy_requests:results[2].status==='fulfilled'?results[2].value:[]};
     communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=results[2].status==='fulfilled';inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
-    if(previous!==`${me.membership_status}:${me.role}`||!['home','about','founders','investors','investor-portal','privacy'].includes(page)) {route();return;}
+    if(previous!==accessSignature(me)||!['home','about','founders','investors','investor-portal','privacy'].includes(page)) {route();return;}
     render();return;
   }
   const names=['profiles','projects','project_tasks','topics','replies','courses','learning_materials','course_enrollments','course_submissions','course_completions','privacy_requests','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes','direct_messages','direct_message_reads','investor_updates','investor_inquiries','inventory_items'];
@@ -380,9 +381,9 @@ async function refresh() {
       if(!unordered.has(n))q=q.order('created_at',{ascending:false});
       return Object.hasOwn(previews,n)?q.limit(previews[n]):q;
     }))),
-    me?.role==='teacher'?db.from('teacher_profiles').select('*').eq('teacher_id',session.user.id).maybeSingle():Promise.resolve({data:null,error:null})
+    teacher()&&!admin()?db.from('teacher_profiles').select('*').eq('teacher_id',session.user.id).maybeSingle():Promise.resolve({data:null,error:null})
   ]);
-  teacherProfileReady=me?.role==='teacher'&&!teachingProfileResult.error;
+  teacherProfileReady=teacher()&&!admin()&&!teachingProfileResult.error;
   teacherProfile=teacherProfileReady?teachingProfileResult.data:null;
   if(teachingProfileResult.error)console.error('teacher_profiles',teachingProfileResult.error);
   results.forEach((r,i)=>{ if(r.status==='fulfilled') cache[names[i]]=r.value; else {cache[names[i]]=[];console.error(names[i],r.reason);} });
@@ -414,7 +415,7 @@ async function refresh() {
   avatarReady=!avatarError;
   await hydrateMedia();
   if(page==='applications'&&admin())void loadAdminApplicationPages();
-  if(previous!==`${me.membership_status}:${me.role}`){route();return;}
+  if(previous!==accessSignature(me)){route();return;}
   if(page==='notifications' && document.activeElement?.closest('#content')) { render(); return; }
   if(page==='channels' && document.activeElement?.closest('#chatComposer')) { renderChatMessages(); return; }
   if(page==='messages' && document.activeElement?.closest('#dmComposer')) return;
@@ -622,7 +623,7 @@ function founders() {
   return `${head('THE PEOPLE BEHIND THE IDEA','Founding team','The founding team shaping InnovateX with members, teachers and mentors.',admin()?button('+ Add founder','founderForm'):'')}
   <div class="notice">Founder profiles are added only after each person agrees to be listed. We intend to invite the Dean of Students’ Affairs as patron, subject to acceptance.</div>
   <div class="founder-invite-banner"><div><span class="eyebrow">FOUNDER ACCESS</span><h3>Build the club together.</h3><p>Administrators approve founder applications. Accepted founders can plan together and meet in a private room.</p></div>${founder()?`<a class="button" href="#founder-room">Open founder room →</a>`:!session?button('Apply as founder','login'):''}</div>
-  <div class="section-heading"><h2>Meet the founders</h2></div><div class="grid grid-4">${list.length?list.map(f=>`<div class="card founder-card">${avatar(f.name,true)}<div class="role">${esc(f.role)}</div><h3>${esc(f.name)}</h3><p>${esc(f.bio||'Founding team member')}</p>${f.link_url?`<a class="link" target="_blank" rel="noopener noreferrer" href="${esc(cleanUrl(f.link_url))}">Profile ↗</a>`:''}</div>`).join(''):[1,2,3,4].map((n)=>`<div class="card founder-card">${avatar('IX',true)}<div class="role">Founding member ${n}</div><h3>Profile coming soon</h3><p>We’ll introduce each founder after the team confirms their details.</p></div>`).join('')}</div><div class="section-heading"><h2>How the club is led</h2></div><div class="grid grid-3"><div class="card"><h3>Club leadership</h3><p>Club leaders coordinate training, projects, communications and finance.</p></div><div class="card"><h3>Founding advisers</h3><p>Founders help with continuity, mentoring and partnerships.</p></div><div class="card"><h3>Proposed patron</h3><p>We intend to invite the Dean of Students’ Affairs as patron, subject to acceptance.</p></div></div>`;
+  <div class="section-heading"><h2>Meet the founders</h2></div><div class="grid grid-4">${list.length?list.map(f=>`<div class="card founder-card">${avatar(f.name,true)}<div class="role">${esc(f.role)}</div><h3>${esc(f.name)}</h3><p>${esc(f.bio||'Founding team member')}</p>${f.link_url?`<a class="link" target="_blank" rel="noopener noreferrer" href="${esc(cleanUrl(f.link_url))}">Profile ↗</a>`:''}${admin()?`<button class="text-button founder-card-remove" data-action="removeFounderCard" data-id="${esc(f.id)}">Remove public profile</button>`:''}</div>`).join(''):[1,2,3,4].map((n)=>`<div class="card founder-card">${avatar('IX',true)}<div class="role">Founding member ${n}</div><h3>Profile coming soon</h3><p>We’ll introduce each founder after the team confirms their details.</p></div>`).join('')}</div><div class="section-heading"><h2>How the club is led</h2></div><div class="grid grid-3"><div class="card"><h3>Club leadership</h3><p>Club leaders coordinate training, projects, communications and finance.</p></div><div class="card"><h3>Founding advisers</h3><p>Founders help with continuity, mentoring and partnerships.</p></div><div class="card"><h3>Proposed patron</h3><p>We intend to invite the Dean of Students’ Affairs as patron, subject to acceptance.</p></div></div>`;
 }
 function investors(){
   return `${head('PARTNER WITH INNOVATEX','Investors & partners','Explore how engineering ideas become useful prototypes through shared learning and practical projects.')}
@@ -714,7 +715,7 @@ function courseJourney(c){
 function materialRow(m){return `<div class="learning-row"><span class="tag blue">${esc(m.kind)}</span><div><strong>${esc(m.title)}</strong><small>${esc(m.file_name)} · ${fileSize(m.file_size)} · ${date(m.created_at)}</small>${m.description?`<p>${esc(m.description)}</p>`:''}</div>${m.hidden_at?'<span class="tag gold">Hidden</span>':`<button class="text-button" data-action="downloadLearning" data-id="${esc(m.id)}">Download ↓</button>`}</div>`;}
 function teaching(){
   if(!teacher())return '';
-  const onboarding=me.role==='teacher'?(teacherProfileReady?`<section class="card teacher-onboarding"><div class="row"><div><span class="eyebrow">YOUR TEACHING PROFILE</span><h2>${teacherProfile?'Update your teaching details':'Complete your teaching details'}</h2><p class="subtle">Tell the club what you can teach through practical projects. Only you and administrators can see these details.</p></div><span class="tag ${teacherProfile?'blue':'gold'}">${teacherProfile?'Saved':'To complete'}</span></div><form id="teacherProfileForm" data-kind="teacherProfile" class="form-stack">${select('Primary learning track','track',courseTracks.map(t=>t.name),teacherProfile?.track||courseTracks[0].name)}<div class="field"><label for="teacher_experience">Relevant experience or skills</label><textarea id="teacher_experience" name="experience" minlength="20" maxlength="2000" required placeholder="Describe the tools, projects and topics you can teach.">${esc(teacherProfile?.experience||'')}</textarea></div><div class="field"><label for="teacher_practical_focus">Practical teaching plan</label><textarea id="teacher_practical_focus" name="practical_focus" minlength="20" maxlength="2000" required placeholder="What will members build or test with you?">${esc(teacherProfile?.practical_focus||'')}</textarea></div><div class="field"><label for="teacher_availability">Availability</label><textarea id="teacher_availability" name="availability" minlength="5" maxlength="500" required placeholder="For example, Saturdays or two sessions each month.">${esc(teacherProfile?.availability||'')}</textarea></div><button class="button" type="submit">${teacherProfile?'Save changes':'Save teaching profile'}</button></form></section>`:'<div class="notice">Run the teacher promotions migration to set up teaching profiles.</div>'):'';
+  const onboarding=!admin()?(teacherProfileReady?`<section class="card teacher-onboarding"><div class="row"><div><span class="eyebrow">YOUR TEACHING PROFILE</span><h2>${teacherProfile?'Update your teaching details':'Complete your teaching details'}</h2><p class="subtle">Tell the club what you can teach through practical projects. Only you and administrators can see these details.</p></div><span class="tag ${teacherProfile?'blue':'gold'}">${teacherProfile?'Saved':'To complete'}</span></div><form id="teacherProfileForm" data-kind="teacherProfile" class="form-stack">${select('Primary learning track','track',courseTracks.map(t=>t.name),teacherProfile?.track||courseTracks[0].name)}<div class="field"><label for="teacher_experience">Relevant experience or skills</label><textarea id="teacher_experience" name="experience" minlength="20" maxlength="2000" required placeholder="Describe the tools, projects and topics you can teach.">${esc(teacherProfile?.experience||'')}</textarea></div><div class="field"><label for="teacher_practical_focus">Practical teaching plan</label><textarea id="teacher_practical_focus" name="practical_focus" minlength="20" maxlength="2000" required placeholder="What will members build or test with you?">${esc(teacherProfile?.practical_focus||'')}</textarea></div><div class="field"><label for="teacher_availability">Availability</label><textarea id="teacher_availability" name="availability" minlength="5" maxlength="500" required placeholder="For example, Saturdays or two sessions each month.">${esc(teacherProfile?.availability||'')}</textarea></div><button class="button" type="submit">${teacherProfile?'Save changes':'Save teaching profile'}</button></form></section>`:'<div class="notice">Run the teacher promotions migration to set up teaching profiles.</div>'):'';
   const items=learningReady?(cache.learning_materials||[]).filter(m=>admin()||m.uploaded_by===session.user.id):[];
   const workshops=(cache.courses||[]).filter(c=>admin()||c.instructor_id===session.user.id),courseIds=new Set(workshops.map(c=>c.id));
   const submissions=courseReady?(cache.course_submissions||[]).filter(s=>courseIds.has(s.course_id)):[];
@@ -947,7 +948,7 @@ function applications() {
     <div class="section-heading"><h2>Applications (${applicationTotal})</h2><p>All pending, rejected and suspended accounts, newest first.</p></div>
     <div class="grid grid-2">${applicants.length?applicants.map(p=>{const eligibility=applicationVerification.get(p.id),verified=eligibility?.verified,previouslyApproved=eligibility?.previouslyApproved===true,submitted=!!p.application_reason?.trim();return `<div class="card"><div class="row"><span class="tag ${p.membership_status==='pending'?'gold':''}">${esc(p.membership_status)}</span><span class="tag blue">${esc(p.application_type||'member')}</span><small class="subtle">${date(p.created_at)}</small></div><h3 style="margin-top:14px">${esc(p.full_name)}</h3><div class="row"><span class="tag ${verified===true?'blue':'gold'}">${verified===true?'Email verified':verified===false?'Verify email first':'Email status unknown'}</span><span class="tag ${submitted?'blue':'gold'}">${submitted?'Application submitted':previouslyApproved?'Prior member: reason not recorded':'Application incomplete'}</span></div><p>${esc(p.programme||'Background not provided')}</p><p class="detail">${esc(p.application_reason||'No reason submitted yet.')}</p><div class="card-footer"><span>${esc(p.skills||'')}</span><div class="application-actions"><button class="text-button" data-action="reviewMember" data-status="approved" data-id="${esc(p.id)}" ${verified!==true||!submitted&&!previouslyApproved?'disabled':''}>Approve</button>${p.application_type==='member'&&['pending','rejected'].includes(p.membership_status)?`<button class="text-button" data-action="approveApplicantTeacher" data-id="${esc(p.id)}" ${verified!==true||!submitted&&!previouslyApproved?'disabled':''}>Approve as teacher</button>`:''}<button class="text-button" data-action="reviewMember" data-status="rejected" data-id="${esc(p.id)}">Reject</button></div></div></div>`}).join(''):applicationsLoading?empty('Loading applications','Fetching this page of accounts…'):applicationTotal?empty('Page unavailable','Use Previous or retry loading.'):empty('No applications waiting','New accounts will appear here.')}</div>
     ${recordsPager('applications',applicationsPage,applicationTotal)}
-    <div class="section-heading"><h2>Approved accounts (${approvedAccountTotal})</h2><p>Promote an approved member to teacher or pause access if needed.</p></div><div class="profile-grid">${accounts.map(p=>`<div class="card person">${avatar(p.full_name,false,p.avatar_path)}<div><strong>${esc(p.full_name)}</strong>${roleBadge(p)}<small class="subtle">${esc(p.role)} · ${esc(p.handle||'')}</small></div><div class="person-actions">${p.role==='member'?`<button class="text-button" data-action="promoteTeacher" data-id="${esc(p.id)}">Make teacher</button>`:''}${p.role==='teacher'?`<button class="text-button" data-action="viewTeacherProfile" data-id="${esc(p.id)}">Teaching details</button>`:''}<button class="text-button" data-action="reviewMember" data-status="suspended" data-id="${esc(p.id)}">Suspend</button></div></div>`).join('')||empty('No approved accounts','Approved accounts will appear here.')}</div>${recordsPager('approvedAccounts',approvedAccountsPage,approvedAccountTotal)}`;
+    <div class="section-heading"><h2>Approved accounts (${approvedAccountTotal})</h2><p>Manage teacher and founder access or pause an account.</p></div><div class="profile-grid">${accounts.map(p=>`<div class="card person">${avatar(p.full_name,false,p.avatar_path)}<div><strong>${esc(p.full_name)}</strong>${roleBadge(p)}<small class="subtle">${esc(p.role)} · ${esc(p.handle||'')}</small>${p.role==='founder'&&'founder_teaching_enabled' in p?`<small class="subtle">Teaching ${p.founder_teaching_enabled?'enabled':'paused'}</small>`:''}</div><div class="person-actions">${p.role==='member'?`<button class="text-button" data-action="promoteTeacher" data-id="${esc(p.id)}">Make teacher</button>`:''}${p.role==='teacher'&&'founder_teaching_enabled' in p?`<button class="text-button" data-action="assignFounderRole" data-id="${esc(p.id)}">Make founder</button>`:''}${p.role==='teacher'||p.role==='founder'&&p.founder_teaching_enabled?`<button class="text-button" data-action="viewTeacherProfile" data-id="${esc(p.id)}">Teaching details</button>`:''}${p.role==='founder'&&'founder_teaching_enabled' in p?`<button class="text-button" data-action="toggleFounderTeaching" data-id="${esc(p.id)}">${p.founder_teaching_enabled?'Pause teaching':'Assign teaching'}</button><button class="text-button" data-action="removeFounderRole" data-id="${esc(p.id)}">Remove founder role</button>`:''}<button class="text-button" data-action="reviewMember" data-status="suspended" data-id="${esc(p.id)}">Suspend</button></div></div>`).join('')||empty('No approved accounts','Approved accounts will appear here.')}</div>${recordsPager('approvedAccounts',approvedAccountsPage,approvedAccountTotal)}`;
 }
 function adminDashboard(){
   if(!admin())return '';
@@ -1185,7 +1186,7 @@ function actions(e) {
   }
   if(action==='assignCourseForm'&&admin()&&courseReady){
     const course=(cache.courses||[]).find(c=>c.id===id);if(!course)return;
-    const teachers=(cache.profiles||[]).filter(p=>p.membership_status==='approved'&&['teacher','admin'].includes(p.role));
+    const teachers=(cache.profiles||[]).filter(p=>p.membership_status==='approved'&&(['teacher','admin'].includes(p.role)||p.role==='founder'&&p.founder_teaching_enabled===true));
     return modal(`<span class="eyebrow">TEACHING STUDIO</span><h2>Assign workshop teacher</h2><p class="muted">${esc(course.title)}</p><form id="editor" data-kind="courseInstructor" class="form-stack"><input type="hidden" name="course_id" value="${esc(id)}"><div class="field"><label for="teacher_id">Approved teacher</label><select id="teacher_id" name="teacher_id" required>${teachers.map(p=>`<option value="${esc(p.id)}" ${p.id===course.instructor_id?'selected':''}>${esc(p.full_name)} · ${esc(p.role)}</option>`).join('')}</select></div><button class="button" type="submit">Assign teacher</button></form>`);
   }
   if(action==='login'||action==='signup')return signInDialog('signup');
@@ -1250,7 +1251,27 @@ function actions(e) {
     if(!member)return;
     return modal(`<span class="eyebrow">TEACHER ACCESS</span><h2>Make ${esc(member.full_name)} a teacher?</h2><p class="muted">They will gain access to Teaching studio, course publishing, learning materials and assigned project reviews. They can complete their teaching details after signing in.</p><form id="editor" data-kind="promoteTeacher" class="form-stack"><input type="hidden" name="user_id" value="${esc(id)}"><button class="button" type="submit">Confirm teacher access</button></form>`);
   }
+  if(action==='assignFounderRole'&&admin()){
+    const account=approvedAccountRows.find(p=>p.id===id&&p.role==='teacher'&&p.membership_status==='approved'&&'founder_teaching_enabled' in p);
+    if(!account)return;
+    return modal(`<span class="eyebrow">FOUNDER LEADERSHIP</span><h2>Make ${esc(account.full_name)} a founder?</h2><p class="muted">They keep their teaching profile and assigned workshops and gain the private Founder room and finance review access. This takes effect immediately and sends an in-app notification.</p><form id="editor" data-kind="assignFounderRole" class="form-stack"><input type="hidden" name="user_id" value="${esc(id)}"><button class="button" type="submit">Make founder</button></form>`);
+  }
   if(action==='viewTeacherProfile'&&admin())return void viewTeacherProfile(id);
+  if(action==='toggleFounderTeaching'&&admin()){
+    const account=approvedAccountRows.find(p=>p.id===id&&p.role==='founder'&&p.membership_status==='approved'&&'founder_teaching_enabled' in p);
+    if(!account)return;
+    const enable=!account.founder_teaching_enabled;
+    return modal(`<span class="eyebrow">FOUNDER TEACHING</span><h2>${enable?'Assign teaching to':'Pause teaching for'} ${esc(account.full_name)}?</h2><p class="muted">${enable?'Their founder access stays active. They can use Teaching studio, complete a teaching profile and lead workshops.':'Their founder meetings and finance review stay available. Reassign their workshops before pausing teaching access.'}</p><form id="editor" data-kind="founderTeaching" class="form-stack"><input type="hidden" name="user_id" value="${esc(id)}"><input type="hidden" name="enabled" value="${enable}"><button class="button" type="submit">${enable?'Assign teaching':'Pause teaching'}</button></form>`);
+  }
+  if(action==='removeFounderRole'&&admin()){
+    const account=approvedAccountRows.find(p=>p.id===id&&p.role==='founder'&&p.membership_status==='approved');
+    if(!account)return;
+    return modal(`<span class="eyebrow">FOUNDER ROLE</span><h2>Remove ${esc(account.full_name)} from founder leadership?</h2><p class="muted">Founder room and finance review access will end. Choose Teacher to give or retain teaching access and keep current workshop assignments, or Member to end teaching access. Reassign all their workshops before choosing Member. Their public founder profile, if published, is removed separately on the Founders page.</p><form id="editor" data-kind="removeFounderRole" class="form-stack"><input type="hidden" name="user_id" value="${esc(id)}">${select('Keep account as','next_role',['teacher','member'],account.founder_teaching_enabled?'teacher':'member')}<button class="button" type="submit">Remove founder role</button></form>`);
+  }
+  if(action==='removeFounderCard'&&admin()){
+    const card=(cache.founders||[]).find(f=>f.id===id);if(!card)return;
+    return modal(`<span class="eyebrow">PUBLIC PROFILE</span><h2>Remove ${esc(card.name)} from the Founders page?</h2><p class="muted">This removes the published card. It does not change anyone's account access or delete their posts and records.</p><form id="editor" data-kind="removeFounderCard" class="form-stack"><input type="hidden" name="card_id" value="${esc(id)}"><button class="button" type="submit">Remove public profile</button></form>`);
+  }
   if(action==='readNotification')return markNotification(id);
   if(action==='openNotification')return openNotification(id);
   if(action==='resolveReport')return resolveReport(id);
@@ -1357,13 +1378,45 @@ async function promoteTeacher(id) {
     close();await refresh();await loadAdminApplicationPages();show('Member promoted to teacher. Their Teaching studio is ready.');
   }catch(error){fail(error);}
 }
+async function assignFounderRole(id) {
+  if(!admin()||!approvedAccountRows.some(p=>p.id===id&&p.role==='teacher'&&p.membership_status==='approved'))return;
+  try {
+    const {error}=await db.rpc('assign_teacher_as_founder',{p_user:id});
+    if(error)throw error;
+    close();await refresh();await loadAdminApplicationPages();show('Teacher assigned as founder. Their teaching access remains active.');
+  }catch(error){fail(error);}
+}
 async function viewTeacherProfile(id) {
-  const account=approvedAccountRows.find(p=>p.id===id&&p.role==='teacher'&&p.membership_status==='approved');
+  const account=approvedAccountRows.find(p=>p.id===id&&['teacher','founder'].includes(p.role)&&p.membership_status==='approved');
   if(!admin()||!account)return;
   try {
     const {data,error}=await db.from('teacher_profiles').select('*').eq('teacher_id',id).maybeSingle();
     if(error)throw error;
     modal(`<span class="eyebrow">PRIVATE TEACHING DETAILS</span><h2>${esc(account.full_name)}</h2>${data?`<div class="teacher-profile-review"><small>${esc(data.track)} · Updated ${dateTime(data.updated_at)}</small><h3>Experience or skills</h3><p>${esc(data.experience)}</p><h3>Practical teaching plan</h3><p>${esc(data.practical_focus)}</p><h3>Availability</h3><p>${esc(data.availability)}</p></div>`:'<p class="muted">This teacher has not completed their teaching profile yet.</p>'}`);
+  }catch(error){fail(error);}
+}
+async function setFounderTeaching(id,enabled) {
+  if(!admin()||!approvedAccountRows.some(p=>p.id===id&&p.role==='founder'&&p.membership_status==='approved'))return;
+  try {
+    const {error}=await db.rpc('set_founder_teaching',{p_user:id,p_enabled:enabled});
+    if(error)throw error;
+    close();await refresh();await loadAdminApplicationPages();show(enabled?'Founder teaching access enabled.':'Founder teaching access paused.');
+  }catch(error){fail(error);}
+}
+async function removeFounderRole(id,nextRole) {
+  if(!admin()||!['member','teacher'].includes(nextRole)||!approvedAccountRows.some(p=>p.id===id&&p.role==='founder'&&p.membership_status==='approved'))return;
+  try {
+    const {error}=await db.rpc('remove_founder_role',{p_user:id,p_next_role:nextRole});
+    if(error)throw error;
+    close();await refresh();await loadAdminApplicationPages();show(`Founder role removed. Account remains ${nextRole}.`);
+  }catch(error){fail(error);}
+}
+async function removeFounderCard(id) {
+  if(!admin()||!(cache.founders||[]).some(f=>f.id===id))return;
+  try {
+    const {error}=await db.from('founders').delete().eq('id',id);
+    if(error)throw error;
+    close();await refresh();show('Public founder profile removed.');
   }catch(error){fail(error);}
 }
 async function markNotification(id) {
@@ -1375,6 +1428,7 @@ async function openNotification(id) {
   if(n.target_type==='channel'){activeChannelId=n.target_id;location.hash='#channels';}
   else if(n.target_type==='project'){location.hash='#projects';setTimeout(()=>projectDetail(n.target_id),60);}
   else if(n.target_type==='meeting')location.hash='#founder-room';
+  else if(n.target_type==='founder')location.hash='#founder-room';
   else if(n.target_type==='event')location.hash='#events';
   else if(n.target_type==='application')location.hash=admin()?'#applications':'#application';
   else if(n.target_type==='teacher')location.hash='#teaching';
@@ -1588,8 +1642,21 @@ async function submit(e) {
     if(kind==='approveApplicantTeacher'){
       await approveApplicantTeacher(String(payload.user_id||''));return;
     }
+    if(kind==='founderTeaching'){
+      if(!admin()||!['true','false'].includes(payload.enabled))throw Error('Administrator access and a valid teaching decision are required.');
+      await setFounderTeaching(String(payload.user_id||''),payload.enabled==='true');return;
+    }
+    if(kind==='assignFounderRole'){
+      await assignFounderRole(String(payload.user_id||''));return;
+    }
+    if(kind==='removeFounderRole'){
+      await removeFounderRole(String(payload.user_id||''),String(payload.next_role||''));return;
+    }
+    if(kind==='removeFounderCard'){
+      await removeFounderCard(String(payload.card_id||''));return;
+    }
     if(kind==='teacherProfile'){
-      if(me?.role!=='teacher'||!teacherProfileReady)throw Error('Approved teacher access and the teacher promotions migration are required.');
+      if(!teacher()||admin()||!teacherProfileReady)throw Error('Approved teaching access and the teacher promotions migration are required.');
       const record={track:String(payload.track||''),experience:String(payload.experience||'').trim(),practical_focus:String(payload.practical_focus||'').trim(),availability:String(payload.availability||'').trim()};
       if(!courseTracks.some(t=>t.name===record.track)||record.experience.length<20||record.experience.length>2000||record.practical_focus.length<20||record.practical_focus.length>2000||record.availability.length<5||record.availability.length>500)throw Error('Choose a track and complete your experience, practical plan and availability.');
       const query=teacherProfile?db.from('teacher_profiles').update(record).eq('teacher_id',session.user.id):db.from('teacher_profiles').insert({teacher_id:session.user.id,...record});
