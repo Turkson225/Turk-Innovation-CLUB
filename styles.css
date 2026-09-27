@@ -279,3 +279,49 @@ nav a span svg,.icon-box svg{vertical-align:middle;transition:transform .22s eas
 .image-viewer-control:disabled{opacity:.45;cursor:default}
 .image-viewer-fit{font-size:12px;font-weight:800}
 @media(max-width:480px){.image-viewer-footer{flex-direction:column;gap:8px}.image-viewer-hint{font-size:11px}.image-viewer-buttons{width:100%;justify-content:center}.image-viewer-toolbar{min-height:60px}}
+
+/* InnovateX wordmark, warm accents, and small moments of motion. */
+:root{--accent-orange:#a64f1c;--accent-orange-bright:#ec8434}
+:root[data-theme=dark]{--accent-orange:#ffb977;--accent-orange-bright:#f49b58}
+.brand-mark{flex:none}
+.brand strong{white-space:nowrap}
+.brand-x{display:inline-block;font-weight:900;line-height:.8;letter-spacing:0;vertical-align:-.07em;-webkit-text-stroke:.45px currentColor;transition:transform .25s ease}
+.brand .brand-x{font-size:1.32em;color:#ff626b}
+.crumb .brand-x,.mobile-wordmark .brand-x{font-size:1.33em;color:#bc303a;margin:0}
+.crumb .crumb-separator{margin:0 12px}
+[data-theme=dark] .crumb .brand-x,[data-theme=dark] .mobile-wordmark .brand-x{color:#ff7780}
+.mobile-wordmark{display:none;align-items:baseline;white-space:nowrap;font:700 12px 'Space Grotesk',sans-serif;letter-spacing:.06em;color:var(--ink)}
+.mobile-wordmark-short{display:none}
+
+.hero-copy>.eyebrow:before,.about-kicker:before{content:'';display:inline-block;vertical-align:middle;width:17px;height:3px;margin:-2px 9px 0 0;border-radius:3px;background:var(--accent-orange-bright);transform-origin:left center;animation:warmAccentIn .65s .12s ease-out both}
+.hero-graphic{animation:brandMarkIn .65s .12s ease-out both}
+.mission-card:nth-child(2) .icon-box,.feature-card:nth-child(2) .feature-icon,.about-track-card:nth-child(2) .feature-icon{background:color-mix(in srgb,var(--accent-orange) 14%,var(--white));color:var(--accent-orange)}
+.feature-card:nth-child(2){border-top-color:var(--accent-orange-bright)}
+.about-statement:nth-child(2){border-top-color:var(--accent-orange-bright);background:linear-gradient(135deg,color-mix(in srgb,var(--accent-orange) 6%,var(--white)),var(--white) 58%)}
+.about-step:nth-child(2){background:linear-gradient(135deg,#71402a,#294645 72%)}
+.about-step:nth-child(2)>span{color:#ffbd83}
+.about-step{transition:transform .25s ease,box-shadow .25s ease}
+.about-value:before{transition:width .28s ease}
+.about-value:nth-child(2):before{background:var(--accent-orange-bright)}
+.about-cta{background:radial-gradient(circle at 94% 8%,#ec84343d,transparent 40%),linear-gradient(135deg,#102b3a,#133f48 75%)}
+.course-track:nth-child(2):not(.selected){box-shadow:inset 0 3px var(--accent-orange-bright),var(--shadow)}
+.course-track:nth-child(2):not(.selected) span{color:var(--accent-orange)}
+.event-date{background:color-mix(in srgb,var(--accent-orange) 13%,var(--white));color:var(--accent-orange);transition:transform .25s ease}
+.cal-dot.meeting{background:var(--accent-orange-bright)}
+.cal-chip.meeting{background:#fff0dd;color:#8a451b}
+[data-theme=dark] .cal-chip.meeting{background:#503525;color:#ffca9b}
+@media(hover:hover){
+  .brand:hover .brand-x,.mobile-wordmark:hover .brand-x{transform:translateY(-2px) rotate(-7deg) scale(1.08)}
+  .feature-card:nth-child(2):hover,.about-track-card:nth-child(2):hover{border-color:var(--accent-orange-bright)}
+  .about-step:hover{transform:translateY(-4px);box-shadow:0 18px 36px #102a3240}
+  .about-value:nth-child(2):hover:before{width:42px}
+  .course-track:nth-child(2):not(.selected):hover{border-color:var(--accent-orange-bright)}
+  .list-item:hover .event-date{transform:translateY(-2px)}
+}
+.brand:focus-visible .brand-x,.mobile-wordmark:focus-visible .brand-x{transform:translateY(-2px) rotate(-7deg)}
+.course-track:nth-child(2):focus-visible{outline:2px solid var(--accent-orange-bright);outline-offset:3px}
+@keyframes warmAccentIn{from{opacity:0;transform:scaleX(.15)}to{opacity:1;transform:scaleX(1)}}
+@keyframes brandMarkIn{from{opacity:0;transform:translateY(9px) rotate(-20deg)}to{opacity:.8;transform:translateY(0) rotate(-13deg)}}
+@media(max-width:520px){.mobile-wordmark{display:inline-flex}.topbar{gap:8px}.topbar .top-actions{margin-left:auto}}
+@media(max-width:380px){.mobile-wordmark-long{display:none}.mobile-wordmark-short{display:inline}.mobile-wordmark{font-size:16px}}
+@media(prefers-reduced-motion:reduce){.hero-graphic,.hero-copy>.eyebrow:before,.about-kicker:before{animation:none}}
