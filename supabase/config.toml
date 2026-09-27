@@ -2,3 +2,8 @@
 # The function accepts only the named approval_email_worker secret key.
 [functions.send-approval-emails]
 verify_jwt = false
+
+# Public GET returns the VAPID public key; the POST worker verifies its named
+# secret API key before touching the private push queue.
+[functions.send-push-notifications]
+verify_jwt = false

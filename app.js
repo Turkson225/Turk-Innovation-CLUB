@@ -10,8 +10,10 @@ const date = (s) => s ? new Date(s).toLocaleDateString(undefined,{month:'short',
 const dateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'TBD';
 const initials = (s) => String(s || 'IX').split(/\s+/).slice(0,2).map(x => x[0]).join('').toUpperCase();
 let session = null, me = null, cache = {}, page = 'home', activeProject = null, activeChannelId = null, activeThreadId = null, activeReportTarget = null, pollTimer = null, presenceTimer = null, chatTimer = null, chatRealtime = null, authReady = false, communityReady = false, enhancedReady = false, feedReady = false, dmReady = false, mediaReady = false, avatarReady = false, roleReady = false, learningReady = false, courseReady = false, coursePlanningReady = false, teacherProfileReady = false, teacherProfile = null, privacyReady = false, inventoryReady = false, inventoryCatalogReady = false, financeReady = false, financeApprovalsReady = false, activePeerId = null, lastRenderedPage = '';
-let adminAlertTimer = null, adminAlertRealtime = null, adminAlertDismissTimer = null, adminAudioContext = null, adminDeferredAlert = null;
+let adminAlertTimer = null, adminAlertDismissTimer = null, adminAudioContext = null, adminDeferredAlert = null;
 let deferredInstallPrompt = null;
+let memberNoticeRealtime = null, memberAlertTimer = null, memberAlertNotificationId = null, memberDeferredNotification = null, memberNotificationPrimed = false;
+let inboxUnreadCount = null, inboxCountRequest = 0, pushBusy = false;
 let adminPendingCount = 0, adminAlertsInitialized = false, adminSoundEnabled = false;
 let adminSeenApplicationIds = new Set();
 let adminAlertPolling = false;
@@ -100,6 +102,50 @@ function updateAdminAlertControls(){
   sound.classList.toggle('active',adminSoundEnabled);
 }
 function dismissAdminAlert(){clearTimeout(adminAlertDismissTimer);adminDeferredAlert=null;$('#adminAlert').hidden=true;}
+function dismissMemberAlert(){clearTimeout(memberAlertTimer);memberAlertNotificationId=null;$('#memberAlert').hidden=true;}
+function updateInboxIndicators(){
+  const count=clubAccess()?(inboxUnreadCount??(cache.notifications||[]).filter(n=>!n.read_at).length):0;
+  const bell=$('#memberBell'),bubble=$('#memberBellCount');
+  bell.hidden=!clubAccess()||!enhancedReady;
+  bell.setAttribute('aria-label',`${count} unread club ${count===1?'update':'updates'}. Open inbox`);
+  bubble.textContent=count>99?'99+':String(count);
+  bubble.hidden=!count;
+  bell.classList.toggle('has-unread',count>0);
+  $('#notificationBadge').textContent=count;
+  void window.InnovateXPush?.updateBadge(count);
+}
+async function refreshInboxUnreadCount(){
+  const owner=session?.user.id,request=++inboxCountRequest;
+  if(!owner||!clubAccess()||!enhancedReady){inboxUnreadCount=null;updateInboxIndicators();return;}
+  const {count,error}=await db.from('notifications').select('id',{count:'exact',head:true}).eq('user_id',owner).is('read_at',null);
+  if(request!==inboxCountRequest||session?.user.id!==owner)return;
+  if(error)console.error('Inbox unread count',error);
+  else inboxUnreadCount=count||0;
+  updateInboxIndicators();
+}
+function showMemberAlert(notification){
+  if(!clubAccess())return;
+  if(document.hidden){memberDeferredNotification=notification;return;}
+  if(memberAlertNotificationId===notification.id&&!$('#memberAlert').hidden)return;
+  memberDeferredNotification=null;
+  memberAlertNotificationId=notification.id;
+  $('#memberAlertTitle').textContent=notification.kind==='direct_message'?'New direct message':'New club update';
+  $('#memberAlertMessage').textContent=String(notification.title||'Open your inbox for the latest update.').slice(0,180);
+  $('#memberAlert').hidden=false;
+  clearTimeout(memberAlertTimer);
+  memberAlertTimer=setTimeout(dismissMemberAlert,11000);
+}
+function receiveMemberNotification(notification){
+  if(!clubAccess()||!session||notification?.user_id!==session.user.id)return;
+  const known=(cache.notifications||[]).some(n=>n.id===notification.id);
+  const byId=new Map((cache.notifications||[]).map(n=>[n.id,n]));
+  byId.set(notification.id,notification);
+  cache.notifications=[...byId.values()].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,1000);
+  if(!known&&inboxUnreadCount!==null&&!notification.read_at)inboxUnreadCount++;
+  updateInboxIndicators();void refreshInboxUnreadCount();
+  if(page==='notifications')render();
+  if(!known)showMemberAlert(notification);
+}
 function showAdminAlert(title,message){
   if(!admin())return;
   if(document.hidden){clearTimeout(adminAlertDismissTimer);$('#adminAlert').hidden=true;adminDeferredAlert={title,message};return;}
@@ -144,10 +190,10 @@ function receiveAdminApplications(rows){
 }
 function mergeAdminNotifications(rows){
   const byId=new Map((cache.notifications||[]).map(n=>[n.id,n]));
-  for(const n of rows)byId.set(n.id,n);
+  let changed=false;
+  for(const n of rows){if(!byId.has(n.id)||byId.get(n.id)?.read_at!==n.read_at)changed=true;byId.set(n.id,n);}
   cache.notifications=[...byId.values()].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,1000);
-  $('#notificationBadge').textContent=cache.notifications.filter(n=>!n.read_at).length;
-  if(page==='notifications')render();
+  if(changed){updateInboxIndicators();void refreshInboxUnreadCount();if(page==='notifications')render();}
 }
 async function refreshAdminAlerts(){
   if(!admin()||!session||adminAlertPolling)return;
@@ -552,6 +598,7 @@ async function refreshVisiblePage(){
 async function refresh(mode='full') {
   if (!db || !session) return;
   const owner=session.user.id,generation=authGeneration,scoped=mode==='page';
+  const knownNotificationIds=new Set((cache.notifications||[]).map(n=>n.id));
   const previous=accessSignature(me);
   const self=await db.from('profiles').select('*').eq('id',session.user.id).single();
   if(session?.user.id!==owner||generation!==authGeneration)return;
@@ -615,8 +662,16 @@ async function refresh(mode='full') {
   }
   if(admin()&&names.includes('notifications')&&results[names.indexOf('notifications')].status==='fulfilled')receiveAdminApplications(cache.notifications);
   const succeeded=n=>results[names.indexOf(n)]?.status==='fulfilled';
+  if(names.includes('notifications')&&succeeded('notifications')){
+    if(memberNotificationPrimed){
+      const latest=(cache.notifications||[]).find(n=>!n.read_at&&!knownNotificationIds.has(n.id)&&!(admin()&&n.kind==='application'));
+      if(latest)showMemberAlert(latest);
+    }
+    memberNotificationPrimed=true;
+  }
   if(names.includes('channels'))communityReady=succeeded('channels');
   if(names.includes('channel_reads'))enhancedReady=succeeded('channel_reads');
+  if(names.includes('notifications')&&succeeded('notifications'))void refreshInboxUnreadCount();
   if(names.includes('activity_posts'))feedReady=succeeded('activity_posts');
   if(names.includes('direct_messages'))dmReady=succeeded('direct_messages');
   if(names.includes('learning_materials'))learningReady=succeeded('learning_materials');
@@ -689,6 +744,7 @@ async function signedIn(newSession) {
   const generation=++authGeneration;
   closeImageViewer(false);
   session=newSession;
+  inboxUnreadCount=null;inboxCountRequest++;dismissMemberAlert();memberDeferredNotification=null;memberNotificationPrimed=false;
   unreadCounts={channels:{},direct_messages:{},direct_peers:[],direct_total:0};unreadCountsReady=false;
   applicationVerification=new Map();applicationsOwner=null;feedOwner=null;channelHistoryId=null;dmThreadPeer=null;
   applicationRows=[];approvedAccountRows=[];channelHistoryRows=[];dmThreadRows=[];
@@ -697,8 +753,9 @@ async function signedIn(newSession) {
   clearInterval(chatTimer);clearInterval(adminAlertTimer);dismissAdminAlert();
   adminPendingCount=0;adminAlertsInitialized=false;adminSeenApplicationIds=new Set();adminAlertPolling=false;
   if(chatRealtime) { await db.removeChannel(chatRealtime); chatRealtime=null; }
-  if(adminAlertRealtime) { await db.removeChannel(adminAlertRealtime); adminAlertRealtime=null; }
+  if(memberNoticeRealtime) { await db.removeChannel(memberNoticeRealtime); memberNoticeRealtime=null; }
   if(generation!==authGeneration)return;
+  void window.InnovateXPush?.authChanged(session?.user.id||null,db).then(()=>{if(page==='notifications')render();}).catch(error=>{console.error('Push state',error);if(!session)show(error.message);});
   if(session) {
     pendingEmail=''; sessionStorage.removeItem('innovatex.pendingEmail');sessionStorage.removeItem('innovatex.pendingAuthMode');
     const {data,error}=await db.from('profiles').select('*').eq('id',session.user.id).single();
@@ -725,16 +782,17 @@ async function signedIn(newSession) {
     }
     if(communityReady && clubAccess()) chatRealtime=db.channel('innovatex-chat')
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'channel_messages'},refreshChat).subscribe();
-    if(admin()){
-      adminAlertTimer=setInterval(()=>{if(!document.hidden)void refreshAdminAlerts();},10000);
-      adminAlertRealtime=db.channel(`innovatex-admin-applications-${session.user.id}`)
+    if(clubAccess()){
+      memberNoticeRealtime=db.channel(`innovatex-inbox-${session.user.id}`)
         .on('postgres_changes',{event:'INSERT',schema:'public',table:'notifications',filter:`user_id=eq.${session.user.id}`},payload=>{
           const notification=payload.new;
-          if(!admin()||notification?.kind!=='application'||notification.target_type!=='application')return;
-          receiveAdminApplications([notification]);mergeAdminNotifications([notification]);
-          void refreshAdminAlerts();
+          if(admin()&&notification?.kind==='application'&&notification.target_type==='application'){
+            receiveAdminApplications([notification]);mergeAdminNotifications([notification]);
+            void refreshAdminAlerts();
+          }else receiveMemberNotification(notification);
         }).subscribe();
     }
+    if(admin())adminAlertTimer=setInterval(()=>{if(!document.hidden)void refreshAdminAlerts();},10000);
   } else { me=null;applicationAnswersReady=false;roleReady=false;courseReady=false;coursePlanningReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); await loadPublic(); }
   if(session&&!approved()&&!['about','founders','investors','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
   if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
@@ -764,6 +822,7 @@ async function init() {
     updateInstallButton();
   });
   window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;updateInstallButton();show('InnovateX is ready on your home screen.');});
+  window.addEventListener('innovatexpush',()=>{if(session){void refreshInboxUnreadCount();void refreshVisiblePage();}});
   $('#modal').addEventListener('click',e=>{ if(e.target===$('#modal')) close(); });
   $('.modal-close').onclick=close;
   setupImageViewer();
@@ -789,7 +848,9 @@ async function init() {
     if(!session)return;
     if(document.hidden){if(approved())void touchPresence(false);return;}
     if(adminDeferredAlert)showAdminAlert(adminDeferredAlert.title,adminDeferredAlert.message);
+    if(memberDeferredNotification&&(cache.notifications||[]).some(n=>n.id===memberDeferredNotification.id&&!n.read_at))showMemberAlert(memberDeferredNotification);
     if(approved())void touchPresence();
+    void refreshInboxUnreadCount();
     void refreshVisiblePage();
     if(page==='channels')void refreshChat();
     if(admin())void refreshAdminAlerts();
@@ -859,7 +920,7 @@ function render() {
   $('#guestSidebarCta').hidden=!!session||configured&&!authReady;
   const online=(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length;
   $('#onlineBadge').textContent=online;
-  $('#notificationBadge').textContent=(cache.notifications||[]).filter(n=>!n.read_at).length;
+  updateInboxIndicators();
   updateAdminAlertControls();
   const pendingFinance=founderOnly()&&financeApprovalsReady?(cache.finance_entries||[]).filter(x=>financeStatus(x)==='pending').length:0;
   const financeBadge=$('#financeReviewBadge');if(financeBadge){financeBadge.textContent=pendingFinance;financeBadge.hidden=!pendingFinance;}
@@ -1042,7 +1103,15 @@ function messages() {
 }
 async function markDmRead(peerId) {
   if(!dmReady||!session||!peerId)return;
-  const stamp=new Date().toISOString();try{const {error}=await db.from('direct_message_reads').upsert({user_id:session.user.id,peer_id:peerId,last_read_at:stamp},{onConflict:'user_id,peer_id'});if(error)throw error;cache.direct_message_reads=(cache.direct_message_reads||[]).filter(r=>r.peer_id!==peerId).concat({user_id:session.user.id,peer_id:peerId,last_read_at:stamp});await refreshUnreadCounts();}catch(e){console.error(e);}
+  const stamp=new Date().toISOString(),owner=session.user.id;
+  try{
+    const {error}=await db.from('direct_message_reads').upsert({user_id:owner,peer_id:peerId,last_read_at:stamp},{onConflict:'user_id,peer_id'});if(error)throw error;
+    cache.direct_message_reads=(cache.direct_message_reads||[]).filter(r=>r.peer_id!==peerId).concat({user_id:owner,peer_id:peerId,last_read_at:stamp});
+    const notices=await db.from('notifications').update({read_at:stamp}).eq('user_id',owner).eq('kind','direct_message').eq('target_id',peerId).is('read_at',null);
+    if(notices.error)console.error('Mark message alerts read',notices.error);
+    else for(const n of cache.notifications||[])if(n.kind==='direct_message'&&n.target_id===peerId&&!n.read_at)n.read_at=stamp;
+    await refreshUnreadCounts();void refreshInboxUnreadCount();
+  }catch(e){console.error(e);}
 }
 function projects() {
   const list=cache.projects||[];
@@ -1401,6 +1470,28 @@ function adminDashboard(){
   <div class="section-heading"><h2>Download CSV</h2><p>Each CSV fetches all records you are authorized to see, in batches, when you click Download.</p></div><div class="card"><div class="export-actions">${exports.map(([key,label])=>`<button class="button button-outline button-sm" data-action="exportCsv" data-table="${key}">${esc(label)} CSV ↓</button>`).join('')}</div><p class="hint">CSV files exclude authentication records, direct messages and uploaded file contents. Preserve Storage files separately; use database backups for recovery.</p></div>
   <div class="section-heading"><h2>Recent administrator actions</h2></div><div class="card">${(cache.audit_events||[]).slice(0,8).map(a=>`<div class="list-item"><div><strong>${esc(a.action.replaceAll('_',' '))}</strong><small>${dateTime(a.created_at)} · ${esc(memberName(a.actor_id))}</small></div></div>`).join('')||'<p class="muted">No actions recorded yet.</p>'}</div>`;
 }
+function pushSettingsCard(){
+  const state=window.InnovateXPush?.state();
+  const status=pushBusy?'Updating…':!state?.supported?state?.installed?'Unavailable on this browser':'Install the web app first':state.permission==='denied'?'Blocked in device settings':state.subscribed?'On for this device':'Off for this device';
+  const detail=!state?.supported?state?.installed?'This browser cannot receive web push. You can still use the club inbox while the app is open.':'On iPhone, add InnovateX to your Home Screen and open the installed app before enabling alerts. Other devices may support alerts directly in the browser.':state.permission==='denied'?'Allow InnovateX notifications in your device or browser settings, then return here.':state.subscribed?'New club messages and updates can appear even while this app is closed. Your device controls lock-screen visibility.':'Turn on device alerts for direct messages, mentions, replies and club updates. Message text will not appear in lock-screen previews.';
+  const control=state?.supported&&state.permission!=='denied'?`<button class="button ${state.subscribed?'button-outline':''} button-sm" type="button" data-action="togglePush" ${pushBusy?'disabled':''}>${state.subscribed?'Turn off device alerts':'Enable device alerts'}</button>`:'';
+  return `<div class="card push-settings"><span class="push-settings-icon" aria-hidden="true">${iconSvg('notifications')}</span><div><span class="eyebrow">PHONE &amp; DESKTOP</span><h2>Alerts on this device</h2><p>${esc(detail)}</p><strong class="push-status">${esc(status)}</strong></div>${control}</div>`;
+}
+async function togglePushNotifications(){
+  if(!clubAccess()||pushBusy||!window.InnovateXPush)return;
+  const owner=session.user.id,client=window.InnovateXPush;
+  pushBusy=true;
+  // Calling subscribe here preserves the button's user gesture for the browser permission request.
+  const operation=client.state().subscribed?client.unsubscribe(owner,db):client.subscribe(owner,db);
+  if(page==='notifications')render();
+  try{
+    const next=await operation;
+    if(session?.user.id!==owner)return;
+    show(next.subscribed?'Device alerts enabled.':'Device alerts turned off.');
+  }catch(error){
+    if(session?.user.id===owner)fail(error);
+  }finally{pushBusy=false;if(session?.user.id===owner&&page==='notifications')render();}
+}
 function notifications() {
   if(!enhancedReady)return head('CLUB INBOX','Notifications','Mentions and updates.')+communityNotice();
   const list=cache.notifications||[];
@@ -1408,8 +1499,9 @@ function notifications() {
   const founderSoon=founder()?(cache.founder_meetings||[]).filter(e=>new Date(e.starts_at)>new Date()&&new Date(e.starts_at)-Date.now()<172800000):[];
   const tasksSoon=(cache.project_tasks||[]).filter(t=>t.assignee_id===session?.user.id&&t.status!=='done'&&t.due_at&&new Date(t.due_at)>new Date()&&new Date(t.due_at)-Date.now()<172800000);
   return `${head('CLUB INBOX','Notifications','Mentions, replies, assignments and upcoming meetings.')}
+    ${pushSettingsCard()}
     ${(soon.length||founderSoon.length||tasksSoon.length)?`<div class="notice"><strong>Coming up in the next 48 hours:</strong> ${[...soon,...founderSoon].map(e=>esc(e.title)+' · '+dateTime(e.starts_at)).concat(tasksSoon.map(t=>esc(t.title)+' · due '+dateTime(t.due_at))).join(' / ')}</div>`:''}
-    <div class="grid" style="margin-top:18px">${list.length?list.map(n=>`<div class="card notification-item ${n.read_at?'':'unread'}"><div><span class="tag">${esc(n.kind)}</span><h3>${esc(n.title)}</h3><p>${dateTime(n.created_at)}</p></div><div><button class="text-button" data-action="openNotification" data-id="${esc(n.id)}">Open →</button>${!n.read_at?` · <button class="text-button" data-action="readNotification" data-id="${esc(n.id)}">Mark read</button>`:''}</div></div>`).join(''):empty('All caught up','Mentions, replies and task assignments will show here.')}</div>`;
+    <div class="grid" style="margin-top:18px">${list.length?list.map(n=>`<div class="card notification-item ${n.read_at?'':'unread'}"><div><span class="tag">${esc(n.kind)}</span><h3>${esc(n.title)}</h3><p>${dateTime(n.created_at)}</p></div><div><button class="text-button" data-action="openNotification" data-id="${esc(n.id)}">Open →</button>${!n.read_at?` · <button class="text-button" data-action="readNotification" data-id="${esc(n.id)}">Mark read</button>`:''}</div></div>`).join(''):empty('All caught up','Messages, club alerts and your updates will show here.')}</div>`;
 }
 function moderation() {
   if(!admin())return '';
@@ -1528,7 +1620,7 @@ function projectDetail(id) {
     <div class="row" style="margin-top:22px"><h3>Project discussions</h3><button class="text-button" data-action="projectTopic" data-id="${esc(id)}">Start discussion +</button></div>${threads.length?threads.map(t=>`<div class="list-item"><div><strong>${esc(t.title)}</strong><small>${date(t.created_at)}</small></div><button class="text-button" data-action="topicDetail" data-id="${esc(t.id)}">Open →</button></div>`).join(''):'<p class="muted">No project discussions yet.</p>'}${can?`<div class="profile-action">${button('Update project','projectEdit','button-outline button-sm')}</div>`:''}`);
 }
 function topicDetail(id) {const t=(cache.topics||[]).find(x=>x.id===id);if(!t)return;const list=(cache.replies||[]).filter(x=>x.topic_id===id).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));modal(`<span class="tag">${esc(t.category)}</span><h2 style="margin-top:15px">${esc(t.title)}</h2><p>${esc(t.body)}</p><h3>Replies (${list.length})</h3><div style="max-height:300px;overflow:auto">${list.map(r=>`<div class="reply"><strong>${esc((cache.profiles||[]).find(p=>p.id===r.author_id)?.full_name||'Member')}</strong><span class="subtle"> · ${dateTime(r.created_at)}</span><p>${esc(r.body)}</p></div>`).join('')||'<p class="muted">Be the first to reply.</p>'}</div><form id="editor" data-kind="reply" class="form-stack">${area('Your reply','body')}<button class="button" type="submit">Post reply</button></form>`);}
-async function signOut() {try{await touchPresence(false);const {error}=await db.auth.signOut();if(error)throw error;pendingProtectedPage='';history.replaceState(null,'','#home');await signedIn(null);show('Signed out. See you soon.');}catch(e){fail(e);}}
+async function signOut() {try{if(session&&window.InnovateXPush)await window.InnovateXPush.unsubscribe(session.user.id,db);await touchPresence(false);const {error}=await db.auth.signOut();if(error)throw error;pendingProtectedPage='';history.replaceState(null,'','#home');await signedIn(null);show('Signed out. See you soon.');}catch(e){fail(e);}}
 
 async function deleteAnnouncement(id){
   if(!admin())return;
@@ -1558,6 +1650,14 @@ function actions(e) {
     return;
   }
   if(action==='dismissAdminAlert'){dismissAdminAlert();return;}
+  if(action==='dismissMemberAlert'){dismissMemberAlert();return;}
+  if(action==='openMemberAlert'){
+    const notificationId=memberAlertNotificationId;dismissMemberAlert();
+    if(notificationId)void openNotification(notificationId);else location.hash='#notifications';
+    return;
+  }
+  if(action==='openMemberInbox'){dismissMemberAlert();location.hash='#notifications';return;}
+  if(action==='togglePush'){void togglePushNotifications();return;}
   if(action==='deleteAnnouncement'){void deleteAnnouncement(id);return;}
   if(action==='openAdminApplications'){
     if(!admin())return;
@@ -1933,7 +2033,7 @@ async function removeFounderCard(id) {
   }catch(error){fail(error);}
 }
 async function markNotification(id) {
-  try {const {error}=await db.from('notifications').update({read_at:new Date().toISOString()}).eq('id',id);if(error)throw error;await refresh();}catch(e){fail(e);}
+  try {const {error}=await db.from('notifications').update({read_at:new Date().toISOString()}).eq('id',id);if(error)throw error;await refresh();void refreshInboxUnreadCount();}catch(e){fail(e);}
 }
 async function openNotification(id) {
   const n=(cache.notifications||[]).find(x=>x.id===id);if(!n)return;
@@ -1947,6 +2047,7 @@ async function openNotification(id) {
   else if(n.target_type==='meeting')location.hash='#founder-room';
   else if(n.target_type==='founder')location.hash='#founder-room';
   else if(n.target_type==='event')location.hash='#events';
+  else if(n.target_type==='announcement')location.hash='#announcements';
   else if(n.target_type==='application')location.hash=admin()?'#applications':'#application';
   else if(n.target_type==='teacher')location.hash='#teaching';
   else if(n.target_type==='privacy_request'){location.hash='#privacy';if(admin())setTimeout(()=>document.getElementById('privacy-admin-queue')?.scrollIntoView({behavior:'smooth',block:'start'}),80);}

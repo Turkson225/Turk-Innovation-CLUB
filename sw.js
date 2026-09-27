@@ -89,3 +89,58 @@ self.addEventListener('fetch', event => {
 
   if (staticUrls.has(url.href)) event.respondWith(publicAsset(request, url.href));
 });
+
+// Only short, generic text appears on the lock screen. The authenticated
+// message itself is fetched by the app after the member opens it.
+const notificationIcon = urlFor('icons/icon-192.png');
+const allowedNotificationRoutes = new Set(['#messages', '#channels', '#notifications']);
+function safeNotificationUrl(candidate) {
+  try {
+    const target = new URL(candidate || '#notifications', scope);
+    if (target.origin === scope.origin && target.pathname === scope.pathname &&
+        !target.search && allowedNotificationRoutes.has(target.hash)) return target.href;
+  } catch {}
+  return urlFor('#notifications');
+}
+
+async function showPush(event) {
+  let payload = {};
+  try { payload = event.data?.json() || {}; } catch {}
+  const kind = payload.kind === 'message' ? 'message' : 'notification';
+  const url = safeNotificationUrl(payload.url);
+  const title = 'InnovateX Engineering Club';
+  const body = kind === 'message' ? 'You have a new club message.' : 'You have a new club notification.';
+  const tag = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.id || '') ? `innovatex-${payload.id}` : undefined;
+  await self.registration.showNotification(title, {
+    body, icon: notificationIcon, badge: notificationIcon, tag,
+    data: { url }
+  });
+  // The backend deliberately sends no private data or unread total in push.
+  // A dot alerts members while the app is closed; the open app sets the exact count.
+  try { if (typeof self.navigator.setAppBadge === 'function') await self.navigator.setAppBadge(); }
+  catch (error) { console.debug('App badge unavailable', error); }
+  const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  for (const client of windows) {
+    if (new URL(client.url).origin === scope.origin && new URL(client.url).pathname.startsWith(scope.pathname))
+      client.postMessage({ type: 'INNOVATEX_PUSH_RECEIVED', kind });
+  }
+}
+
+self.addEventListener('push', event => { event.waitUntil(showPush(event)); });
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const target = safeNotificationUrl(event.notification.data?.url);
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const app = windows.find(client => {
+      try { const url = new URL(client.url); return url.origin === scope.origin && url.pathname === scope.pathname; }
+      catch { return false; }
+    });
+    if (app) {
+      let destination = app;
+      try { destination = await app.navigate(target) || app; } catch {}
+      await destination.focus();
+    } else await self.clients.openWindow(target);
+  })());
+});
