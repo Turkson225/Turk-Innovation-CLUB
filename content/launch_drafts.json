@@ -1,0 +1,162 @@
+{
+  "schema": "innovatex-editorial-drafts-v1",
+  "status": "draft",
+  "note": "Editorial copy for the site forms; this is not an import, a Supabase migration, or evidence that anything has been scheduled or staffed. Null values require confirmation. Publishing a course or event makes it visible immediately.",
+  "workshops": [
+    {
+      "status": "draft",
+      "course_form": {
+        "title": "Build a feedback controller for a small fan",
+        "category": "Controls and Automation",
+        "level": "Beginner",
+        "build_goal": "A low-voltage temperature sensor changes the output of a small DC fan or LED around a chosen setpoint. Demonstrate and explain the difference between fixed output and feedback.",
+        "practice_steps": "Check component ratings and draw the circuit; compare sensor readings with a reference; log fixed-output behavior; add on/off control with hysteresis; change the setpoint; test sensor disconnection and restart; compare the runs in a test table.",
+        "tools": "Microcontroller, low-voltage temperature sensor, small DC fan or LED substitute, rated driver, protected low-voltage supply, breadboard, wires, computer and reference thermometer or documented readings.",
+        "starts_at": null,
+        "submission_due_at": null,
+        "resource_url": null
+      },
+      "worksheet": {
+        "title": "Feedback controller build and test sheet",
+        "kind": "worksheet",
+        "description": "Circuit ratings, setpoint and hysteresis, sensor comparison, fixed and feedback runs, disconnected-sensor result and build evidence.",
+        "source_section": "launch_packet.md#controls-and-automation--feedback-controller-for-a-small-fan",
+        "file": null
+      },
+      "event_form": {
+        "title": "Build session: Feedback controller for a small fan",
+        "description": "Build and test a low-voltage feedback controller. Bring a laptop if available; equipment and access instructions will be confirmed by the organizer.",
+        "starts_at": null,
+        "ends_at": null,
+        "location": null,
+        "meet_url": null
+      },
+      "must_confirm": ["approved teacher and course assignment", "start and project deadline", "event end time and venue", "component ratings and available equipment", "safety review", "worksheet and slides review"]
+    },
+    {
+      "status": "draft",
+      "course_form": {
+        "title": "Turn sensor readings into a useful dashboard",
+        "category": "Software and Programming",
+        "level": "Beginner",
+        "build_goal": "A mobile-friendly dashboard with timestamped sample readings, recent history, connection status and a reproducible threshold alert.",
+        "practice_steps": "Inspect documented sample data; parse timestamps and units; draw a recent-history chart; distinguish zero, missing and stale values; add a threshold control; test empty and malformed inputs and a narrow screen; optionally connect a permitted live feed.",
+        "tools": "Browser, code editor, documented sample CSV or generated readings, computer; optional ESP32 and low-voltage sensor. No live hardware required for the first session.",
+        "starts_at": null,
+        "submission_due_at": null,
+        "resource_url": null
+      },
+      "worksheet": {
+        "title": "Sensor dashboard data and interface test sheet",
+        "kind": "worksheet",
+        "description": "Dataset source, units and timezone, tests for zero/missing/stale readings, threshold behavior, phone-width layout and screenshots.",
+        "source_section": "launch_packet.md#software-and-programming--sensor-readings-dashboard",
+        "file": null
+      },
+      "event_form": {
+        "title": "Build session: Sensor readings dashboard",
+        "description": "Build and test a responsive dashboard using a documented sample dataset. Laptop access and any online joining instructions will be confirmed.",
+        "starts_at": null,
+        "ends_at": null,
+        "location": null,
+        "meet_url": null
+      },
+      "must_confirm": ["approved teacher and course assignment", "start and project deadline", "event end time and venue or authorized Meet", "sample data source and rights", "laptop access", "worksheet and slides review"]
+    },
+    {
+      "status": "draft",
+      "course_form": {
+        "title": "Calibrate and test a small line-following robot",
+        "category": "Electronics and Robotics",
+        "level": "Beginner",
+        "build_goal": "A low-voltage two-motor robot follows a marked line on a short test course using measured sensor thresholds; a stationary rig or simulator can substitute when kits are unavailable.",
+        "practice_steps": "Map pins; verify battery polarity and motor ratings; test direction with wheels lifted; measure light and dark sensor readings; choose thresholds and tune low-speed steering; run three comparable trials; demonstrate a stop when the line is lost.",
+        "tools": "Small chassis, two DC motors, rated motor driver, microcontroller, line sensors, protected low-voltage battery, marked test surface and computer; simulator or stationary sensor rig if kits are unavailable.",
+        "starts_at": null,
+        "submission_due_at": null,
+        "resource_url": null
+      },
+      "worksheet": {
+        "title": "Robot calibration and three-trial record",
+        "kind": "worksheet",
+        "description": "Pin map, motor ratings, light and dark measurements, threshold selection, three trial observations and lost-line stop evidence.",
+        "source_section": "launch_packet.md#electronics-and-robotics--calibrate-a-line-following-robot",
+        "file": null
+      },
+      "event_form": {
+        "title": "Build session: Line-following robot",
+        "description": "Calibrate line sensors, run repeatable low-speed tests and demonstrate a lost-line stop. Kits or simulator arrangements will be confirmed.",
+        "starts_at": null,
+        "ends_at": null,
+        "location": null,
+        "meet_url": null
+      },
+      "must_confirm": ["approved teacher and course assignment", "start and project deadline", "event end time and safe test venue", "kits or simulator", "battery and movement safety review", "worksheet and slides review"]
+    },
+    {
+      "status": "draft",
+      "course_form": {
+        "title": "Classify simple device states from sensor data",
+        "category": "AI & Machine Learning",
+        "level": "Beginner",
+        "build_goal": "A reproducible small classifier labels documented device readings as normal or needs inspection, compares with a simple baseline and explains uncertainty.",
+        "practice_steps": "Define labels and inspect source rights; check missingness and class balance; split by session or device; build a baseline rule; train one small model; calculate held-out precision, recall and confusion matrix; test an out-of-range reading and describe limits.",
+        "tools": "Computer, Python notebook or accessible browser ML tool, documented sample sensor dataset or consented low-voltage measurements. No paid cloud service required.",
+        "starts_at": null,
+        "submission_due_at": null,
+        "resource_url": null
+      },
+      "worksheet": {
+        "title": "Device-state model evaluation sheet",
+        "kind": "worksheet",
+        "description": "Data source and rights, label rules, leakage-resistant split, baseline and model confusion matrices, out-of-range case and limitations.",
+        "source_section": "launch_packet.md#ai--machine-learning--classify-device-states",
+        "file": null
+      },
+      "event_form": {
+        "title": "Build session: Device-state classifier",
+        "description": "Use a documented dataset to train a small model, evaluate it on held-out data and explain its limits. Laptop and joining arrangements will be confirmed.",
+        "starts_at": null,
+        "ends_at": null,
+        "location": null,
+        "meet_url": null
+      },
+      "must_confirm": ["approved teacher and course assignment", "start and project deadline", "event end time and venue or authorized Meet", "dataset source and rights", "personal-data review", "worksheet and slides review"]
+    }
+  ],
+  "projects": [
+    {
+      "status": "draft",
+      "owner_id": null,
+      "project_form": {
+        "title": "Instrumented low-voltage energy bench",
+        "summary": "Measure a safe low-voltage test load, calibrate against a reference meter and visualize power estimates and alerts.",
+        "description": "Define a rated low-voltage load and sensors, compare measurements with a trusted reference, display voltage, current and estimated power over time, and demonstrate a safe missing-reading or disconnected-load case. Record measurement uncertainty. This prototype does not claim certified protection or mains testing.",
+        "status": "planning"
+      },
+      "first_tasks": ["Agree on rated circuit, sensors and safe test load", "Record and compare initial readings against a trusted meter", "Build a sample-data dashboard and test a missing-reading alert"],
+      "must_confirm": ["approved member owner", "measurement reviewer", "available rated parts", "safe test procedure", "milestones and consenting collaborators"]
+    },
+    {
+      "status": "draft",
+      "owner_id": null,
+      "project_form": {
+        "title": "Workshop inventory scanner",
+        "summary": "Prototype QR or barcode check-out and return against sample stock with duplicate and offline tests.",
+        "description": "Use non-sensitive sample inventory to test scans, returns, duplicate IDs, unknown items and offline behavior. Integrate with live club inventory only after the administrator reviews permissions, audit history and duplicate handling. Do not publish member borrowing records in public posts.",
+        "status": "planning"
+      },
+      "first_tasks": ["Agree on sample item IDs and sketch check-out and return flows", "Build a scanner interface or mock input and test invalid and duplicate codes", "Review data permissions with the administrator before any live-stock integration"],
+      "must_confirm": ["approved member owner", "administrator permission review", "sample item IDs", "milestones and consenting collaborators"]
+    }
+  ],
+  "public_founder_profile": {
+    "status": "awaiting_explicit_consent",
+    "name": null,
+    "role": null,
+    "bio": null,
+    "link_url": null,
+    "portrait_file": null,
+    "must_confirm": ["exact profile copy approved by founder", "permission for public portrait and use context", "image ownership and quality", "contact for changes or removal"]
+  }
+}

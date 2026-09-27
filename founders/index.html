@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101e2b">
+  <title>Founders and leadership | InnovateX Engineering Club</title>
+  <meta name="description" content="Meet InnovateX Engineering Club's published founders and learn how the independent club coordinates learning, projects and accountability.">
+  <link rel="canonical" href="https://turkson225.github.io/Turk-Innovation-CLUB/founders/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Founders and leadership | InnovateX Engineering Club">
+  <meta property="og:description" content="Meet the club's published founders and explore its independent leadership and practical engineering community.">
+  <meta property="og:url" content="https://turkson225.github.io/Turk-Innovation-CLUB/founders/">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="../public-pages.css">
+</head>
+<body class="public-page">
+  <a class="public-skip" href="#main">Skip to content</a>
+  <header class="public-header">
+    <a class="public-brand" href="../" aria-label="InnovateX Engineering Club home"><span class="public-brand-mark">IX</span><span class="public-brand-name"><strong>INNOVATE<span>X</span></strong><small>ENGINEERING CLUB</small></span></a>
+    <nav class="public-nav" aria-label="Public pages"><a href="../">Home</a><a href="../about/">About</a><a href="./" aria-current="page">Founders</a><a href="../#privacy">Privacy &amp; conduct</a><a class="public-nav-join" href="../#founders">Founder access →</a></nav>
+  </header>
+  <main id="main" class="public-main">
+    <section class="public-hero public-founder-hero" aria-labelledby="founders-heading"><div class="public-hero-copy"><span class="eyebrow">The people behind the idea</span><h1 id="founders-heading">Founders and leadership.</h1><p>The founding team shapes InnovateX with members, teachers and mentors. Each public profile below is managed by the club administrator and appears after that person agrees to be listed.</p><div class="public-action-row"><a class="button" href="../about/">About the club →</a><a class="button button-outline" href="../#founders">Open founder workspace</a></div></div></section>
+
+    <section class="public-section" aria-labelledby="team-heading"><div class="public-section-header"><span class="eyebrow">The team</span><h2 id="team-heading">Meet the published founders.</h2><p>Profiles are loaded from the club’s public directory. A founder’s photo appears only after it has been published for public use.</p></div><div id="founderDirectory" class="public-founder-list" aria-live="polite"><div class="public-founder-empty"><h3>Loading founder profiles…</h3><p>You can also open the <a class="link" href="../#founders">live club directory</a>.</p></div></div><noscript><p class="public-note">JavaScript is needed to display current founder profiles from the club directory. The <a href="../#founders">club workspace</a> also lists them.</p></noscript></section>
+
+    <section class="public-section" aria-labelledby="leadership-heading"><div class="public-section-header"><span class="eyebrow">How the club is led</span><h2 id="leadership-heading">Decisions, learning and accountability.</h2></div><div class="public-process"><article class="public-card"><strong>01 / Leadership</strong><h3>Coordinate the club</h3><p>Club leaders coordinate training, projects, communications and finance.</p></article><article class="public-card"><strong>02 / Founders</strong><h3>Guide the direction</h3><p>Founders shape the club’s direction and lead its mentoring and partnerships.</p></article><article class="public-card"><strong>03 / Records</strong><h3>Keep accountability</h3><p>Administrators maintain club funds and inventory records; founders review financial entries.</p></article></div></section>
+
+    <section class="public-cta"><span class="eyebrow">Build the club together</span><h2>Interested in joining the founding team?</h2><p>Choose a founder application in the club workspace. An administrator reviews accounts after email verification. Approved founders can plan and meet in a private room.</p><div class="public-action-row"><a class="button" href="../#founders">Apply through the workspace →</a><a class="button button-outline" href="../about/">Explore our mission</a></div></section>
+  </main>
+  <footer class="public-footer"><span>InnovateX Engineering Club</span><span><a href="../">Workspace</a> · <a href="../about/">About</a> · <a href="../#privacy">Privacy &amp; conduct</a></span></footer>
+  <script src="../config.js"></script>
+  <script>
+  (() => {
+    const container = document.querySelector('#founderDirectory');
+    const cfg = window.INNOVATEX_CONFIG || {};
+    const fallback = (title, message) => {
+      container.replaceChildren();
+      const box = document.createElement('div'); box.className = 'public-founder-empty';
+      const heading = document.createElement('h3'); heading.textContent = title;
+      const description = document.createElement('p'); description.textContent = message + ' ';
+      const link = document.createElement('a'); link.href = '../#founders'; link.className = 'link'; link.textContent = 'Open the club directory →';
+      description.append(link); box.append(heading, description); container.append(box);
+    };
+    const initials = name => String(name || '').trim().split(/\s+/).slice(0, 2).map(part => part[0] || '').join('').toUpperCase();
+    const externalUrl = value => { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : ''; } catch { return ''; } };
+    const portraitUrl = (base, founder) => {
+      const path = String(founder.portrait_path || '');
+      if (!/^[0-9a-f-]{36}$/.test(String(founder.id || '')) || !path.startsWith(founder.id + '/') || !/^[0-9a-f-]{36}\.(jpg|jpeg|png|webp)$/.test(path.slice(37))) return '';
+      return base + '/storage/v1/object/public/club-founder-portraits/' + path.split('/').map(encodeURIComponent).join('/');
+    };
+    const card = (base, founder) => {
+      const article = document.createElement('article'); article.className = 'public-card public-founder-profile';
+      const imageWrap = document.createElement('div'); imageWrap.className = 'public-founder-photo';
+      const fallbackMark = document.createElement('span'); fallbackMark.textContent = initials(founder.name) || 'IX'; fallbackMark.setAttribute('aria-hidden', 'true'); imageWrap.append(fallbackMark);
+      const photo = portraitUrl(base, founder);
+      if (photo) { const image = document.createElement('img'); image.alt = 'Portrait of ' + founder.name; image.loading = 'lazy'; image.addEventListener('error', () => image.remove()); image.src = photo; imageWrap.append(image); }
+      const copy = document.createElement('div'); copy.className = 'public-founder-copy';
+      const role = document.createElement('span'); role.className = 'eyebrow'; role.textContent = founder.role || 'Founder';
+      const name = document.createElement('h3'); name.textContent = founder.name || 'Founder';
+      const bio = String(founder.bio || 'Founding team member').trim();
+      const preview = document.createElement('p');
+      if (bio.length > 195) {
+        preview.textContent = bio.slice(0, 195).replace(/\s+\S*$/, '').trim() + '…';
+        const details = document.createElement('details'); const summary = document.createElement('summary'); summary.textContent = 'Read full bio';
+        const full = document.createElement('p'); full.textContent = bio; details.append(summary, full); copy.append(role, name, preview, details);
+      } else { preview.textContent = bio; copy.append(role, name, preview); }
+      const profile = externalUrl(founder.link_url);
+      if (profile) { const link = document.createElement('a'); link.href = profile; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'View profile ↗'; copy.append(link); }
+      article.append(imageWrap, copy); return article;
+    };
+    const base = typeof cfg.supabaseUrl === 'string' && /^https:\/\//.test(cfg.supabaseUrl) ? cfg.supabaseUrl.replace(/\/$/, '') : '';
+    if (!base || !cfg.supabaseAnonKey) { fallback('Directory unavailable', 'The founder directory could not be loaded right now.'); return; }
+    const load = async () => {
+      const columns = ['id,name,role,bio,link_url,sort_order,portrait_path', 'id,name,role,bio,link_url,sort_order'];
+      let records;
+      for (const select of columns) {
+        const url = base + '/rest/v1/founders?select=' + encodeURIComponent(select) + '&order=sort_order.asc&limit=100';
+        const response = await fetch(url, { cache: 'no-store', headers: { apikey: cfg.supabaseAnonKey, Accept: 'application/json' } });
+        if (response.ok) { records = await response.json(); break; }
+        if (response.status !== 400 || select === columns[1]) throw new Error('Founder directory request failed');
+      }
+      if (!Array.isArray(records)) throw new Error('Invalid founder directory response');
+      container.replaceChildren();
+      if (records.length === 0) { fallback('Meet the team soon', 'Founder profiles will appear here after each person approves their public listing.'); return; }
+      container.classList.toggle('single', records.length === 1);
+      records.forEach(founder => container.append(card(base, founder)));
+    };
+    load().catch(() => fallback('Directory unavailable', 'The founder directory could not be loaded right now.'));
+  })();
+  </script>
+</body>
+</html>

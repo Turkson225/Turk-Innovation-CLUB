@@ -20,6 +20,7 @@ let memberDirectoryPage = 0, projectListPage = 0;
 let applicationsPage = 0, approvedAccountsPage = 0, applicationsOwner = null, applicationsLoading = false, applicationsError = '';
 let applicationRows = [], approvedAccountRows = [], applicationTotal = 0, approvedAccountTotal = 0, applicationsRequest = 0;
 let applicationVerification = new Map(), applicationVerificationError = '';
+let applicationAnswersReady = false;
 let feedPage = 0, feedTotal = 0, feedLoading = false, feedError = '', feedOwner = null, feedRequest = 0;
 let channelPage = 0, channelTotal = 0, channelHistoryId = null, channelHistoryRows = [], channelHistoryReactions = [], channelHistoryLoading = false, channelHistoryError = '', channelRequest = 0;
 let dmPage = 0, dmTotal = 0, dmThreadPeer = null, dmThreadRows = [], dmThreadLoading = false, dmThreadError = '', dmRequest = 0;
@@ -321,13 +322,20 @@ function setupImageViewer(){
 const fail = (error) => { console.error(error); show(error?.message || 'Something went wrong. Please try again.'); };
 const read = async (table,query=q=>q) => { const {data,error}=await query(db.from(table).select('*')); if(error) throw error; return data || []; };
 async function readRecords(table){
+  // These relation tables use composite primary keys and do not have an `id` or `created_at`.
+  // A stable, unique order is needed when a result is larger than PostgREST's row limit.
+  const relationKeys={project_members:['project_id','user_id'],event_rsvps:['event_id','user_id'],founder_meeting_rsvps:['meeting_id','user_id']};
+  const keys=relationKeys[table]||['created_at','id'];
   const rows=[];
   for(;;){
-    const {data,error,count}=await db.from(table).select('*',{count:'exact'}).order('created_at',{ascending:false}).order('id',{ascending:false}).range(rows.length,rows.length+499);
+    let query=db.from(table).select('*',{count:'exact'});
+    for(const key of keys)query=query.order(key,{ascending:!!relationKeys[table]});
+    const {data,error,count}=await query.range(rows.length,rows.length+499);
     if(error)throw error;
+    if(count===null)throw Error(`Could not count ${table} records. Please retry.`);
     if(!data?.length && count>rows.length)throw Error(`Could not load all ${table} records. Please retry.`);
     rows.push(...(data||[]));
-    if(!data?.length||rows.length>=count)return rows;
+    if(rows.length>=count)return rows;
   }
 }
 async function loadAdminApplicationPages(){
@@ -356,13 +364,20 @@ async function loadAdminApplicationPages(){
       if(accounts.error)throw accounts.error;
     }
     let verification=new Map();
+    let privateAnswers=new Map();
     if(applicants.data?.length){
       const result=await db.rpc('application_verification_status',{p_users:applicants.data.map(p=>p.id)});
       if(result.error)applicationVerificationError='Verification status unavailable. Run the updated approval migration to see it here.';
       else verification=new Map((result.data||[]).map(row=>[row.user_id,{verified:row.email_verified,previouslyApproved:row.previously_approved}]));
+      if(applicationAnswersReady){
+        const answers=await db.from('application_answers').select('user_id,reason').in('user_id',applicants.data.map(p=>p.id));
+        if(answers.error)throw answers.error;
+        privateAnswers=new Map((answers.data||[]).map(row=>[row.user_id,row.reason]));
+      }
     }
     if(request!==applicationsRequest||session?.user.id!==owner||!admin())return;
-    applicationRows=applicants.data||[];approvedAccountRows=accounts.data||[];
+    applicationRows=(applicants.data||[]).map(row=>applicationAnswersReady?{...row,application_reason:privateAnswers.get(row.id)||''}:row);
+    approvedAccountRows=accounts.data||[];
     applicationVerification=verification;
     applicationTotal=applicants.count||0;approvedAccountTotal=accounts.count||0;
   }catch(error){
@@ -370,6 +385,19 @@ async function loadAdminApplicationPages(){
     applicationRows=[];approvedAccountRows=[];applicationVerification=new Map();applicationsError=error?.message||'Could not load accounts.';
   }finally{
     if(request===applicationsRequest){applicationsLoading=false;if(page==='applications')render();}
+  }
+}
+async function hydrateOwnApplicationReason(){
+  if(!me||!session)return;
+  const userId=session.user.id;
+  applicationAnswersReady=!Object.hasOwn(me,'application_reason');
+  if(!applicationAnswersReady)return;
+  // Approved accounts cannot edit an application; only applicants need to load it.
+  if(me.membership_status==='pending'||me.membership_status==='rejected'){
+    const {data,error}=await db.from('application_answers').select('reason').eq('user_id',userId).maybeSingle();
+    if(session?.user.id!==userId||me?.id!==userId)return;
+    if(error){console.error('application_answers',error);me.application_reason='';return;}
+    me.application_reason=data?.reason||'';
   }
 }
 async function readFeedRelations(table,ids){
@@ -491,22 +519,57 @@ async function refreshUnreadCounts(){
   }
 }
 
-async function refresh() {
+// Keep the complete load for sign-in and mutations. Background checks only revisit
+// data used by the visible page, while the separate chat and approval loops stay focused.
+const pageRefreshDependencies={
+  home:['project_tasks','courses','course_enrollments','course_submissions','course_completions','events'],
+  about:[],founders:['founders'],investors:['founders','investor_updates'],
+  privacy:['privacy_requests','profiles'],application:[],
+  admin:['profiles','projects','reports','privacy_requests','investor_inquiries','activity_posts','founder_meetings','events','channels','news_posts','documents','audit_events'],
+  applications:[],moderation:['reports','audit_events','profiles'],
+  notifications:['events','founder_meetings','project_tasks'],members:['profiles'],
+  messages:['profiles','direct_messages','direct_message_reads'],
+  feed:['profiles','documents','announcements','news_posts','activity_posts'],
+  channels:['profiles','channels','channel_reads','documents'],
+  library:['documents','document_versions','channels','profiles'],news:['news_posts','profiles'],
+  projects:['projects','project_tasks','project_members','project_milestones','profiles'],
+  inventory:['inventory_items','profiles'],finance:['finance_entries','finance_reviews','profiles'],
+  'finance-review':['finance_entries','finance_reviews','profiles'],
+  discussions:['topics','replies','projects','profiles'],
+  courses:['courses','learning_materials','course_enrollments','course_submissions','course_completions','profiles'],
+  teaching:['courses','learning_materials','course_enrollments','course_submissions','course_completions','profiles'],
+  events:['events','event_rsvps'],calendar:['events','founder_meetings','project_tasks','courses','course_enrollments'],
+  announcements:['announcements'],'founder-room':['founder_meetings','founder_meeting_rsvps','founder_invites','profiles']
+};
+let backgroundRefreshBusy=false, lastProfileRefreshAt=0;
+async function refreshVisiblePage(){
+  if(backgroundRefreshBusy||document.hidden||!session)return;
+  backgroundRefreshBusy=true;
+  try{await refresh('page');}catch(error){console.error('Page refresh',error);}
+  finally{backgroundRefreshBusy=false;}
+}
+async function refresh(mode='full') {
   if (!db || !session) return;
+  const owner=session.user.id,generation=authGeneration,scoped=mode==='page';
   const previous=accessSignature(me);
   const self=await db.from('profiles').select('*').eq('id',session.user.id).single();
-  if(!self.error&&self.data)me=self.data;
+  if(session?.user.id!==owner||generation!==authGeneration)return;
+  if(!self.error&&self.data){me=self.data;await hydrateOwnApplicationReason();}
+  if(session?.user.id!==owner||generation!==authGeneration)return;
   roleReady=!!me&&'application_type' in me;
   if(previous!==accessSignature(me))return signedIn(session);
   if(!approved()){
     if($('#imageViewer').open)closeImageViewer(false);
-    let publicFounders=[];
-    try{publicFounders=await readRecords('founders');}catch(error){console.error('Public founders',error);}
-    cache={profiles:me?[me]:[],founders:publicFounders};await detectFounderPortraits();
+    let publicFounders=cache.founders||[];
+    if(!scoped||page==='founders')try{publicFounders=await readRecords('founders');}catch(error){console.error('Public founders',error);}
+    if(session?.user.id!==owner||generation!==authGeneration)return;
+    cache={profiles:me?[me]:[],founders:publicFounders};
+    if(!scoped||page==='founders')await detectFounderPortraits();
     communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();route();return;
   }
   if(investor()){
     const results=await Promise.allSettled(['investor_updates','investor_inquiries','privacy_requests','founders'].map(readRecords));
+    if(session?.user.id!==owner||generation!==authGeneration)return;
     cache={profiles:[me],investor_updates:results[0].status==='fulfilled'?results[0].value:[],investor_inquiries:results[1].status==='fulfilled'?results[1].value:[],privacy_requests:results[2].status==='fulfilled'?results[2].value:[],founders:results[3].status==='fulfilled'?results[3].value:[]};
     await detectFounderPortraits();
     communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=results[2].status==='fulfilled';inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
@@ -515,37 +578,54 @@ async function refresh() {
   }
   const names=['profiles','projects','project_tasks','topics','replies','courses','learning_materials','course_enrollments','course_submissions','course_completions','privacy_requests','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes','direct_messages','direct_message_reads','investor_updates','investor_inquiries','inventory_items'];
   if(founder())names.push('inventory_movements','finance_entries','finance_reviews');
-  const unordered=new Set(['channel_reads','project_members','event_rsvps','founder_meeting_rsvps']);
-  const records=new Set(['profiles','projects','project_tasks','topics','replies','courses','learning_materials','events','announcements','founders','channels','documents','news_posts','founder_invites','founder_meetings','notifications','project_milestones','document_versions','reports','audit_events','investor_updates','investor_inquiries','course_enrollments','course_submissions','course_completions','privacy_requests','inventory_items','inventory_movements','finance_entries','finance_reviews']);
+  if(scoped){
+    const needed=new Set(['notifications',...(pageRefreshDependencies[page]||[])]);
+    if(page==='home'&&founder()){
+      needed.add('founder_meetings');needed.add('finance_entries');needed.add('finance_reviews');
+    }
+    if(page==='home'&&admin())needed.add('reports');
+    if(page==='inventory'&&founder())needed.add('inventory_movements');
+    if(Date.now()-lastProfileRefreshAt>120000)needed.add('profiles');
+    for(let i=names.length-1;i>=0;i--)if(!needed.has(names[i]))names.splice(i,1);
+  }
+  const records=new Set(['profiles','projects','project_tasks','topics','replies','courses','learning_materials','events','announcements','founders','channels','documents','news_posts','founder_invites','founder_meetings','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','investor_updates','investor_inquiries','course_enrollments','course_submissions','course_completions','privacy_requests','inventory_items','inventory_movements','finance_entries','finance_reviews']);
   const previews={channel_messages:120,direct_messages:120,activity_posts:50,activity_comments:1,activity_likes:1,message_reactions:1,notifications:100};
+  const checkTeacherProfile=teacher()&&!admin()&&(!scoped||page==='teaching');
   const [results,teachingProfileResult]=await Promise.all([
     Promise.allSettled(names.map(n=>records.has(n)?readRecords(n):read(n,q=>{
-      if(!unordered.has(n))q=q.order('created_at',{ascending:false});
+      if(n!=='channel_reads')q=q.order('created_at',{ascending:false});
       return Object.hasOwn(previews,n)?q.limit(previews[n]):q;
     }))),
-    teacher()&&!admin()?db.from('teacher_profiles').select('*').eq('teacher_id',session.user.id).maybeSingle():Promise.resolve({data:null,error:null})
+    checkTeacherProfile?db.from('teacher_profiles').select('*').eq('teacher_id',owner).maybeSingle():Promise.resolve({data:null,error:null})
   ]);
-  teacherProfileReady=teacher()&&!admin()&&!teachingProfileResult.error;
-  teacherProfile=teacherProfileReady?teachingProfileResult.data:null;
-  if(teachingProfileResult.error)console.error('teacher_profiles',teachingProfileResult.error);
+  if(session?.user.id!==owner||generation!==authGeneration)return;
+  if(checkTeacherProfile){
+    teacherProfileReady=!teachingProfileResult.error;
+    teacherProfile=teacherProfileReady?teachingProfileResult.data:null;
+    if(teachingProfileResult.error)console.error('teacher_profiles',teachingProfileResult.error);
+  }else if(!scoped){teacherProfileReady=false;teacherProfile=null;}
   results.forEach((r,i)=>{ if(r.status==='fulfilled') cache[names[i]]=r.value; else {cache[names[i]]=[];console.error(names[i],r.reason);} });
-  await detectFounderPortraits();
-  if(admin()){
+  if(names.includes('profiles')&&results[names.indexOf('profiles')].status==='fulfilled')lastProfileRefreshAt=Date.now();
+  if(names.includes('founders'))await detectFounderPortraits();
+  if(admin()&&(!scoped||page==='admin')){
     const pending=await db.from('profiles').select('id',{count:'exact',head:true}).eq('membership_status','pending');
     if(pending.error)console.error('Pending application count',pending.error);
     else adminPendingCount=pending.count||0;
-    if(results[names.indexOf('notifications')].status==='fulfilled')receiveAdminApplications(cache.notifications);
   }
-  communityReady=results[names.indexOf('channels')].status==='fulfilled';
-  enhancedReady=results[names.indexOf('channel_reads')].status==='fulfilled';
-  feedReady=results[names.indexOf('activity_posts')].status==='fulfilled';
-  dmReady=results[names.indexOf('direct_messages')].status==='fulfilled';
-  learningReady=results[names.indexOf('learning_materials')].status==='fulfilled';
-  courseReady=['course_enrollments','course_submissions','course_completions'].every(n=>results[names.indexOf(n)].status==='fulfilled');
-  const planningProbe=courseReady?await db.from('courses').select('submission_due_at').limit(1):{error:true};
-  coursePlanningReady=!planningProbe.error;
-  cache.course_roster=[];
-  if(coursePlanningReady&&teacher()){
+  if(admin()&&names.includes('notifications')&&results[names.indexOf('notifications')].status==='fulfilled')receiveAdminApplications(cache.notifications);
+  const succeeded=n=>results[names.indexOf(n)]?.status==='fulfilled';
+  if(names.includes('channels'))communityReady=succeeded('channels');
+  if(names.includes('channel_reads'))enhancedReady=succeeded('channel_reads');
+  if(names.includes('activity_posts'))feedReady=succeeded('activity_posts');
+  if(names.includes('direct_messages'))dmReady=succeeded('direct_messages');
+  if(names.includes('learning_materials'))learningReady=succeeded('learning_materials');
+  if(!scoped||['course_enrollments','course_submissions','course_completions'].every(n=>names.includes(n)))courseReady=['course_enrollments','course_submissions','course_completions'].every(succeeded);
+  if(!scoped||names.includes('courses')){
+    const planningProbe=courseReady?await db.from('courses').select('submission_due_at').limit(1):{error:true};
+    coursePlanningReady=!planningProbe.error;
+  }
+  if(!scoped||page==='teaching')cache.course_roster=[];
+  if(coursePlanningReady&&teacher()&&(!scoped||page==='teaching')){
     try{
       for(let offset=0;;offset+=500){
         const roster=await db.rpc('teacher_course_roster').order('course_id').order('learner_id').range(offset,offset+499);
@@ -555,20 +635,24 @@ async function refresh() {
       }
     }catch(error){console.error('teacher_course_roster',error);coursePlanningReady=false;cache.course_roster=[];}
   }
-  privacyReady=results[names.indexOf('privacy_requests')].status==='fulfilled';
-  inventoryReady=results[names.indexOf('inventory_items')].status==='fulfilled'&&(!founder()||results[names.indexOf('inventory_movements')].status==='fulfilled');
-  financeReady=founder()&&results[names.indexOf('finance_entries')].status==='fulfilled';
-  const {error:catalogError}=inventoryReady?await db.from('inventory_items').select('item_type').limit(1):{error:true};
-  inventoryCatalogReady=!catalogError;
-  financeApprovalsReady=financeReady&&results[names.indexOf('finance_reviews')].status==='fulfilled';
+  if(names.includes('privacy_requests'))privacyReady=succeeded('privacy_requests');
+  if(names.includes('inventory_items')){
+    inventoryReady=succeeded('inventory_items')&&(!founder()||succeeded('inventory_movements'));
+    const {error:catalogError}=inventoryReady?await db.from('inventory_items').select('item_type').limit(1):{error:true};
+    inventoryCatalogReady=!catalogError;
+  }
+  if(names.includes('finance_entries'))financeReady=founder()&&succeeded('finance_entries');
+  if(names.includes('finance_reviews'))financeApprovalsReady=financeReady&&succeeded('finance_reviews');
   await refreshUnreadCounts();
   if(page==='feed'&&feedReady)await loadFeedPage(false);
   if(page==='channels'&&communityReady&&activeChannelId)await loadChannelHistory(false);
   if(page==='messages'&&dmReady&&activePeerId)await loadDmThread(false);
-  const {error:mediaError}=feedReady?await db.from('activity_posts').select('image_path').limit(1):{error:true};
-  mediaReady=!mediaError;
-  const {error:avatarError}=mediaReady?await db.from('profiles').select('avatar_path').eq('id',session.user.id).limit(1):{error:true};
-  avatarReady=!avatarError;
+  if(!scoped){
+    const {error:mediaError}=feedReady?await db.from('activity_posts').select('image_path').limit(1):{error:true};
+    mediaReady=!mediaError;
+    const {error:avatarError}=mediaReady?await db.from('profiles').select('avatar_path').eq('id',owner).limit(1):{error:true};
+    avatarReady=!avatarError;
+  }
   await hydrateMedia();
   if(page==='applications'&&admin())void loadAdminApplicationPages();
   if(previous!==accessSignature(me)){route();return;}
@@ -579,7 +663,7 @@ async function refresh() {
   render();
 }
 async function refreshChat() {
-  if(!session || !clubAccess() || !communityReady) return;
+  if(document.hidden||!session || !clubAccess() || !communityReady) return;
   try { cache.channel_messages=await read('channel_messages',q=>q.order('created_at',{ascending:false}).limit(120));if(page==='channels'&&activeChannelId)await loadChannelHistory(false);await refreshUnreadCounts();await hydrateMedia();
     if(page==='channels') renderChatMessages();
   } catch(e) { console.error(e); }
@@ -620,6 +704,8 @@ async function signedIn(newSession) {
     if(generation!==authGeneration)return;
     if(error) { fail(error); return; }
     me=data;
+    await hydrateOwnApplicationReason();
+    if(generation!==authGeneration)return;
     roleReady='application_type' in me;
     if(roleReady){
       if(!approved()&&['pending','rejected'].includes(me.membership_status)&&sessionStorage.getItem('innovatex.pendingType')){
@@ -631,15 +717,15 @@ async function signedIn(newSession) {
     if(approved())await touchPresence();
     await refresh();
     if(generation!==authGeneration)return;
-    pollTimer=setInterval(refresh,30000);
+    pollTimer=setInterval(refreshVisiblePage,45000);
     if(approved()){
-      presenceTimer=setInterval(()=>touchPresence(),20000);
-      if(clubAccess())chatTimer=setInterval(refreshChat,9000);
+      presenceTimer=setInterval(()=>{if(!document.hidden)void touchPresence();},20000);
+      if(clubAccess())chatTimer=setInterval(()=>{if(!document.hidden)void refreshChat();},9000);
     }
     if(communityReady && clubAccess()) chatRealtime=db.channel('innovatex-chat')
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'channel_messages'},refreshChat).subscribe();
     if(admin()){
-      adminAlertTimer=setInterval(refreshAdminAlerts,10000);
+      adminAlertTimer=setInterval(()=>{if(!document.hidden)void refreshAdminAlerts();},10000);
       adminAlertRealtime=db.channel(`innovatex-admin-applications-${session.user.id}`)
         .on('postgres_changes',{event:'INSERT',schema:'public',table:'notifications',filter:`user_id=eq.${session.user.id}`},payload=>{
           const notification=payload.new;
@@ -648,7 +734,7 @@ async function signedIn(newSession) {
           void refreshAdminAlerts();
         }).subscribe();
     }
-  } else { me=null;roleReady=false;courseReady=false;coursePlanningReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); await loadPublic(); }
+  } else { me=null;applicationAnswersReady=false;roleReady=false;courseReady=false;coursePlanningReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); await loadPublic(); }
   if(session&&!approved()&&!['about','founders','investors','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
   if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='founder-room'&&!founder()) {page='founders';history.replaceState(null,'','#founders');}
@@ -673,6 +759,9 @@ async function init() {
   $('.modal-close').onclick=close;
   setupImageViewer();
   window.addEventListener('hashchange',route);
+  window.addEventListener('hashchange',()=>{
+    if(session&&authReady&&!document.hidden&&!['feed','channels','messages','applications'].includes(page))void refreshVisiblePage();
+  });
   $('#authButton').onclick=()=>session ? signOut() : signInDialog();
   document.addEventListener('click',actions);
   document.addEventListener('submit',submit);
@@ -687,7 +776,15 @@ async function init() {
   db.auth.onAuthStateChange((_event,s)=>{ if(s?.user.id !== session?.user.id) setTimeout(()=>signedIn(s),0); });
   const {data,error}=await db.auth.getSession();
   if(error) fail(error); else await signedIn(data.session);
-  document.addEventListener('visibilitychange',()=>{ if(!document.hidden && session) {if(adminDeferredAlert)showAdminAlert(adminDeferredAlert.title,adminDeferredAlert.message);touchPresence();refresh();if(admin())void refreshAdminAlerts();} });
+  document.addEventListener('visibilitychange',()=>{
+    if(!session)return;
+    if(document.hidden){if(approved())void touchPresence(false);return;}
+    if(adminDeferredAlert)showAdminAlert(adminDeferredAlert.title,adminDeferredAlert.message);
+    if(approved())void touchPresence();
+    void refreshVisiblePage();
+    if(page==='channels')void refreshChat();
+    if(admin())void refreshAdminAlerts();
+  });
   window.addEventListener('pagehide',()=>{ if(session) touchPresence(false); });
 }
 function updateThemeButton(){const dark=document.documentElement.dataset.theme==='dark';$('#themeButton').textContent=dark?'☀':'☾';$('#themeButton').setAttribute('aria-label',dark?'Switch to light theme':'Switch to dark theme');}
@@ -747,16 +844,65 @@ function render() {
   if(page==='channels'){const stream=$('#messageStream');if(stream)stream.scrollTop=channelPage>0?0:stream.scrollHeight;if(channelPage===0&&activeChannelId&&enhancedReady)markChannelRead(activeChannelId);}
   if(page==='messages'){const stream=$('#dmStream');if(stream)stream.scrollTop=dmPage>0?0:stream.scrollHeight;if(dmPage===0&&activePeerId&&dmReady)markDmRead(activePeerId);}
 }
+function homeFocusCard(icon,label,title,detail,href,action='Open details',urgent=false){
+  return `<a class="home-focus-card ${urgent?'is-urgent':''}" href="${href}"><span class="home-focus-icon">${iconSvg(icon)}</span><span class="home-focus-label">${esc(label)}</span><strong>${esc(title)}</strong><span class="home-focus-detail">${esc(detail)}</span><span class="home-focus-action">${esc(action)} →</span></a>`;
+}
+function personalHome(){
+  const userId=session.user.id,now=Date.now();
+  const name=(me?.full_name||session.user.email||'member').trim().split(/\s+/)[0];
+  const enrollments=courseReady?(cache.course_enrollments||[]).filter(e=>e.learner_id===userId):[];
+  const activeIds=new Set(enrollments.filter(e=>e.status!=='completed').map(e=>e.course_id));
+  const myCourses=(cache.courses||[]).filter(c=>activeIds.has(c.id));
+  const workshop=myCourses.filter(c=>c.starts_at&&new Date(c.starts_at).getTime()>=now).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at))[0];
+  const deadlines=coursePlanningReady?myCourses.filter(c=>courseDeadline(c)).sort((a,b)=>courseDeadline(a)-courseDeadline(b)):[];
+  const deadline=deadlines.find(c=>courseDeadline(c).getTime()<now)||deadlines[0];
+  const feedback=courseReady?(cache.course_submissions||[]).filter(s=>s.learner_id===userId&&s.review_status!=='submitted'&&s.teacher_feedback).sort((a,b)=>new Date(b.reviewed_at||b.created_at)-new Date(a.reviewed_at||a.created_at))[0]:null;
+  const feedbackCourse=feedback?(cache.courses||[]).find(c=>c.id===feedback.course_id):null;
+  const tasks=(cache.project_tasks||[]).filter(t=>t.assignee_id===userId&&t.status!=='done').sort((a,b)=>new Date(a.due_at||'9999-12-31')-new Date(b.due_at||'9999-12-31'));
+  const event=(cache.events||[]).filter(e=>new Date(e.starts_at).getTime()>=now).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at))[0];
+  const notifications=(cache.notifications||[]).filter(n=>!n.read_at).length;
+  const unreadMessages=unreadCountsReady?unreadCounts.direct_total+Object.values(unreadCounts.channels).reduce((sum,n)=>sum+(Number(n)||0),0):null;
+  const assigned=(cache.courses||[]).filter(c=>c.instructor_id===userId),assignedIds=new Set(assigned.map(c=>c.id));
+  const reviews=courseReady?(cache.course_submissions||[]).filter(s=>assignedIds.has(s.course_id)&&s.review_status==='submitted'):[];
+  const teachingDate=assigned.flatMap(c=>[{title:c.title,at:c.starts_at,label:'Workshop starts'},{title:c.title,at:coursePlanningReady?c.submission_due_at:null,label:'Project deadline'}]).filter(x=>x.at&&new Date(x.at).getTime()>=now).sort((a,b)=>new Date(a.at)-new Date(b.at))[0];
+  const meeting=founder()?(cache.founder_meetings||[]).filter(m=>new Date(m.starts_at).getTime()>=now).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at))[0]:null;
+  const financePending=founderOnly()&&financeApprovalsReady?(cache.finance_entries||[]).filter(e=>financeStatus(e)==='pending').length:0;
+  const reports=admin()?(cache.reports||[]).filter(r=>r.status==='open').length:0;
+  const queue=admin()?[
+    homeFocusCard('applications','ADMINISTRATOR · APPLICATIONS',`${adminPendingCount} waiting for review`,adminPendingCount?'Check verification and application details before deciding.':'New applications will appear here.','#applications','Review applications',adminPendingCount>0),
+    homeFocusCard('moderation','ADMINISTRATOR · REPORTS',`${reports} open ${reports===1?'report':'reports'}`,reports?'Review reported posts, messages and shared content.':'Your moderation queue is clear.','#moderation','Open moderation',reports>0)
+  ]:founderOnly()?[
+    homeFocusCard('founder-room','FOUNDER · NEXT MEETING',meeting?.title||'No meeting scheduled',meeting?dateTime(meeting.starts_at):'Plan the next founder discussion.','#founder-room','Open founder room'),
+    homeFocusCard('finance','FOUNDER · FINANCE',financeApprovalsReady?`${financePending} ${financePending===1?'entry':'entries'} to review`:'Finance review',financeApprovalsReady?'Check the purpose and evidence before a decision.':'Open the finance review page for setup details.','#finance-review','Review finance',financePending>0)
+  ]:teacher()?[
+    homeFocusCard('teaching','TEACHER · PROJECT REVIEWS',courseReady?`${reviews.length} ${reviews.length===1?'submission':'submissions'} awaiting feedback`:'Project reviews',courseReady?'Give learners a clear next step on their builds.':'Open Teaching studio for setup details.','#teaching','Review projects',reviews.length>0),
+    homeFocusCard('calendar','TEACHER · COMING UP',teachingDate?.title||'No session scheduled',teachingDate?`${teachingDate.label} · ${dateTime(teachingDate.at)}`:'Set a date or deadline for your next workshop.','#teaching','Plan teaching')
+  ]:[];
+  if(founderOnly()&&teacher())queue.push(homeFocusCard('teaching','TEACHING LEAD · REVIEWS',courseReady?`${reviews.length} ${reviews.length===1?'submission':'submissions'} awaiting feedback`:'Project reviews',teachingDate?`${teachingDate.label}: ${teachingDate.title} · ${dateTime(teachingDate.at)}`:'Open Teaching studio to plan your workshops.','#teaching','Open teaching studio',reviews.length>0));
+  const priority=admin()?'Club oversight':founderOnly()?'Founder priorities':teacher()?'Teaching priorities':'';
+  const focus=[
+    homeFocusCard('courses','YOUR NEXT WORKSHOP',workshop?.title||'Choose a practical workshop',workshop?`${dateTime(workshop.starts_at)} · ${courseTrackFor(workshop)}`:courseReady?'Browse the four tracks and join a build.':'Open Courses to see your learning options.','#courses','Open courses'),
+    homeFocusCard('calendar','PROJECT DEADLINE',deadline?.title||'No project deadline set',deadline?`${courseDeadline(deadline).getTime()<now?'Past due · submissions remain open':'Due'} ${dateTime(deadline.submission_due_at)}`:'Your course deadlines will appear here.','#calendar','View calendar',!!deadline&&courseDeadline(deadline).getTime()<now),
+    homeFocusCard('courses','TEACHER FEEDBACK',feedbackCourse?.title||'No feedback yet',feedback?`${feedback.review_status==='revision_requested'?'Revision requested':'Project accepted'} · ${feedback.teacher_feedback.slice(0,130)}${feedback.teacher_feedback.length>130?'…':''}`:'Your latest project review will appear here.','#courses','See my courses',feedback?.review_status==='revision_requested'),
+    homeFocusCard('projects','ASSIGNED PROJECT TASKS',tasks.length?`${tasks.length} ${tasks.length===1?'task':'tasks'} in progress`:'No tasks assigned',tasks.length?`${tasks[0].title}${tasks[0].due_at?' · due '+dateTime(tasks[0].due_at):''}`:'Join a project or start one with your team.','#projects','View projects',!!tasks[0]?.due_at&&new Date(tasks[0].due_at).getTime()<now)
+  ];
+  return `<section class="home-personal-intro"><div><span class="eyebrow">YOUR INNOVATEX WORKSPACE</span><h1>Welcome back, ${esc(name)}.</h1><p>Pick up your next build, answer your team and keep the club moving.</p></div><a class="button button-outline" href="#calendar">Open calendar ↗</a></section>
+  <div class="home-glance"><a href="#courses"><small>Courses in your plan</small><strong>${courseReady?enrollments.length:'—'}</strong><span>Explore your workshops →</span></a><a href="#events"><small>Next club event</small><strong class="home-glance-date">${esc(event?date(event.starts_at):'To be announced')}</strong><span>${esc(event?.title||'See the calendar')} →</span></a><a href="#notifications"><small>Unread alerts</small><strong>${notifications}</strong><span>Open inbox →</span></a><a href="#channels"><small>Unread messages</small><strong>${unreadMessages??'—'}</strong><span>${unreadMessages===null?'Open member channels':'Open conversations'} →</span></a></div>
+  ${queue.length?`<div class="section-heading"><div><span class="eyebrow">NEEDS YOUR ATTENTION</span><h2>${priority}</h2></div></div><div class="home-focus-grid home-role-grid">${queue.join('')}</div>`:''}
+  <div class="section-heading"><div><span class="eyebrow">YOUR NEXT MOVES</span><h2>Learning and projects</h2></div><a class="link" href="#calendar">See full calendar →</a></div><div class="home-focus-grid">${focus.join('')}</div>
+  <div class="section-heading"><div><span class="eyebrow">BUILD TOGETHER</span><h2>Stay in the conversation</h2></div></div><div class="home-community-links"><a href="#feed">Share a build update <span>Activity feed →</span></a><a href="#channels">Ask your team <span>Member channels →</span></a><a href="#library">Find a resource <span>Document library →</span></a></div>`;
+}
 function home() {
-  if(investor())return `${head('INNOVATEX PARTNERS','Welcome, '+(me?.full_name||'investor'),'Your approved investor space brings together curated updates and a direct inquiry form.')}<div class="grid grid-2"><a class="card feature-card" href="#investor-portal"><span class="feature-icon">${iconSvg('investors')}</span><h3>Investor portal</h3><p>Read updates the club has approved for investors and send a question to the team.</p><span class="link">Open portal →</span></a><a class="card feature-card" href="#founders"><span class="feature-icon">${iconSvg('founders')}</span><h3>Meet the founders</h3><p>Learn about the people guiding InnovateX.</p><span class="link">View founders →</span></a></div>`;
+  if(investor())return `${head('INNOVATEX PARTNERS','Welcome, '+(me?.full_name||'investor'),'Your approved investor space brings together curated updates and a direct inquiry form.')}<div class="grid grid-2"><a class="card feature-card" href="#investor-portal"><span class="feature-icon">${iconSvg('investors')}</span><h3>Investor portal</h3><p>Read updates the club has approved for investors and send a question to the team.</p><span class="link">Open portal →</span></a><a class="card feature-card" href="founders/"><span class="feature-icon">${iconSvg('founders')}</span><h3>Meet the founders</h3><p>Learn about the people guiding InnovateX.</p><span class="link">View founders →</span></a></div>`;
+  if(clubAccess())return personalHome();
   const count=n=>(cache[n]||[]).length;
   const latest=(cache.announcements||[]).slice(0,3);
   const upcoming=(cache.events||[]).filter(e=>new Date(e.starts_at)>new Date()).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at)).slice(0,3);
-  return `<section class="hero"><div class="hero-copy"><span class="eyebrow">A COMMUNITY FOR ENGINEERS &amp; MAKERS</span><h1>Ideas become<br>working systems.</h1><p>Learn control, automation, electronics, software and robotics. Build prototypes together and prepare for regional and national competitions.</p><div class="hero-actions">${session?`<a class="button" href="#projects">Explore projects ↗</a>`:button('Join the workspace ↗','login')}<a class="button button-outline" href="#about">About the club</a></div></div><div class="hero-graphic">IX✦</div></section>
+  return `<section class="hero"><div class="hero-copy"><span class="eyebrow">A COMMUNITY FOR ENGINEERS &amp; MAKERS</span><h1>Ideas become<br>working systems.</h1><p>Learn control, automation, electronics, software and robotics. Build prototypes together and prepare for regional and national competitions.</p><div class="hero-actions">${session?`<a class="button" href="#projects">Explore projects ↗</a>`:button('Join the workspace ↗','login')}<a class="button button-outline" href="about/">About the club</a></div></div><div class="hero-graphic">IX✦</div></section>
   <div class="section-heading"><div><span class="eyebrow">CLUB PULSE</span><h2>${session?'Your workspace at a glance':'Built for makers and innovators'}</h2></div><p>${session?`Welcome back, ${esc(me?.full_name||session.user.email)}.`:'A community of makers sharing practical skills and projects.'}</p></div>
   <div class="grid grid-4"><div class="stat"><small>Visible profiles</small><b>${session?count('profiles'):'—'}</b><span>In your workspace</span></div><div class="stat"><small>Visible online</small><b>${session?(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length:'—'}</b><span>Active in the last minute</span></div><div class="stat"><small>Active projects</small><b>${session?count('projects'):'—'}</b><span>Ideas in motion</span></div><div class="stat"><small>Upcoming events</small><b>${session?upcoming.length:'—'}</b><span>Sessions and meetups</span></div></div>
   <div class="section-heading"><div><span class="eyebrow">OUR MISSION</span><h2>From the workbench to the world.</h2></div></div><div class="grid grid-3">${[['courses','Learn','Hands-on courses in Arduino, Proteus, CAD, OpenPLC and electrical systems.'],['projects','Build','Plan and test real prototypes with multidisciplinary teams and mentors.'],['founder-room','Compete','Turn the strongest projects into competition-ready demonstrations.']].map(x=>`<div class="card mission-card"><div class="icon-box">${iconSvg(x[0])}</div><h3>${x[1]}</h3><p>${x[2]}</p></div>`).join('')}</div>
-  <section class="studio-banner"><img src="assets/robotics-workbench.webp" alt="Concept artwork of hands assembling a robotics prototype" loading="lazy"><div><span class="eyebrow">ENGINEERING INSPIRATION · CONCEPT ARTWORK</span><h2>Make something that works.</h2><p>Find your team, share your next test and turn a good idea into a working prototype.</p><a class="button" href="${session?'#projects':'#about'}">${session?'Explore club projects':'Discover the club'} →</a></div></section>
+  <section class="studio-banner"><img src="assets/robotics-workbench.webp" alt="Concept artwork of hands assembling a robotics prototype" loading="lazy"><div><span class="eyebrow">ENGINEERING INSPIRATION · CONCEPT ARTWORK</span><h2>Make something that works.</h2><p>Find your team, share your next test and turn a good idea into a working prototype.</p><a class="button" href="${session?'#projects':'about/'}">${session?'Explore club projects':'Discover the club'} →</a></div></section>
   ${session?`<div class="section-heading"><h2>Your community</h2><p>Find a conversation or share what you’re learning.</p></div><div class="grid grid-4"><a class="card feature-card" href="#feed"><span class="feature-icon">${iconSvg('feed')}</span><h3>Activity feed</h3><p>Share progress and hear from club members.</p><span class="link">Open feed →</span></a><a class="card feature-card" href="#channels"><span class="feature-icon">${iconSvg('channels')}</span><h3>Member channels</h3><p>Get help and work through ideas together.</p><span class="link">Open channels →</span></a><a class="card feature-card" href="#library"><span class="feature-icon">${iconSvg('library')}</span><h3>Document library</h3><p>Notes, schematics and useful resources in one place.</p><span class="link">Browse files →</span></a><a class="card feature-card" href="#news"><span class="feature-icon">${iconSvg('news')}</span><h3>Technology news</h3><p>Discover engineering stories worth discussing.</p><span class="link">Read stories →</span></a></div>`:''}
   ${session?`<div class="section-heading"><h2>What’s happening</h2><a class="link" href="#events">View calendar →</a></div><div class="split"><div class="panel"><h3>Latest alerts</h3>${latest.length?latest.map(a=>`<div class="list-item"><span class="icon-box" style="margin:0">◈</span><div><strong>${esc(a.title)}</strong><small>${date(a.created_at)}</small><p class="subtle">${esc(a.body)}</p></div></div>`).join(''):empty('No alerts yet','Official club updates will appear here.')}</div><div class="panel"><h3>Coming up</h3>${upcoming.length?upcoming.map(e=>eventRow(e)).join(''):empty('Nothing scheduled','The next club event will appear here.')}</div></div>`:''}`;
 }
@@ -1818,7 +1964,7 @@ async function exportCsv(table){
     return `"${cell.replaceAll('"','""')}"`;
   };
   const headers=columns[table];
-  const dataColumns=headers.filter(key=>!['approval_status','reviewed_by','reviewed_at','review_note'].includes(key));
+  const dataColumns=headers.filter(key=>!['approval_status','reviewed_by','reviewed_at','review_note'].includes(key)&&!(table==='profiles'&&applicationAnswersReady&&key==='application_reason'));
   const userId=session.user.id;
   const parts=['\ufeff',headers.join(','),'\r\n'];
   const pageSize=500;
@@ -1834,6 +1980,17 @@ async function exportCsv(table){
       if(count!==total)throw Error('The records changed during export. Please retry to download a complete CSV.');
       if(!data?.length&&offset<total)throw Error('The export stopped before all rows were downloaded. Please retry.');
       let reviews=new Map();
+      let answers=new Map();
+      if(table==='profiles'&&applicationAnswersReady&&data?.length){
+        // Read each export batch through the admin-only table after the privacy migration.
+        const ids=data.map(row=>row.id);
+        for(let i=0;i<ids.length;i+=100){
+          const subset=ids.slice(i,i+100);
+          const result=await db.from('application_answers').select('user_id,reason').in('user_id',subset);
+          if(result.error)throw result.error;
+          for(const answer of result.data||[])answers.set(answer.user_id,answer.reason);
+        }
+      }
       if(table==='finance_entries'&&data?.length){
         // Review rows are fetched for this batch, rather than relying on the
         // browser's first page of cached finance approvals.
@@ -1853,7 +2010,7 @@ async function exportCsv(table){
       }
       for(const row of data||[]){
         const review=reviews.get(row.id);
-        const record=table==='finance_entries'?{...row,approval_status:review?.decision||'pending',reviewed_by:review?.reviewer_id,reviewed_at:review?.created_at,review_note:review?.note}:row;
+        const record=table==='finance_entries'?{...row,approval_status:review?.decision||'pending',reviewed_by:review?.reviewer_id,reviewed_at:review?.created_at,review_note:review?.note}:table==='profiles'&&applicationAnswersReady?{...row,application_reason:answers.get(row.id)||''}:row;
         parts.push(headers.map(key=>safe(record[key])).join(','),'\r\n');
       }
       offset+=(data||[]).length;
@@ -2177,8 +2334,14 @@ async function submit(e) {
         const {error:typeError}=await db.rpc('set_application_type',{p_type:payload.application_type});if(typeError)throw typeError;
         me.application_type=payload.application_type;delete payload.application_type;
       }
+      const reason=String(payload.application_reason||'').trim();
+      if(applicationAnswersReady)delete payload.application_reason;
       const {error}=await db.from('profiles').update(payload).eq('id',session.user.id);if(error)throw error;
-      me={...me,...payload};close();render();show('Application saved for review.');return;
+      if(applicationAnswersReady){
+        const answer=await db.from('application_answers').upsert({user_id:session.user.id,reason},{onConflict:'user_id'});
+        if(answer.error)throw answer.error;
+      }
+      me={...me,...payload,application_reason:reason};close();render();show('Application saved for review.');return;
     }
     if(kind==='investorUpdate'){
       if(!admin())throw Error('Administrator access required.');

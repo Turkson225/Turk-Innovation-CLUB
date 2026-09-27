@@ -10,7 +10,11 @@ import { fileURLToPath } from 'node:url';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-const BUCKETS = ['club-documents', 'club-media', 'club-learning', 'club-course-evidence'];
+const BUCKETS = [
+  'club-documents', 'club-media', 'club-learning', 'club-course-evidence',
+  'club-founder-portraits',
+];
+const REQUIRED_BUCKETS = BUCKETS.filter((bucket) => bucket !== 'club-founder-portraits');
 const PAGE_SIZE = 100;
 const MAX_ATTEMPTS = 4;
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -21,7 +25,8 @@ function usage() {
   BACKUP_DIR=/absolute/path/outside/the/repository/run-YYYY-MM-DD \\
   node scripts/backup_storage.mjs
 
-Downloads the four club buckets into a NEW directory. It writes objects/,
+Downloads the four core buckets and the founder portrait bucket, if installed,
+into a NEW directory. It writes objects/,
 files.jsonl (path, metadata, SHA-256), and manifest.json (bucket settings and counts).
 No files are changed on the server. Do not commit the resulting backup.`);
 }
@@ -54,8 +59,8 @@ async function request(url, key, options = {}) {
         redirect: 'error',
         headers: {
           apikey: key,
-          // Supabase's Storage client uses both headers for non-Edge-Function requests.
-          Authorization: `Bearer ${key}`,
+          // sb_secret_ keys are opaque API keys, not JWTs. Supabase accepts
+          // these in apikey; never send one as Authorization: Bearer.
           Accept: 'application/json, application/octet-stream',
           'Accept-Encoding': 'identity',
           ...(options.body ? { 'Content-Type': 'application/json' } : {}),
@@ -106,8 +111,12 @@ async function checkBuckets(base, key) {
   if (unknown.length) {
     throw new Error(`New club bucket(s) missing from backup: ${unknown.join(', ')}. Update BUCKETS before running again.`);
   }
-  const missing = BUCKETS.filter((id) => !discovered.has(id));
+  const missing = REQUIRED_BUCKETS.filter((id) => !discovered.has(id));
   if (missing.length) throw new Error(`Required club bucket(s) not found: ${missing.join(', ')}. Apply the club migrations first.`);
+  if (!discovered.has('club-founder-portraits')) {
+    console.warn('Founder portrait bucket not installed; apply upgrade_founder_portraits.sql before publishing portraits.');
+  }
+  return BUCKETS.filter((id) => discovered.has(id));
 }
 
 async function download(base, key, bucket, path, target, expectedSize) {
@@ -182,7 +191,7 @@ async function main() {
   try { await stat(actualOut); throw new Error('BACKUP_DIR already exists; choose a new directory'); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   const base = project.origin;
-  await checkBuckets(base, SUPABASE_SECRET_KEY);
+  const presentBuckets = await checkBuckets(base, SUPABASE_SECRET_KEY);
   await mkdir(actualOut, { mode: 0o700 });
   await writeFile(join(actualOut, 'files.jsonl'), '', { flag: 'wx', mode: 0o600 });
 
@@ -196,7 +205,7 @@ async function main() {
   };
   const seen = new Set();
   try {
-    for (const bucket of BUCKETS) {
+    for (const bucket of presentBuckets) {
       console.log(`Backing up ${bucket}...`);
       const settings = await jsonRequest(`${base}/storage/v1/bucket/${encodeURIComponent(bucket)}`, SUPABASE_SECRET_KEY);
       if (settings?.id !== bucket) throw new Error(`Unexpected bucket settings for ${bucket}`);
