@@ -29,7 +29,7 @@ let channelPage = 0, channelTotal = 0, channelHistoryId = null, channelHistoryRo
 let dmPage = 0, dmTotal = 0, dmThreadPeer = null, dmThreadRows = [], dmThreadLoading = false, dmThreadError = '', dmRequest = 0;
 let unreadCounts = {channels:{},direct_messages:{},direct_peers:[],direct_total:0}, unreadCountsReady = false;
 let calendarMonth = new Date(new Date().getFullYear(),new Date().getMonth(),1), calendarSelected = new Date();
-let courseTrack = 'all';
+let courseTrack = 'all', courseView = 'mine', activeCourseId = null, courseDetailView = 'overview';
 const courseTracks = [
   {name:'Controls and Automation',example:'Build a sensor-driven controller, PLC sequence or motor control system.'},
   {name:'Software and Programming',example:'Code a working app, dashboard, embedded interface or automation tool.'},
@@ -832,6 +832,14 @@ async function init() {
   });
   $('#authButton').onclick=()=>session ? signOut() : signInDialog();
   document.addEventListener('click',actions);
+  document.addEventListener('keydown',e=>{
+    const tab=e.target.closest?.('.teaching-tabs [role="tab"]');
+    if(!tab||!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;
+    const tabs=[...tab.parentElement.querySelectorAll('[role="tab"]')];
+    const current=tabs.indexOf(tab);
+    const next=e.key==='Home'?0:e.key==='End'?tabs.length-1:(current+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;
+    e.preventDefault();tabs[next]?.click();
+  });
   document.addEventListener('submit',submit);
   document.addEventListener('input',e=>{if(e.target.id==='dmFilter'){const term=e.target.value.toLowerCase();document.querySelectorAll('.dm-peer').forEach(b=>b.hidden=!b.textContent.toLowerCase().includes(term));}
     if(e.target.id==='inventorySearch'){inventorySearchTerm=e.target.value;applyInventorySearch();}
@@ -1142,79 +1150,159 @@ function courseLearnerName(courseId,learnerId){
 }
 function courseProgress(enrollment){
   if(enrollment.status==='completed')return 'Completed';
-  const latest=(cache.course_submissions||[]).find(s=>s.course_id===enrollment.course_id&&s.learner_id===enrollment.learner_id);
-  return latest?.review_status==='submitted'?'Awaiting feedback':latest?.review_status==='revision_requested'?'Revision needed':'In progress';
+  const latest=(cache.course_submissions||[]).filter(s=>s.course_id===enrollment.course_id&&s.learner_id===enrollment.learner_id)
+    .sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
+  return latest?.review_status==='accepted'?'Completed':latest?.review_status==='submitted'?'Awaiting feedback':latest?.review_status==='revision_requested'?'Revision needed':'In progress';
+}
+async function enrollAndOpenCourse(id){
+  const owner=session?.user.id;
+  try{
+    const {error}=await db.from('course_enrollments').insert({course_id:id,learner_id:owner});
+    if(error)throw error;
+    if(session?.user.id!==owner)return;
+    courseView='mine';activeCourseId=id;courseDetailView='overview';
+    await refresh();
+    show('Workshop joined. Your classroom is ready.');
+    const classroom=document.getElementById(`course-${id}`);
+    classroom?.querySelector('h2')?.focus({preventScroll:true});
+    classroom?.scrollIntoView({behavior:'smooth',block:'start'});
+  }catch(error){fail(error);}
+}
+function courseAttempts(courseId) {
+  return (cache.course_submissions||[]).filter(s=>s.course_id===courseId&&s.learner_id===session?.user.id)
+    .sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+}
+function courseBrief(c){
+  const description=String(c?.description||'');
+  const structured=description.match(/^Build:\s*([\s\S]*?)\n\s*Practice:\s*([\s\S]*?)\n\s*Tools:\s*([\s\S]*)$/i);
+  return structured?{goal:structured[1].trim(),practice:structured[2].trim(),tools:structured[3].trim()}:
+    {goal:c?.build_goal||description,practice:c?.practice_steps||'',tools:c?.tools||''};
+}
+function courseFeedback(c) {
+  const attempts=courseAttempts(c.id);
+  const reviewed=attempts.filter(s=>s.review_status!=='submitted'&&s.teacher_feedback);
+  const completion=(cache.course_completions||[]).find(x=>x.course_id===c.id&&x.learner_id===session?.user.id);
+  return `<section id="course-detail-panel" class="course-classroom-panel" aria-label="Teacher feedback">
+    <h3>Teacher feedback</h3>
+    <p class="subtle">Your teacher’s comments stay here for every reviewed attempt.</p>
+    ${completion?`<div class="course-completion"><strong>Project completed</strong><span>Recorded ${date(completion.completed_at)} · Assessed by ${esc(memberName(completion.assessed_by))}</span></div>`:''}
+    ${reviewed.length?`<div class="course-feedback-list">${reviewed.map((s,i)=>`<article class="course-feedback-entry"><div class="row"><span class="tag ${s.review_status==='accepted'?'blue':'gold'}">${s.review_status==='accepted'?'Accepted':'Changes requested'}</span><small class="subtle">${dateTime(s.reviewed_at||s.created_at)}</small></div><h4>Review ${reviewed.length-i}</h4><p>${esc(s.teacher_feedback)}</p></article>`).join('')}</div>`:empty('No teacher feedback yet',attempts.some(s=>s.review_status==='submitted')?'Your project is with your teacher. Their response will appear here after review.':'Submit a practical project to receive specific feedback on your build.')}
+  </section>`;
+}
+function courseJourney(c){
+  const enrollment=(cache.course_enrollments||[]).find(e=>e.course_id===c.id&&e.learner_id===session?.user.id);
+  if(!enrollment)return `<div class="course-journey"><strong>Join this workshop first</strong><button class="button button-sm" data-action="enrollCourse" data-id="${esc(c.id)}">Join workshop</button></div>`;
+  const attempts=courseAttempts(c.id),latest=attempts[0];
+  const completion=(cache.course_completions||[]).find(x=>x.course_id===c.id&&x.learner_id===session.user.id);
+  const finished=!!completion||latest?.review_status==='accepted';
+  const status=finished?'Project accepted':latest?.review_status==='submitted'?'Waiting for teacher review':latest?.review_status==='revision_requested'?'Changes requested':'Ready when you are';
+  const message=finished?'Your practical project is complete. You can review your submission history below.':latest?.review_status==='submitted'?'Your teacher has received your work. Feedback will appear in the Feedback tab.':latest?.review_status==='revision_requested'?'Read the teacher’s feedback, improve your build, then send another attempt.':'Describe what you built and tested. Attach a link or evidence file if you have one.';
+  return `<section id="course-detail-panel" class="course-classroom-panel" aria-label="Project submission">
+    <h3>Submit your project</h3>
+    <div class="course-journey"><strong>${status}</strong><p>${message}</p>
+      ${latest?.review_status==='revision_requested'?`<button class="text-button" data-action="courseDetailView" data-view="feedback">Read teacher feedback →</button>`:''}
+      ${!finished&&latest?.review_status!=='submitted'?`<button class="button button-sm" data-action="submitCourseForm" data-id="${esc(c.id)}">${latest?'Submit improved work':'Send project for review'} →</button>`:''}
+    </div>
+    ${attempts.length?`<details class="course-submission-history"><summary>Submission history · ${attempts.length} ${attempts.length===1?'attempt':'attempts'}</summary><ol>${attempts.map(s=>`<li><div class="row"><strong>${s.review_status==='accepted'?'Accepted':s.review_status==='revision_requested'?'Changes requested':'Awaiting review'}</strong><small class="subtle">${dateTime(s.created_at)}</small></div><p>${esc(s.details)}</p>${cleanUrl(s.evidence_url)?`<a class="link" href="${esc(cleanUrl(s.evidence_url))}" target="_blank" rel="noopener noreferrer">Open project link ↗</a>`:''}${s.evidence_path?`<button class="text-button" data-action="downloadCourseEvidence" data-id="${esc(s.id)}">Open ${esc(s.evidence_name||'evidence file')} ↗</button>`:''}${s.teacher_feedback?`<p class="course-feedback"><b>Teacher feedback</b> ${esc(s.teacher_feedback)}</p>`:''}</li>`).join('')}</ol></details>`:''}
+  </section>`;
 }
 function courses() {
   const list=cache.courses||[];
   const materials=learningReady?(cache.learning_materials||[]).filter(m=>!m.hidden_at):[];
-  const visible=courseTrack==='all'?list:list.filter(c=>courseTrackFor(c)===courseTrack);
   const enrolled=courseReady?(cache.course_enrollments||[]).filter(e=>e.learner_id===session?.user.id):[];
   const completed=enrolled.filter(e=>e.status==='completed');
   const myCourses=enrolled.map(e=>({enrollment:e,course:list.find(c=>c.id===e.course_id)})).filter(x=>x.course)
     .sort((a,b)=>Number(a.enrollment.status==='completed')-Number(b.enrollment.status==='completed')||(new Date(a.course.starts_at||'9999-12-31')-new Date(b.course.starts_at||'9999-12-31')));
-  return `${head('LEARN BY BUILDING','Practical courses','Join several hands-on workshops, build real projects and track each one here.',teacher()?`<div class="profile-buttons">${button('+ Publish workshop','courseForm')}${button('+ Upload material','learningForm','button-outline')}</div>`:'')}
-  ${courseReady?`<div class="course-summary"><strong>${enrolled.length} course${enrolled.length===1?'':'s'} in my plan</strong><span>${completed.length} completed project${completed.length===1?'':'s'}</span>${teacher()?'<a href="#teaching">Open teaching studio →</a>':''}</div>
-  <div class="section-heading" id="my-courses"><div><span class="eyebrow">YOUR LEARNING PLAN</span><h2>My courses</h2></div><p>Join as many workshops as you like across the four tracks.</p></div>
-  <div class="enrollment-grid">${myCourses.length?myCourses.map(({course:c,enrollment:e})=>`<article class="card enrollment-card"><div class="row"><span class="tag ${e.status==='completed'?'blue':''}">${esc(courseProgress(e))}</span><small class="subtle">${esc(courseTrackFor(c))}</small></div><h3>${esc(c.title)}</h3>${courseTimeline(c,e.status==='enrolled')}<button class="text-button" data-action="focusCourse" data-id="${esc(c.id)}">Open workshop →</button></article>`).join(''):empty('No courses in your plan yet','Browse the workshops below and add any that interest you. You can take more than one.')}</div>`:'<div class="notice">Enrollment, project submissions and completion records become available after the course journey migration is installed.</div>'}
-  <div class="section-heading"><div><span class="eyebrow">EXPLORE THE TRACKS</span><h2>Find your next practical build</h2></div><p>These cards filter the catalog; they do not limit your enrollments.</p></div>
-  <div class="course-tracks">${courseTracks.map((t,i)=>{const count=list.filter(c=>courseTrackFor(c)===t.name).length,joined=enrolled.filter(e=>list.some(c=>c.id===e.course_id&&courseTrackFor(c)===t.name)).length;return `<button class="course-track ${courseTrack===t.name?'selected':''}" data-action="courseTrack" data-track="${esc(t.name)}" aria-pressed="${courseTrack===t.name}"><span>0${i+1} / BROWSE TRACK</span><strong>${esc(t.name)}</strong><small>${esc(t.example)}</small><em>${count} workshop${count===1?'':'s'}${joined?` · ${joined} in my plan`:''} ↗</em></button>`}).join('')}</div>
-  <div class="section-heading"><div><span class="eyebrow">HANDS-ON WORKSHOPS</span><h2>${courseTrack==='all'?'All practical workshops':esc(courseTrack)}</h2></div>${courseTrack!=='all'?`<button class="text-button" data-action="courseTrack" data-track="all">Show all tracks</button>`:''}</div>
-  <div class="grid grid-3">${visible.length?visible.map(c=>`<div class="card course-card" id="course-${esc(c.id)}"><span class="tag blue">${esc(c.level)}</span><h3 style="margin-top:18px">${esc(c.title)}</h3><p>${esc(c.description||'Practical workshop details coming soon.')}</p><div class="pill-row"><span class="subtle">${esc(courseTrackFor(c))}</span><span class="subtle">${c.instructor_id?`Teacher: ${esc(memberName(c.instructor_id))}`:'Teacher to be assigned'}</span></div>${courseTimeline(c,(enrolled.find(e=>e.course_id===c.id)?.status)==='enrolled')}${materials.filter(m=>m.course_id===c.id).map(materialRow).join('')}${courseReady?courseJourney(c):''}<div class="card-footer"><span>${enrolled.some(e=>e.course_id===c.id)?'In my learning plan':'Open for enrollment'}</span>${c.resource_url?`<a class="link" href="${esc(cleanUrl(c.resource_url))}" target="_blank" rel="noopener noreferrer">Resource link ↗</a>`:''}</div></div>`).join(''):proposedWorkshops.filter(w=>courseTrack==='all'||w.track===courseTrack).map(w=>`<div class="card course-card course-proposal"><span class="tag gold">Proposed workshop</span><h3>${esc(w.title)}</h3><small>${esc(w.track)}</small><p>${esc(w.detail)}</p><div class="card-footer"><span>Planning draft · Date and teacher to be confirmed</span></div></div>`).join('')||empty('No workshops in this track yet','Approved teachers can publish a practical session in this track.')}</div>
-  ${materials.some(m=>!m.course_id)?`<div class="section-heading"><h2>Club learning library</h2></div><div class="grid grid-2">${materials.filter(m=>!m.course_id).map(m=>`<div class="card">${materialRow(m)}</div>`).join('')}</div>`:''}`;
-}
-function courseJourney(c){
-  const enrollment=(cache.course_enrollments||[]).find(e=>e.course_id===c.id&&e.learner_id===session?.user.id);
-  if(!enrollment)return `<div class="course-journey"><strong>Add this workshop</strong><small>You can join multiple courses and work through each project at your own pace.</small><button class="button button-sm" data-action="enrollCourse" data-id="${esc(c.id)}">Add to my courses</button></div>`;
-  const attempts=(cache.course_submissions||[]).filter(s=>s.course_id===c.id&&s.learner_id===session.user.id).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
-  const latest=attempts[0],completion=(cache.course_completions||[]).find(x=>x.course_id===c.id&&x.learner_id===session.user.id);
-  return `<div class="course-journey"><strong>${completion?'Project completed':latest?.review_status==='submitted'?'Project awaiting feedback':latest?.review_status==='revision_requested'?'Revise your project':'You are enrolled'}</strong>
-    ${completion?`<small>Completed ${date(completion.completed_at)} · Assessed by ${esc(memberName(completion.assessed_by))}</small>`:latest?.review_status==='submitted'?'<small>Your teacher will review your latest submission.</small>':'<small>Share your build notes and a link or evidence file when ready.</small>'}
-    ${latest?.teacher_feedback?`<p class="course-feedback"><b>Teacher feedback</b> ${esc(latest.teacher_feedback)}</p>`:''}
-    ${latest?.evidence_path?`<button class="text-button" data-action="downloadCourseEvidence" data-id="${esc(latest.id)}">Open my evidence ↗</button>`:''}
-    ${!completion&&latest?.review_status!=='submitted'?`<button class="button button-sm" data-action="submitCourseForm" data-id="${esc(c.id)}">${latest?'Submit revision':'Submit project'} →</button>`:''}
-    ${attempts.length>1?`<small>${attempts.length} attempts recorded</small>`:''}
-  </div>`;
+  const chosen=myCourses.find(x=>x.course.id===activeCourseId)||myCourses[0];
+  const selected=chosen?.course, enrollment=chosen?.enrollment;
+  const brief=courseBrief(selected);
+  const attempts=selected?courseAttempts(selected.id):[];
+  const latest=attempts[0],selectedMaterials=selected?materials.filter(m=>m.course_id===selected.id):[];
+  const completedProject=enrollment?.status==='completed'||latest?.review_status==='accepted';
+  const tab=(key,label,count='')=>`<button type="button" class="course-view-button ${courseView===key?'selected':''}" data-action="courseView" data-view="${key}" aria-pressed="${courseView===key}" aria-controls="course-view-panel">${label}${count?` <span class="course-tab-count">${count}</span>`:''}</button>`;
+  const detailTab=(key,label,count='')=>`<button type="button" class="course-detail-button ${courseDetailView===key?'selected':''}" data-action="courseDetailView" data-view="${key}" aria-pressed="${courseDetailView===key}" aria-controls="course-detail-panel">${label}${count?` <span class="course-tab-count">${count}</span>`:''}</button>`;
+  const overview=selected?`<section id="course-detail-panel" class="course-classroom-panel" aria-label="Workshop overview">
+    <h3>What you will build</h3><p>${esc(brief.goal||'Your teacher will add the project brief soon.')}</p>
+    ${brief.practice?`<h4>Hands-on activities and tests</h4><p>${esc(brief.practice)}</p>`:''}
+    ${brief.tools?`<h4>Tools and components</h4><p>${esc(brief.tools)}</p>`:''}
+    <div class="course-next-step"><strong>${completedProject?'Your build is complete':latest?.review_status==='submitted'?'Your teacher is reviewing your work':latest?.review_status==='revision_requested'?'Your next step: improve your build':'Your next step: prepare and build'}</strong><p>${completedProject?'Read the teacher’s final feedback and keep your completion record.':latest?.review_status==='submitted'?'You can see the work you sent in Submit project.':latest?.review_status==='revision_requested'?'Open Feedback for specific improvements, then submit a revision.':'Download the workshop materials, test your project, and submit your results.'}</p><div class="course-next-actions"><button class="button button-sm" data-action="courseDetailView" data-view="${completedProject||latest?.review_status==='revision_requested'?'feedback':latest?.review_status==='submitted'?'submit':'materials'}">${completedProject||latest?.review_status==='revision_requested'?'See feedback':latest?.review_status==='submitted'?'View submitted work':'Open materials'} →</button>${!completedProject&&latest?.review_status!=='submitted'?`<button class="button button-outline button-sm" data-action="courseDetailView" data-view="submit">Submit project</button>`:''}</div></div>
+  </section>`:'';
+  const materialPanel=selected?`<section id="course-detail-panel" class="course-classroom-panel" aria-label="Workshop materials"><h3>Materials and slides</h3><p class="subtle">Use these resources as you build and test your project.</p>
+    ${selected.resource_url&&cleanUrl(selected.resource_url)?`<a class="course-resource-link" href="${esc(cleanUrl(selected.resource_url))}" target="_blank" rel="noopener noreferrer"><strong>Workshop resource link</strong><span>Open resource ↗</span></a>`:''}
+    ${selectedMaterials.length?`<div class="course-material-list">${selectedMaterials.map(materialRow).join('')}</div>`:learningReady?empty('No slides or files yet','Your teacher can upload a guide, worksheet or slides for this workshop.'):`<div class="notice">Learning files will appear after the materials setup is complete.</div>`}
+  </section>`:'';
+  const feedbackCount=selected?attempts.filter(s=>s.review_status!=='submitted'&&s.teacher_feedback).length:0;
+  const classroom=selected?`<article class="course-classroom" id="course-${esc(selected.id)}">
+    <div class="course-classroom-head"><div><span class="eyebrow">YOUR CLASSROOM · ${esc(courseTrackFor(selected))}</span><h2 tabindex="-1">${esc(selected.title)}</h2><p>${esc(brief.goal||'Build and test a real project with your teacher.')}</p></div><span class="tag ${completedProject?'blue':latest?.review_status==='revision_requested'?'gold':''}">${esc(courseProgress(enrollment))}</span></div>
+    <div class="course-classroom-meta"><span><b>Teacher</b> ${esc(selected.instructor_id?memberName(selected.instructor_id):'To be assigned')}</span>${courseTimeline(selected,enrollment.status==='enrolled')}</div>
+    <div class="course-detail-switch" role="group" aria-label="Inside this workshop">${detailTab('overview','Overview')}${detailTab('materials','Materials',selectedMaterials.length)}${detailTab('submit','Submit project',attempts.length)}${detailTab('feedback','Feedback',feedbackCount)}</div>
+    ${courseDetailView==='materials'?materialPanel:courseDetailView==='submit'?courseJourney(selected):courseDetailView==='feedback'?courseFeedback(selected):overview}
+  </article>`:'';
+  const myLearning=`<section id="course-view-panel" class="course-view-panel" aria-label="My learning">
+    ${courseReady?`<div class="course-summary"><strong>${enrolled.length} workshop${enrolled.length===1?'':'s'} joined</strong><span>${completed.length} completed</span>${teacher()?'<a href="#teaching">Open teaching studio →</a>':''}</div>`:`<div class="notice">Course enrollment and project submissions need the course journey database setup. You can still explore published workshops.</div>`}
+    <div class="section-heading"><div><span class="eyebrow">YOUR LEARNING PLAN</span><h2>My workshops</h2></div><p>Choose a classroom to see its brief, materials, submissions and feedback.</p></div>
+    ${myCourses.length?`<div class="course-classroom-layout"><div class="course-class-list" role="group" aria-label="My enrolled workshops">${myCourses.map(({course:c,enrollment:e})=>`<button type="button" class="course-class-choice ${selected?.id===c.id?'selected':''}" data-action="courseSelect" data-id="${esc(c.id)}" aria-pressed="${selected?.id===c.id}"><small>${esc(courseTrackFor(c))}</small><strong>${esc(c.title)}</strong><span>${esc(courseProgress(e))} · ${courseDeadline(c)?`Due ${date(c.submission_due_at)}`:'Deadline to be announced'}</span></button>`).join('')}</div>${classroom}</div>`:`<div class="course-empty-state"><h3>No workshops joined yet</h3><p>Explore the four tracks, choose a practical build, and it will appear here with your materials and teacher feedback.</p><button class="button" data-action="courseView" data-view="explore">Explore workshops →</button></div>`}
+    ${materials.some(m=>!m.course_id)?`<section class="course-general-library"><div class="section-heading"><div><span class="eyebrow">FOR EVERY MEMBER</span><h2>Club learning library</h2></div><p>General notes and guides for any workshop.</p></div><div class="grid grid-2">${materials.filter(m=>!m.course_id).map(m=>`<div class="card">${materialRow(m)}</div>`).join('')}</div></section>`:''}
+  </section>`;
+  const visible=courseTrack==='all'?list:list.filter(c=>courseTrackFor(c)===courseTrack);
+  const explore=`<section id="course-view-panel" class="course-view-panel" aria-label="Explore workshops"><div class="course-steps"><div><b>1</b><strong>Choose a workshop</strong><small>Pick one or more tracks.</small></div><div><b>2</b><strong>Learn by doing</strong><small>Follow your teacher’s brief and materials.</small></div><div><b>3</b><strong>Share your build</strong><small>Send test notes and evidence.</small></div><div><b>4</b><strong>Improve with feedback</strong><small>Revise or record completion.</small></div></div>
+    <div class="section-heading"><div><span class="eyebrow">FOUR PRACTICAL TRACKS</span><h2>Find a project to build</h2></div><p>You can join several workshops across different tracks.</p></div>
+    <div class="course-tracks"><button class="course-track course-track-all ${courseTrack==='all'?'selected':''}" data-action="courseTrack" data-track="all" aria-pressed="${courseTrack==='all'}"><strong>All tracks</strong><small>See every published workshop.</small><em>${list.length} workshop${list.length===1?'':'s'} ↗</em></button>${courseTracks.map((t,i)=>{const count=list.filter(c=>courseTrackFor(c)===t.name).length;return `<button class="course-track ${courseTrack===t.name?'selected':''}" data-action="courseTrack" data-track="${esc(t.name)}" aria-pressed="${courseTrack===t.name}"><span>0${i+1} / PRACTICAL TRACK</span><strong>${esc(t.name)}</strong><small>${esc(t.example)}</small><em>${count} workshop${count===1?'':'s'} ↗</em></button>`}).join('')}</div>
+    <div class="section-heading"><div><span class="eyebrow">PUBLISHED WORKSHOPS</span><h2>${courseTrack==='all'?'All workshops':esc(courseTrack)}</h2></div></div>
+    <div class="grid grid-3">${visible.length?visible.map(c=>{const joined=enrolled.some(e=>e.course_id===c.id);return `<article class="card course-card" id="course-${esc(c.id)}"><span class="tag blue">${esc(c.level||'Practical')}</span><h3 tabindex="-1">${esc(c.title)}</h3><p>${esc(courseBrief(c).goal||'A practical project brief is coming soon.')}</p><div class="pill-row"><span class="subtle">${esc(courseTrackFor(c))}</span><span class="subtle">${c.instructor_id?`Teacher: ${esc(memberName(c.instructor_id))}`:'Teacher to be assigned'}</span></div>${courseTimeline(c,false)}<div class="course-catalog-action">${joined?`<button class="button button-outline button-sm" data-action="focusCourse" data-id="${esc(c.id)}">Open my classroom →</button>`:courseReady?`<button class="button button-sm" data-action="enrollCourse" data-id="${esc(c.id)}">Join workshop →</button>`:`<small class="subtle">Enrollment opens after course setup.</small>`}</div></article>`}).join(''):proposedWorkshops.filter(w=>courseTrack==='all'||w.track===courseTrack).map(w=>`<article class="card course-card course-proposal"><span class="tag gold">Proposed workshop</span><h3>${esc(w.title)}</h3><small>${esc(w.track)}</small><p>${esc(w.detail)}</p><div class="card-footer"><span>Planning draft · Date and teacher to be confirmed</span></div></article>`).join('')||empty('No workshops in this track yet','Approved teachers can publish a practical session in this track.')}</div>
+  </section>`;
+  return `${head('LEARN BY BUILDING','Courses and workshops','Choose a practical build, follow your teacher’s materials and keep your feedback in one classroom.',teacher()?`<div class="profile-buttons">${button('+ Publish workshop','courseForm')}${learningReady?button('+ Upload material','learningForm','button-outline'):''}</div>`:'')}
+    <div class="course-view-switch" role="group" aria-label="Course views">${tab('mine','My learning',myCourses.length)}${tab('explore','Explore workshops',list.length)}</div>
+    ${courseView==='explore'?explore:myLearning}`;
 }
 function materialRow(m){return `<div class="learning-row"><span class="tag blue">${esc(m.kind)}</span><div><strong>${esc(m.title)}</strong><small>${esc(m.file_name)} · ${fileSize(m.file_size)} · ${date(m.created_at)}</small>${m.description?`<p>${esc(m.description)}</p>`:''}</div>${m.hidden_at?'<span class="tag gold">Hidden</span>':`<button class="text-button" data-action="downloadLearning" data-id="${esc(m.id)}">Download ↓</button>`}</div>`;}
+let teachingTab = 'overview';
 function teaching(){
   if(!teacher())return '';
-  const onboarding=!admin()?(teacherProfileReady?`<section class="card teacher-onboarding"><div class="row"><div><span class="eyebrow">YOUR TEACHING PROFILE</span><h2>${teacherProfile?'Update your teaching details':'Complete your teaching details'}</h2><p class="subtle">Tell the club what you can teach through practical projects. Only you and administrators can see these details.</p></div><span class="tag ${teacherProfile?'blue':'gold'}">${teacherProfile?'Saved':'To complete'}</span></div><form id="teacherProfileForm" data-kind="teacherProfile" class="form-stack">${select('Primary learning track','track',courseTracks.map(t=>t.name),teacherProfile?.track||courseTracks[0].name)}<div class="field"><label for="teacher_experience">Relevant experience or skills</label><textarea id="teacher_experience" name="experience" minlength="20" maxlength="2000" required placeholder="Describe the tools, projects and topics you can teach.">${esc(teacherProfile?.experience||'')}</textarea></div><div class="field"><label for="teacher_practical_focus">Practical teaching plan</label><textarea id="teacher_practical_focus" name="practical_focus" minlength="20" maxlength="2000" required placeholder="What will members build or test with you?">${esc(teacherProfile?.practical_focus||'')}</textarea></div><div class="field"><label for="teacher_availability">Availability</label><textarea id="teacher_availability" name="availability" minlength="5" maxlength="500" required placeholder="For example, Saturdays or two sessions each month.">${esc(teacherProfile?.availability||'')}</textarea></div><button class="button" type="submit">${teacherProfile?'Save changes':'Save teaching profile'}</button></form></section>`:'<div class="notice">Run the teacher promotions migration to set up teaching profiles.</div>'):'';
-  const items=learningReady?(cache.learning_materials||[]).filter(m=>admin()||m.uploaded_by===session.user.id):[];
-  const workshops=(cache.courses||[]).filter(c=>admin()||c.instructor_id===session.user.id),courseIds=new Set(workshops.map(c=>c.id));
+  const ownId=session.user.id;
+  const workshops=(cache.courses||[]).filter(c=>admin()||c.instructor_id===ownId);
+  const courseIds=new Set(workshops.map(c=>c.id));
   const enrollments=courseReady?(cache.course_enrollments||[]).filter(e=>courseIds.has(e.course_id)):[];
   const submissions=courseReady?(cache.course_submissions||[]).filter(s=>courseIds.has(s.course_id)):[];
-  const pending=submissions.filter(s=>s.review_status==='submitted');
+  const pending=submissions.filter(s=>s.review_status==='submitted'&&s.learner_id!==ownId).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+  const reviewed=submissions.filter(s=>s.review_status!=='submitted').sort((a,b)=>new Date(b.reviewed_at||b.created_at)-new Date(a.reviewed_at||a.created_at));
   const completions=courseReady?(cache.course_completions||[]).filter(x=>courseIds.has(x.course_id)):[];
+  const materials=learningReady?(cache.learning_materials||[]).filter(m=>admin()||m.uploaded_by===ownId||courseIds.has(m.course_id)):[];
+  const uniqueLearners=new Set(enrollments.map(e=>e.learner_id)).size;
   const now=Date.now();
   const agenda=workshops.flatMap(c=>{
-    const next=[];
-    const starts=c.starts_at&&new Date(c.starts_at).getTime();
+    const starts=c.starts_at?new Date(c.starts_at).getTime():NaN;
     const due=coursePlanningReady?courseDeadline(c)?.getTime():null;
-    if(starts&&starts>=now)next.push({course:c,label:'Workshop starts',at:starts});
-    if(due&&due>=now)next.push({course:c,label:'Project deadline',at:due});
-    return next;
+    return [Number.isFinite(starts)&&starts>=now?{course:c,label:'Workshop starts',at:starts}:null,
+      Number.isFinite(due)&&due>=now?{course:c,label:'Project deadline',at:due}:null].filter(Boolean);
   }).sort((a,b)=>a.at-b.at).slice(0,5);
-  return `${head('TEACHING','Teaching studio','See your learners, plan workshop dates and review hands-on projects.',`<div class="profile-buttons">${button('+ Publish workshop','courseForm')}${learningReady?button('+ Upload material','learningForm','button-outline'):''}</div>`)}
-  ${courseReady?`<div class="course-summary"><strong>${workshops.length} workshop${workshops.length===1?'':'s'}</strong><span>${new Set(enrollments.map(e=>e.learner_id)).size} student${new Set(enrollments.map(e=>e.learner_id)).size===1?'':'s'}</span><span>${pending.length} awaiting review</span><span>${completions.length} completed project${completions.length===1?'':'s'}</span></div>
-    <div class="teaching-overview"><section class="teaching-agenda"><span class="eyebrow">COMING UP</span><h2>Next dates and deadlines</h2>${agenda.length?agenda.map(x=>`<div class="teaching-agenda-row"><span class="tag ${x.label==='Project deadline'?'gold':'blue'}">${esc(x.label)}</span><div><strong>${esc(x.course.title)}</strong><small class="subtle">${dateTime(x.at)}</small></div></div>`).join(''):empty('Nothing scheduled yet','Set a workshop start and project deadline to help learners plan their builds.')}</section><section class="teaching-agenda"><span class="eyebrow">YOUR CLASSROOM</span><h2>Keep projects moving</h2><div class="teaching-agenda-row"><strong>${enrollments.filter(e=>e.status==='enrolled').length} active enrollments</strong><small class="subtle">Members can join more than one workshop.</small></div><div class="teaching-agenda-row"><strong>${pending.length} project${pending.length===1?'':'s'} to review</strong><small class="subtle">Give feedback or record completion below.</small></div>${coursePlanningReady?'<p class="subtle">Assign a member by the email they use to sign in. Their workshop appears in their learning plan.</p>':'<p class="subtle">Install the course planning migration to assign learners and set project deadlines.</p>'}</section></div>
-    ${!teacherProfile?onboarding:''}
-    <div class="section-heading"><div><span class="eyebrow">WORKSHOPS & STUDENTS</span><h2>${admin()?'Club workshops':'My assigned workshops'}</h2></div><p>Each workshop shows enrolled students, project progress and its next dates.</p></div>
+  const profile=admin()?'':teacherProfileReady?`<section class="card teacher-onboarding"><div class="row"><div><span class="eyebrow">YOUR TEACHING PROFILE</span><h2>${teacherProfile?'Update your teaching details':'Complete your teaching details'}</h2><p class="subtle">Describe the practical work you can lead. These details are visible only to you and administrators.</p></div><span class="tag ${teacherProfile?'blue':'gold'}">${teacherProfile?'Saved':'To complete'}</span></div><form id="teacherProfileForm" data-kind="teacherProfile" class="form-stack">${select('Primary learning track','track',courseTracks.map(t=>t.name),teacherProfile?.track||courseTracks[0].name)}<div class="field"><label for="teacher_experience">Relevant experience or skills</label><textarea id="teacher_experience" name="experience" minlength="20" maxlength="2000" required placeholder="Describe the tools, projects and topics you can teach.">${esc(teacherProfile?.experience||'')}</textarea></div><div class="field"><label for="teacher_practical_focus">Practical teaching plan</label><textarea id="teacher_practical_focus" name="practical_focus" minlength="20" maxlength="2000" required placeholder="What will members build or test with you?">${esc(teacherProfile?.practical_focus||'')}</textarea></div><div class="field"><label for="teacher_availability">Availability</label><textarea id="teacher_availability" name="availability" minlength="5" maxlength="500" required placeholder="For example, Saturdays or two sessions each month.">${esc(teacherProfile?.availability||'')}</textarea></div><button class="button" type="submit">${teacherProfile?'Save changes':'Save teaching profile'}</button></form></section>`:'<div class="notice">Run the teacher promotions migration to enable your teaching profile.</div>';
+  const tabs=[['overview','Overview'],['workshops',`Workshops (${workshops.length})`],['reviews',`To review (${pending.length})`],['materials',`Materials (${materials.length})`],...(!admin()?[['profile','My profile']]:[])];
+  if(!tabs.some(([key])=>key===teachingTab))teachingTab='overview';
+  const panel=(key,content)=>`<section id="teaching-panel-${key}" role="tabpanel" aria-labelledby="teaching-tab-${key}" ${teachingTab===key?'':'hidden'}>${content}</section>`;
+  const overview=courseReady?`<div class="teaching-overview"><section class="teaching-agenda"><span class="eyebrow">WHAT TO DO NEXT</span><h2>Your teaching checklist</h2>
+    <div class="teaching-agenda-row"><div><strong>${pending.length?`${pending.length} project${pending.length===1?'':'s'} need feedback`:'Project reviews are clear'}</strong><small class="subtle">Read each build, give practical feedback, then accept it or request a revision.</small></div><button class="text-button" data-action="teachingTab" data-tab="reviews">Open reviews →</button></div>
+    <div class="teaching-agenda-row"><div><strong>${workshops.length?`${workshops.length} assigned workshop${workshops.length===1?'':'s'}`:'Publish your first workshop'}</strong><small class="subtle">Set the project goal, dates and students for each workshop.</small></div><button class="text-button" data-action="teachingTab" data-tab="workshops">Open workshops →</button></div>
+    <div class="teaching-agenda-row"><div><strong>${materials.length} published material${materials.length===1?'':'s'}</strong><small class="subtle">Attach slides or notes to the workshop students will use them in.</small></div><button class="text-button" data-action="teachingTab" data-tab="materials">Open materials →</button></div>
+    ${!admin()&&!teacherProfile?'<div class="teaching-agenda-row"><div><strong>Complete your teaching profile</strong><small class="subtle">Add your experience, practical focus and availability.</small></div><button class="text-button" data-action="teachingTab" data-tab="profile">Open profile →</button></div>':''}</section>
+    <section class="teaching-agenda"><span class="eyebrow">COMING UP</span><h2>Dates and deadlines</h2>${agenda.length?agenda.map(x=>`<div class="teaching-agenda-row"><span class="tag ${x.label==='Project deadline'?'gold':'blue'}">${esc(x.label)}</span><div><strong>${esc(x.course.title)}</strong><small class="subtle">${dateTime(x.at)}</small></div></div>`).join(''):empty('Nothing scheduled yet','Set a workshop start and project deadline to help students plan.')}</section></div>
+    <div class="notice">Teach in this order: publish a practical workshop, add students, share materials, review their project submissions, and give feedback. Students can join more than one workshop.</div>`:`<div class="notice">Run the course journey migration to enable enrollment, project reviews and completion records.</div>${!admin()&&!teacherProfile?'<button class="button button-sm" data-action="teachingTab" data-tab="profile">Complete teaching profile</button>':''}`;
+  const workshopContent=courseReady?`<div class="section-heading"><div><span class="eyebrow">YOUR CLASSROOMS</span><h2>${admin()?'Club workshops':'Workshops assigned to me'}</h2></div><p>Manage students, practical plans, deadlines and materials for each workshop.</p></div>
+    ${!coursePlanningReady?'<div class="notice">Run the course planning migration to enable student assignment, complete rosters and workshop deadlines.</div>':''}
     <div class="teaching-workshops">${workshops.length?workshops.map(c=>{
       const students=enrollments.filter(e=>e.course_id===c.id).sort((a,b)=>Number(a.status==='completed')-Number(b.status==='completed')||new Date(b.created_at)-new Date(a.created_at));
-      const waiting=students.filter(e=>submissions.some(s=>s.course_id===c.id&&s.learner_id===e.learner_id&&s.review_status==='submitted')).length;
-      return `<article class="teaching-workshop-card"><div class="row"><span class="tag blue">${esc(courseTrackFor(c))}</span><small>${esc(c.level||'Practical')}</small></div><h3>${esc(c.title)}</h3><p>${students.length} student${students.length===1?'':'s'} · ${waiting} awaiting feedback${admin()?` · ${esc(c.instructor_id?memberName(c.instructor_id):'No teacher assigned')}`:''}</p>${courseTimeline(c,true)}<div class="teacher-roster-list">${students.length?students.slice(0,5).map(e=>{
-        const removable=coursePlanningReady&&e.status==='enrolled'&&!submissions.some(s=>s.course_id===c.id&&s.learner_id===e.learner_id)&&!completions.some(x=>x.course_id===c.id&&x.learner_id===e.learner_id);
-        return `<div class="teacher-roster-row">${memberAvatar(e.learner_id)}<div><strong>${esc(courseLearnerName(c.id,e.learner_id))}</strong><small>${esc(courseProgress(e))} · Joined ${date(e.created_at)}</small></div>${removable?`<button class="text-button" data-action="unassignCourseForm" data-id="${esc(c.id)}" data-learner="${esc(e.learner_id)}" aria-label="Remove ${esc(courseLearnerName(c.id,e.learner_id))} from ${esc(c.title)}">Remove</button>`:''}</div>`;
-      }).join(''):empty('No students enrolled','Members can add this workshop, or you can assign a member by email.')}</div><div class="teacher-workshop-actions">${coursePlanningReady?`<button class="button button-sm" data-action="assignLearnerForm" data-id="${esc(c.id)}">+ Assign member</button><button class="button button-outline button-sm" data-action="editCourseScheduleForm" data-id="${esc(c.id)}">Edit dates</button>${students.length>5?`<button class="text-button" data-action="courseRoster" data-id="${esc(c.id)}">View all ${students.length} students →</button>`:''}`:''}<button class="text-button" data-action="focusCourse" data-id="${esc(c.id)}">View workshop →</button></div></article>`;
-    }).join(''):empty('No workshops yet',admin()?'Publish the club’s first practical workshop.':'Publish a workshop or ask an administrator to assign one you can lead.')}</div>
-    ${teacherProfile?onboarding:''}
-    <div class="section-heading"><h2>Project submissions</h2><p>Review the build notes and evidence before recording completion.</p></div>
-    <div class="grid grid-2">${pending.length?pending.map(s=>courseSubmissionCard(s,true)).join(''):empty('No submissions waiting','New project submissions appear here when learners finish a build.')}</div>
-    ${admin()?`<div class="section-heading"><h2>Workshop teachers</h2><p>Assign an approved teacher to older or reassigned workshops.</p></div><div class="grid grid-2">${(cache.courses||[]).map(c=>`<div class="card course-assignment"><strong>${esc(c.title)}</strong><small>${esc(c.instructor_id?memberName(c.instructor_id):'Not assigned')}</small><button class="text-button" data-action="assignCourseForm" data-id="${esc(c.id)}">Assign teacher →</button></div>`).join('')||empty('No workshops','Publish a practical workshop first.')}</div>`:''}
-    ${submissions.some(s=>s.review_status!=='submitted')?`<div class="section-heading"><h2>Reviewed projects</h2></div><div class="grid grid-2">${submissions.filter(s=>s.review_status!=='submitted').slice(0,12).map(s=>courseSubmissionCard(s,false)).join('')}</div>`:''}`:`${onboarding}<div class="notice">Run the course journey migration to enable enrollment, project reviews and completion records.</div>`}
-  <div class="notice">Only approved teachers and administrators can publish learning files. Approved club members can download visible materials.</div>
-  <div class="section-heading"><h2>${admin()?'All learning materials':'Materials I uploaded'}</h2><p>PDF, PPT, PPTX, DOC or DOCX · up to 20 MB</p></div><div class="grid grid-2">${items.length?items.map(m=>`<div class="card teaching-card">${materialRow(m)}<div class="card-footer"><span>${m.course_id?esc((cache.courses||[]).find(c=>c.id===m.course_id)?.title||'Course'):'General learning library'} · ${esc(memberName(m.uploaded_by))}</span>${admin()?`<button class="text-button" data-action="toggleLearning" data-id="${esc(m.id)}">${m.hidden_at?'Restore':'Hide'}</button>`:''}</div></div>`).join(''):empty('No materials yet','Upload a presentation, lesson notes or a guide to begin.')}</div>`;
+      const waiting=pending.filter(s=>s.course_id===c.id).length;
+      return `<article class="teaching-workshop-card" id="teaching-workshop-${esc(c.id)}"><div class="row"><span class="tag blue">${esc(courseTrackFor(c))}</span><small>${esc(c.level||'Practical')}</small></div><h3>${esc(c.title)}</h3>${admin()?`<p class="subtle">Lead: ${esc(c.instructor_id?memberName(c.instructor_id):'Not assigned')}</p>`:''}<p>${esc(c.description||'Add a practical build goal so learners know what they will make.')}</p>${courseTimeline(c,true)}<div class="course-summary"><strong>${students.length} student${students.length===1?'':'s'}</strong><span>${waiting} awaiting feedback</span><span>${students.filter(e=>e.status==='completed').length} completed</span></div><div class="teacher-roster-list">${students.length?students.slice(0,3).map(e=>`<div class="teacher-roster-row">${memberAvatar(e.learner_id)}<div><strong>${esc(courseLearnerName(c.id,e.learner_id))}</strong><small>${esc(courseProgress(e))}</small></div></div>`).join(''):empty('No students yet','Members can enroll themselves, or you can add an approved member by email.')}</div><div class="teacher-workshop-actions">${coursePlanningReady?`<button class="button button-sm" data-action="assignLearnerForm" data-id="${esc(c.id)}">+ Add student</button><button class="button button-outline button-sm" data-action="courseRoster" data-id="${esc(c.id)}">View all ${students.length} students</button><button class="button button-outline button-sm" data-action="editCourseScheduleForm" data-id="${esc(c.id)}">Set dates</button>`:''}<button class="button button-outline button-sm" data-action="editCourseContentForm" data-id="${esc(c.id)}">Edit workshop plan</button>${learningReady?`<button class="button button-outline button-sm" data-action="learningForm" data-course="${esc(c.id)}">+ Add slides or notes</button>`:''}<button class="text-button" data-action="focusCourse" data-id="${esc(c.id)}">View course listing →</button></div></article>`;
+    }).join(''):empty('No workshops assigned yet',admin()?'Publish the club’s first practical workshop.':'Publish a workshop or ask an administrator to assign one to you.')}</div>
+    <div class="teacher-workshop-actions"><button class="button button-sm" data-action="courseForm">+ Publish workshop</button></div>
+    ${admin()?`<div class="section-heading"><h2>Workshop teachers</h2><p>Assign an approved teacher to older or reassigned workshops.</p></div><div class="grid grid-2">${(cache.courses||[]).map(c=>`<div class="card course-assignment"><strong>${esc(c.title)}</strong><small>${esc(c.instructor_id?memberName(c.instructor_id):'Not assigned')}</small><button class="text-button" data-action="assignCourseForm" data-id="${esc(c.id)}">Assign teacher →</button></div>`).join('')||empty('No workshops','Publish a practical workshop first.')}</div>`:''}`:'<div class="notice">Run the course journey migration to manage workshop students and dates.</div>';
+  const reviewContent=courseReady?`<div class="section-heading"><div><span class="eyebrow">PROJECT FEEDBACK</span><h2>${pending.length} project${pending.length===1?'':'s'} to review</h2></div><p>Read the build and evidence, then accept the project or request a specific improvement.</p></div><div class="grid grid-2">${pending.length?pending.map(s=>courseSubmissionCard(s,true)).join(''):empty('All caught up','New projects from students in your workshops will appear here.')}</div>
+    <div class="section-heading"><div><span class="eyebrow">FEEDBACK HISTORY</span><h2>Reviewed projects</h2></div><p>Accepted work has a completion record. Revision requests let students submit an updated build.</p></div><div class="grid grid-2">${reviewed.length?reviewed.map(s=>courseSubmissionCard(s,false)).join(''):empty('No completed reviews yet','Your decisions and feedback will appear here.')}</div>`:'<div class="notice">Run the course journey migration to review project submissions.</div>';
+  const materialContent=learningReady?`<div class="section-heading"><div><span class="eyebrow">LEARNING MATERIALS</span><h2>${admin()?'Club materials':'Materials for my workshops'}</h2></div><button class="button button-sm" data-action="learningForm">+ Upload slides or notes</button></div><p class="subtle">Choose the related workshop when uploading a file so students can find it alongside their project. PDF, PPT, PPTX, DOC or DOCX · up to 20 MB.</p><div class="grid grid-2">${materials.length?materials.map(m=>`<div class="card teaching-card">${materialRow(m)}<div class="card-footer"><span>${m.course_id?esc((cache.courses||[]).find(c=>c.id===m.course_id)?.title||'Workshop'):'General learning library'} · ${esc(memberName(m.uploaded_by))}</span>${admin()?`<button class="text-button" data-action="toggleLearning" data-id="${esc(m.id)}">${m.hidden_at?'Restore':'Hide'}</button>`:''}</div></div>`).join(''):empty('No materials yet','Upload a presentation, worksheet or guide for your students.')}</div>`:'<div class="notice">Run the teacher materials migration to enable slides and learning files.</div>';
+  return `${head('TEACHING','Teaching studio','Plan practical workshops, support enrolled students and review their project work.',`<div class="profile-buttons">${button('+ Publish workshop','courseForm')}${learningReady?button('+ Upload material','learningForm','button-outline'):''}</div>`)}
+    ${courseReady?`<div class="course-summary"><strong>${workshops.length} workshop${workshops.length===1?'':'s'}</strong><span>${uniqueLearners} student${uniqueLearners===1?'':'s'}</span><span>${pending.length} awaiting feedback</span><span>${completions.length} completed project${completions.length===1?'':'s'}</span></div>`:''}
+    <div class="records-tabs teaching-tabs" role="tablist" aria-label="Teaching studio sections">${tabs.map(([key,label])=>`<button type="button" role="tab" id="teaching-tab-${key}" aria-controls="teaching-panel-${key}" aria-selected="${teachingTab===key}" tabindex="${teachingTab===key?'0':'-1'}" data-action="teachingTab" data-tab="${key}" class="${teachingTab===key?'active':''}">${esc(label)}</button>`).join('')}</div>
+    <div class="teaching-panels">${panel('overview',overview)}${panel('workshops',workshopContent)}${panel('reviews',reviewContent)}${panel('materials',materialContent)}${!admin()?panel('profile',profile):''}</div>`;
 }
 function courseSubmissionCard(s,waiting){
   const course=(cache.courses||[]).find(c=>c.id===s.course_id);
@@ -1738,12 +1826,42 @@ function actions(e) {
   if(action==='calendarDay'){const [y,m,d]=(el.dataset.date||'').split('-').map(Number);if(!y||m<1||m>12||d<1||d>31)return;calendarSelected=new Date(y,m-1,d);render();return;}
   if(action==='calendarItem')return calendarItem(el.dataset.kind,id);
   if(action==='calendarProject'){close();location.hash='#projects';projectDetail(id);return;}
+  if(action==='teachingTab'){
+    if(!teacher())return;
+    const target=el.dataset.tab;
+    if(!['overview','workshops','reviews','materials',...(!admin()?['profile']:[])].includes(target))return;
+    teachingTab=target;render();
+    if(el.getAttribute('role')==='tab')requestAnimationFrame(()=>document.getElementById(`teaching-tab-${target}`)?.focus());
+    else document.getElementById(`teaching-tab-${target}`)?.scrollIntoView({behavior:'smooth',block:'start'});
+    return;
+  }
+  if(action==='courseView'&&clubAccess()){
+    const view=el.dataset.view;if(!['mine','explore'].includes(view))return;
+    courseView=view;render();
+    document.querySelector(`.course-view-button[data-view="${view}"]`)?.focus();
+    return;
+  }
+  if(action==='courseSelect'&&clubAccess()&&courseReady){
+    if(!(cache.course_enrollments||[]).some(e=>e.course_id===id&&e.learner_id===session.user.id))return;
+    activeCourseId=id;courseDetailView='overview';courseView='mine';render();
+    document.querySelector('.course-classroom h2')?.focus({preventScroll:true});
+    document.getElementById(`course-${id}`)?.scrollIntoView({behavior:'smooth',block:'start'});
+    return;
+  }
+  if(action==='courseDetailView'&&clubAccess()&&courseReady){
+    const view=el.dataset.view;if(!['overview','materials','submit','feedback'].includes(view))return;
+    courseDetailView=view;render();
+    document.querySelector(`.course-detail-button[data-view="${view}"]`)?.focus();
+    return;
+  }
   if(action==='courseTrack'){const track=el.dataset.track;if(track==='all'||courseTracks.some(t=>t.name===track)){courseTrack=track;render();}return;}
   if(action==='focusCourse'&&clubAccess()){
     if(!(cache.courses||[]).some(c=>c.id===id))return;
     if($('#modal').open)close();
-    courseTrack='all';location.hash='#courses';render();
-    setTimeout(()=>document.getElementById(`course-${id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),80);
+    const enrolled=(cache.course_enrollments||[]).some(e=>e.course_id===id&&e.learner_id===session?.user.id);
+    courseView=enrolled?'mine':'explore';activeCourseId=enrolled?id:null;
+    courseDetailView='overview';courseTrack='all';location.hash='#courses';render();
+    setTimeout(()=>{const target=document.getElementById(`course-${id}`);target?.querySelector('h2,h3')?.focus({preventScroll:true});target?.scrollIntoView({behavior:'smooth',block:'center'});},80);
     return;
   }
   if(action==='courseRoster'&&teacher()&&courseReady&&coursePlanningReady){
@@ -1762,6 +1880,14 @@ function actions(e) {
     if(!course||!admin()&&course.instructor_id!==session.user.id)return;
     return form('Workshop schedule',`Update the start time and project deadline for ${esc(course.title)}. Enrolled students will receive an in-app notification. Work can still be submitted after the deadline.`,'courseSchedule',`<input type="hidden" name="course_id" value="${esc(id)}">${field('Start date and time','starts_at','datetime-local',courseDateInput(course.starts_at),false)}${field('Project deadline (optional)','submission_due_at','datetime-local',courseDateInput(course.submission_due_at),false)}`);
   }
+  if(action==='editCourseContentForm'&&teacher()&&courseReady){
+    const course=(cache.courses||[]).find(c=>c.id===id);
+    if(!course||!admin()&&course.instructor_id!==session.user.id)return;
+    const original=String(course.description||'').replace(/\r\n?/g,'\n');
+    const parts=original.match(/^Build:\s*([\s\S]*?)\n\nPractice:\s*([\s\S]*?)\n\nTools:\s*([\s\S]*)$/);
+    const build=parts?parts[1]:original,practice=parts?parts[2]:'',tools=parts?parts[3]:'';
+    return form('Edit workshop plan','Describe the build, hands-on activities and tools learners need. Older freeform descriptions appear in the build goal for you to revise.','courseContent',`<input type="hidden" name="course_id" value="${esc(id)}">${field('Workshop title','title','text',course.title)}${select('Learning track','category',courseTracks.map(t=>t.name),courseTrackFor(course))}${select('Level','level',['Beginner','Intermediate','Advanced'],course.level)}${area('What will students build?','build_goal',build)}${area('Hands-on activities and tests','practice_steps',practice)}${field('Tools and materials','tools','text',tools)}${field('Resource URL (optional)','resource_url','url',course.resource_url||'',false)}`);
+  }
   if(action==='unassignCourseForm'&&teacher()&&courseReady&&coursePlanningReady){
     const course=(cache.courses||[]).find(c=>c.id===id),learnerId=el.dataset.learner;
     const enrollment=(cache.course_enrollments||[]).find(e=>e.course_id===id&&e.learner_id===learnerId);
@@ -1771,7 +1897,7 @@ function actions(e) {
   }
   if(action==='enrollCourse'&&clubAccess()&&courseReady){
     if(!(cache.courses||[]).some(c=>c.id===id))return;
-    return mutate(()=>db.from('course_enrollments').insert({course_id:id,learner_id:session.user.id}));
+    return enrollAndOpenCourse(id);
   }
   if(action==='submitCourseForm'&&clubAccess()&&courseReady){
     const course=(cache.courses||[]).find(c=>c.id===id);
@@ -1783,7 +1909,7 @@ function actions(e) {
   if(action==='reviewCourseForm'&&teacher()&&courseReady){
     const attempt=(cache.course_submissions||[]).find(s=>s.id===id&&s.review_status==='submitted'),course=(cache.courses||[]).find(c=>c.id===attempt?.course_id);
     const decision=el.dataset.status;if(!attempt||!course||attempt.learner_id===session.user.id||(!admin()&&course.instructor_id!==session.user.id)||!['accepted','revision_requested'].includes(decision))return;
-    return modal(`<span class="eyebrow">TEACHER FEEDBACK</span><h2>${decision==='accepted'?'Complete this project':'Request a revision'}</h2><p class="muted">${esc(course.title)} · ${esc(courseLearnerName(course.id,attempt.learner_id))}</p><p>${esc(attempt.details)}</p><form id="editor" data-kind="courseReview" class="form-stack"><input type="hidden" name="submission_id" value="${esc(id)}"><input type="hidden" name="decision" value="${esc(decision)}">${area('Practical feedback for the learner','feedback')}<button class="button" type="submit">${decision==='accepted'?'Accept and record completion':'Send revision request'}</button></form>`);
+    return modal(`<span class="eyebrow">TEACHER FEEDBACK</span><h2>${decision==='accepted'?'Accept and complete project':'Ask for a revision'}</h2><p class="muted">${esc(course.title)} · ${esc(courseLearnerName(course.id,attempt.learner_id))}</p><p class="subtle">Build and test notes</p><p class="course-feedback">${esc(attempt.details)}</p>${attempt.evidence_url?`<a class="link" href="${esc(cleanUrl(attempt.evidence_url))}" target="_blank" rel="noopener noreferrer">Open project link ↗</a>`:''}${attempt.evidence_path?`<button type="button" class="text-button" data-action="downloadCourseEvidence" data-id="${esc(attempt.id)}">Open submitted evidence ↗</button>`:''}<p class="subtle">${decision==='accepted'?'Explain what worked and one useful next step. Acceptance records the student’s completion.':'Explain what to improve and how the student can test the revised build.'}</p><form id="editor" data-kind="courseReview" class="form-stack"><input type="hidden" name="submission_id" value="${esc(id)}"><input type="hidden" name="decision" value="${esc(decision)}"><div class="field"><label for="feedback">Feedback for the student</label><textarea id="feedback" name="feedback" minlength="5" maxlength="3000" required placeholder="Mention a specific result, then give one actionable suggestion."></textarea></div><button class="button" type="submit">${decision==='accepted'?'Accept and record completion':'Send revision request'}</button></form>`);
   }
   if(action==='assignCourseForm'&&admin()&&courseReady){
     const course=(cache.courses||[]).find(c=>c.id===id);if(!course)return;
@@ -1912,8 +2038,10 @@ function actions(e) {
   }
   if(action==='learningForm'){
     if(!teacher()||!learningReady)return show('Teacher access and the learning materials migration are required.');
-    const options='<option value="">General learning library</option>'+(cache.courses||[]).map(c=>`<option value="${esc(c.id)}">${esc(c.title)}</option>`).join('');
-    return modal(`<span class="eyebrow">TEACHING STUDIO</span><h2>Upload learning material</h2><p class="muted">Share presentations, notes and guides with approved members. Maximum 20 MB per file.</p><form id="editor" data-kind="learningMaterial" class="form-stack">${field('Title','title')}${select('Type','kind',['slides','notes','worksheet','guide'])}<div class="field"><label for="course_id">Related course</label><select id="course_id" name="course_id">${options}</select></div><div class="field"><label for="description">Description (optional)</label><textarea id="description" name="description" maxlength="1500"></textarea></div><div class="field"><label for="learning_file">PDF, PPT, PPTX, DOC or DOCX</label><input id="learning_file" name="learning_file" type="file" accept=".pdf,.ppt,.pptx,.doc,.docx" required></div><button class="button" type="submit">Publish material</button></form>`);
+    const assigned=(cache.courses||[]).filter(c=>admin()||c.instructor_id===session.user.id);
+    const selected=assigned.some(c=>c.id===el.dataset.course)?el.dataset.course:'';
+    const options='<option value="" '+(!selected?'selected':'')+'>General learning library</option>'+assigned.map(c=>`<option value="${esc(c.id)}" ${c.id===selected?'selected':''}>${esc(c.title)}</option>`).join('');
+    return modal(`<span class="eyebrow">TEACHING STUDIO</span><h2>Upload learning material</h2><p class="muted">Choose one of your assigned workshops to make its slides, notes or guides easy for enrolled students to find. Choose the general library for material intended for the wider club. Maximum 20 MB per file.</p><form id="editor" data-kind="learningMaterial" class="form-stack">${field('Title','title')}${select('Type','kind',['slides','notes','worksheet','guide'])}<div class="field"><label for="course_id">Related workshop</label><select id="course_id" name="course_id">${options}</select></div><div class="field"><label for="description">Description (optional)</label><textarea id="description" name="description" maxlength="1500"></textarea></div><div class="field"><label for="learning_file">PDF, PPT, PPTX, DOC or DOCX</label><input id="learning_file" name="learning_file" type="file" accept=".pdf,.ppt,.pptx,.doc,.docx" required></div><button class="button" type="submit">Publish material</button></form>`);
   }
   if(action==='downloadLearning')return downloadLearning(id);
   if(action==='toggleLearning'&&admin()){
@@ -2041,15 +2169,24 @@ async function openNotification(id) {
   if(n.target_type==='channel'){activeChannelId=n.target_id;location.hash='#channels';}
   else if(n.target_type==='project'){location.hash='#projects';setTimeout(()=>projectDetail(n.target_id),60);}
   else if(n.target_type==='course'){
+    const joined=(cache.course_enrollments||[]).some(e=>e.course_id===n.target_id&&e.learner_id===session?.user.id);
+    courseView=joined?'mine':'explore';activeCourseId=joined?n.target_id:null;
+    courseDetailView=joined&&/^(Project accepted|Revision requested):/i.test(n.title||'')?'feedback':'overview';
     courseTrack='all';location.hash='#courses';render();
-    setTimeout(()=>document.getElementById(`course-${n.target_id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),80);
+    setTimeout(()=>{const target=document.getElementById(`course-${n.target_id}`);target?.querySelector('h2,h3')?.focus({preventScroll:true});target?.scrollIntoView({behavior:'smooth',block:'center'});},80);
   }
   else if(n.target_type==='meeting')location.hash='#founder-room';
   else if(n.target_type==='founder')location.hash='#founder-room';
   else if(n.target_type==='event')location.hash='#events';
   else if(n.target_type==='announcement')location.hash='#announcements';
   else if(n.target_type==='application')location.hash=admin()?'#applications':'#application';
-  else if(n.target_type==='teacher')location.hash='#teaching';
+  else if(n.target_type==='teacher'){
+    const isReview=n.kind==='course'&&/^Project ready for review:/i.test(n.title||'');
+    const isEnrollment=n.kind==='course'&&/^New learner enrolled in:/i.test(n.title||'');
+    teachingTab=isReview?'reviews':isEnrollment?'workshops':'profile';
+    if(location.hash==='#teaching')render();else location.hash='#teaching';
+    if(isEnrollment&&n.target_id)setTimeout(()=>document.getElementById(`teaching-workshop-${n.target_id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),120);
+  }
   else if(n.target_type==='privacy_request'){location.hash='#privacy';if(admin())setTimeout(()=>document.getElementById('privacy-admin-queue')?.scrollIntoView({behavior:'smooth',block:'start'}),80);}
   else if(n.target_type==='post'){location.hash='#feed';setTimeout(()=>document.getElementById(`post-${n.target_id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),80);}
   else if(n.target_type==='direct_message'){activePeerId=n.target_id;location.hash='#messages';render();markDmRead(activePeerId);}
@@ -2315,6 +2452,20 @@ async function submit(e) {
       if(error)throw error;
       close();await refresh();show('Privacy request updated.');return;
     }
+    if(kind==='courseContent'){
+      if(!teacher()||!courseReady)throw Error('Teacher access and workshop data are required.');
+      const course=(cache.courses||[]).find(c=>c.id===payload.course_id);
+      if(!course||!admin()&&course.instructor_id!==session.user.id)throw Error('Only the assigned teacher may edit this workshop.');
+      const title=String(payload.title||'').trim(),category=String(payload.category||''),level=String(payload.level||'');
+      const build=String(payload.build_goal||'').trim(),practice=String(payload.practice_steps||'').trim(),tools=String(payload.tools||'').trim();
+      const description=`Build: ${build}\n\nPractice: ${practice}\n\nTools: ${tools}`;
+      const rawUrl=String(values.resource_url||'').trim();
+      if(title.length<3||title.length>160||!build||!practice||!tools||description.length>5000||!courseTracks.some(t=>t.name===category)||!['Beginner','Intermediate','Advanced'].includes(level))throw Error('Enter a title, one of the four tracks, a level, the build goal, hands-on activities and required tools.');
+      if(rawUrl&&(!payload.resource_url||payload.resource_url.length>1000))throw Error('Enter an HTTPS resource URL up to 1,000 characters.');
+      const {error}=await db.rpc('update_course_content',{p_course:course.id,p_title:title,p_category:category,p_level:level,p_description:description,p_resource_url:payload.resource_url});
+      if(error){if(['42883','PGRST202'].includes(error.code))throw Error('Run upgrade_course_classroom_access.sql to enable workshop editing.');throw error;}
+      close();await refresh();show('Workshop plan updated.');return;
+    }
     if(kind==='courseSchedule'){
       if(!teacher()||!courseReady||!coursePlanningReady)throw Error('Teacher access and the course planning migration are required.');
       const course=(cache.courses||[]).find(c=>c.id===payload.course_id);
@@ -2499,6 +2650,7 @@ async function submit(e) {
     }
     if(kind==='learningMaterial'){
       if(!teacher()||!learningReady)throw Error('Approved teacher access is required.');
+      if(payload.course_id&&!(cache.courses||[]).some(c=>c.id===payload.course_id&&(admin()||c.instructor_id===session.user.id)))throw Error('Choose one of your assigned workshops.');
       const file=formEl.querySelector('[name=learning_file]')?.files?.[0];
       const ext=file?.name.split('.').pop()?.toLowerCase();
       const mime={pdf:'application/pdf',ppt:'application/vnd.ms-powerpoint',pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation',doc:'application/msword',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}[ext];
