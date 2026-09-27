@@ -72,6 +72,8 @@ async function removeAvatar(){
 let pendingEmail = sessionStorage.getItem('innovatex.pendingEmail') || '';
 let pendingType = sessionStorage.getItem('innovatex.pendingType') || 'member';
 let pendingAuthMode = sessionStorage.getItem('innovatex.pendingAuthMode') === 'signup' ? 'signup' : 'signin';
+let pendingProtectedPage = '';
+let founderPortraitReady = false;
 let toastTimer;
 const pages = ['home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','discussions','courses','teaching','events','calendar','announcements','founder-room'];
 const approved = () => !!me && (!('membership_status' in me) || me.membership_status==='approved');
@@ -496,10 +498,17 @@ async function refresh() {
   if(!self.error&&self.data)me=self.data;
   roleReady=!!me&&'application_type' in me;
   if(previous!==accessSignature(me))return signedIn(session);
-  if(!approved()){if($('#imageViewer').open)closeImageViewer(false);cache={profiles:me?[me]:[]};communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();route();return;}
+  if(!approved()){
+    if($('#imageViewer').open)closeImageViewer(false);
+    let publicFounders=[];
+    try{publicFounders=await readRecords('founders');}catch(error){console.error('Public founders',error);}
+    cache={profiles:me?[me]:[],founders:publicFounders};await detectFounderPortraits();
+    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();route();return;
+  }
   if(investor()){
-    const results=await Promise.allSettled(['investor_updates','investor_inquiries','privacy_requests'].map(readRecords));
-    cache={profiles:[me],investor_updates:results[0].status==='fulfilled'?results[0].value:[],investor_inquiries:results[1].status==='fulfilled'?results[1].value:[],privacy_requests:results[2].status==='fulfilled'?results[2].value:[]};
+    const results=await Promise.allSettled(['investor_updates','investor_inquiries','privacy_requests','founders'].map(readRecords));
+    cache={profiles:[me],investor_updates:results[0].status==='fulfilled'?results[0].value:[],investor_inquiries:results[1].status==='fulfilled'?results[1].value:[],privacy_requests:results[2].status==='fulfilled'?results[2].value:[],founders:results[3].status==='fulfilled'?results[3].value:[]};
+    await detectFounderPortraits();
     communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=results[2].status==='fulfilled';inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
     if(previous!==accessSignature(me)||!['home','about','founders','investors','investor-portal','privacy'].includes(page)) {route();return;}
     render();return;
@@ -520,6 +529,7 @@ async function refresh() {
   teacherProfile=teacherProfileReady?teachingProfileResult.data:null;
   if(teachingProfileResult.error)console.error('teacher_profiles',teachingProfileResult.error);
   results.forEach((r,i)=>{ if(r.status==='fulfilled') cache[names[i]]=r.value; else {cache[names[i]]=[];console.error(names[i],r.reason);} });
+  await detectFounderPortraits();
   if(admin()){
     const pending=await db.from('profiles').select('id',{count:'exact',head:true}).eq('membership_status','pending');
     if(pending.error)console.error('Pending application count',pending.error);
@@ -577,7 +587,13 @@ async function refreshChat() {
 async function loadPublic() {
   if (!db) return;
   try { cache.founders=(await readRecords('founders')).sort((a,b)=>a.sort_order-b.sort_order); } catch(e) { console.error(e); }
+  await detectFounderPortraits();
   render();
+}
+async function detectFounderPortraits(){
+  if(cache.founders?.length){founderPortraitReady=Object.hasOwn(cache.founders[0],'portrait_path');return;}
+  const {error}=await db.from('founders').select('portrait_path').limit(1);
+  founderPortraitReady=!error;
 }
 async function touchPresence(online=true) {
   if (!session || !db) return;
@@ -632,13 +648,17 @@ async function signedIn(newSession) {
           void refreshAdminAlerts();
         }).subscribe();
     }
-  } else { me=null;roleReady=false;courseReady=false;coursePlanningReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); if(!['home','about','founders','investors'].includes(page)) page='home'; await loadPublic(); }
-  if(session&&!approved()&&!['about','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
+  } else { me=null;roleReady=false;courseReady=false;coursePlanningReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); await loadPublic(); }
+  if(session&&!approved()&&!['about','founders','investors','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
   if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='founder-room'&&!founder()) {page='founders';history.replaceState(null,'','#founders');}
   if(page==='finance'&&!admin()){page=founderOnly()?'finance-review':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
   if(page==='finance-review'&&!founderOnly()){page=admin()?'finance':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
-  render();
+  if(pendingProtectedPage&&clubAccess()){
+    history.replaceState(null,'','#'+pendingProtectedPage);
+    pendingProtectedPage='';
+  }
+  route();
 }
 async function init() {
   document.querySelectorAll('#nav a[data-page]').forEach(a=>{const slot=a.querySelector('span');if(slot)slot.innerHTML=iconSvg(a.dataset.page);});
@@ -673,8 +693,15 @@ async function init() {
 function updateThemeButton(){const dark=document.documentElement.dataset.theme==='dark';$('#themeButton').textContent=dark?'☀':'☾';$('#themeButton').setAttribute('aria-label',dark?'Switch to light theme':'Switch to dark theme');}
 function route() {
   const requested=location.hash.slice(1).split('/')[0] || 'home';page=pages.includes(requested)?requested:'home';
-  if(!session&&(authReady||!configured)&&!['home','about','founders','investors','privacy'].includes(page)){page='home';history.replaceState(null,'','#home');show('Sign in to open the workspace.');}
-  if(session&&!approved()&&!['about','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
+  const protectedGuestPage=!session&&!['home','about','founders','investors','privacy'].includes(page);
+  if(protectedGuestPage){
+    page='home';
+    if(authReady||!configured){
+      pendingProtectedPage=requested;
+      history.replaceState(null,'','#home');
+    }
+  }else if(!session&&authReady)pendingProtectedPage='';
+  if(session&&!approved()&&!['about','founders','investors','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
   if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='investor-portal'&&authReady&&!investor()&&!admin()){page='investors';history.replaceState(null,'','#investors');}
   if(page==='teaching'&&authReady&&!teacher()){page=clubAccess()?'courses':'home';history.replaceState(null,'','#'+page);}
@@ -683,6 +710,7 @@ function route() {
   if(page==='founder-room'&&authReady&&!founder()){page='founders';history.replaceState(null,'','#founders');show('Founder access required.');}
   if(['admin','applications','moderation'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   $('#sidebar').classList.remove('open');render();
+  if(protectedGuestPage&&(authReady||!configured))signInDialog('signin');
   if(page==='applications'&&admin())void loadAdminApplicationPages();
   if(page==='feed'&&feedReady)void loadFeedPage();
   if(page==='channels'&&communityReady&&activeChannelId)void loadChannelHistory();
@@ -693,7 +721,7 @@ function render() {
   $('#connectionLabel').textContent=!configured?'Setup required':session&&!approved()?'Application pending':investor()?'Investor portal live':session?'Member workspace live':'Public preview';
   $('#accountBadge').hidden=!approved();$('#accountBadge').innerHTML=approved()?roleBadge(me):'';
   $('#pageCrumb').textContent=page==='founder-room'?'Founder room':page[0].toUpperCase()+page.slice(1);
-  document.querySelectorAll('#nav a').forEach(a=>{a.classList.toggle('active',a.dataset.page===page);a.hidden=!!a.dataset.private&&!clubAccess();});
+  document.querySelectorAll('#nav a').forEach(a=>{a.classList.toggle('active',a.dataset.page===page);a.hidden=a.hasAttribute('data-private')&&!clubAccess();});
   document.querySelectorAll('#nav [data-founder]').forEach(a=>a.hidden=!founder());
   document.querySelectorAll('#nav [data-leadership]').forEach(a=>a.hidden=!founder());
   document.querySelectorAll('#nav [data-founder-only]').forEach(a=>a.hidden=!founderOnly());
@@ -703,6 +731,7 @@ function render() {
   document.querySelectorAll('#nav [data-admin]').forEach(a=>a.hidden=!admin());
   document.querySelectorAll('#nav [data-pending]').forEach(a=>a.hidden=!session||approved());
   document.querySelectorAll('#nav .nav-group:not([data-admin])').forEach(a=>a.hidden=!clubAccess());
+  $('#guestSidebarCta').hidden=!!session||configured&&!authReady;
   const online=(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length;
   $('#onlineBadge').textContent=online;
   $('#notificationBadge').textContent=(cache.notifications||[]).filter(n=>!n.read_at).length;
@@ -766,12 +795,27 @@ function about() {
   </section>
   <section class="about-cta"><span class="eyebrow">YOUR NEXT BUILD STARTS HERE</span><h2>Bring an idea. Bring a question.<br>Bring your willingness to learn.</h2><p>Discover the people and projects behind InnovateX Engineering Club.</p><div class="hero-actions">${join}<a class="button button-outline" href="#founders">Explore the team →</a></div></section>`;
 }
+function founderPortraitUrl(f){
+  if(!db||!founderPortraitReady||!/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.(jpg|jpeg|png|webp)$/.test(f.portrait_path||''))return '';
+  return cleanUrl(db.storage.from('club-founder-portraits').getPublicUrl(f.portrait_path).data.publicUrl);
+}
+function founderBio(f){
+  const bio=String(f.bio||'Founding team member').trim();
+  if(bio.length<=195)return `<p class="founder-bio">${esc(bio)}</p>`;
+  const cut=bio.slice(0,195).replace(/\s+\S*$/,'').trim();
+  return `<p class="founder-bio">${esc(cut)}…</p><details class="founder-full-bio"><summary>Read full bio</summary><p>${esc(bio)}</p></details>`;
+}
+function founderProfile(f){
+  const portrait=founderPortraitUrl(f),profile=cleanUrl(f.link_url||'');
+  return `<article class="card founder-profile"><div class="founder-portrait">${portrait?`<img src="${esc(portrait)}" alt="Portrait of ${esc(f.name)}" loading="lazy" onerror="this.remove()">`:''}<span class="founder-portrait-fallback" aria-hidden="true">${esc(initials(f.name))}</span></div><div class="founder-profile-body"><span class="role">${esc(f.role)}</span><h3>${esc(f.name)}</h3>${founderBio(f)}<div class="founder-actions">${profile?`<a class="button button-outline button-sm" target="_blank" rel="noopener noreferrer" href="${esc(profile)}">View profile ↗</a>`:''}${admin()&&founderPortraitReady?`<button class="button button-outline button-sm" data-action="editFounderForm" data-id="${esc(f.id)}">Edit profile</button>`:''}${admin()?`<button class="text-button founder-card-remove" data-action="removeFounderCard" data-id="${esc(f.id)}">Remove public profile</button>`:''}</div></div></article>`;
+}
 function founders() {
   const list=cache.founders||[];
   return `${head('THE PEOPLE BEHIND THE IDEA','Founding team','The founding team shaping InnovateX with members, teachers and mentors.',admin()?button('+ Add founder','founderForm'):'')}
   <div class="notice">Founder profiles are added only after each person agrees to be listed.</div>
+  <div class="section-heading"><h2>Meet the founders</h2></div><div class="founder-list ${list.length===1?'single':''}">${list.length?list.map(founderProfile).join(''):`<div class="founder-empty"><h3>Meet the team soon</h3><p>Founders will appear here after they approve their public profiles.</p></div>`}</div>
   <div class="founder-invite-banner"><div><span class="eyebrow">FOUNDER ACCESS</span><h3>Build the club together.</h3><p>Administrators approve founder applications. Accepted founders can plan together and meet in a private room.</p></div>${founder()?`<a class="button" href="#founder-room">Open founder room →</a>`:!session?button('Apply as founder','login'):''}</div>
-  <div class="section-heading"><h2>Meet the founders</h2></div><div class="grid grid-4">${list.length?list.map(f=>`<div class="card founder-card">${avatar(f.name,true)}<div class="role">${esc(f.role)}</div><h3>${esc(f.name)}</h3><p>${esc(f.bio||'Founding team member')}</p>${f.link_url?`<a class="link" target="_blank" rel="noopener noreferrer" href="${esc(cleanUrl(f.link_url))}">Profile ↗</a>`:''}${admin()?`<button class="text-button founder-card-remove" data-action="removeFounderCard" data-id="${esc(f.id)}">Remove public profile</button>`:''}</div>`).join(''):[1,2,3,4].map((n)=>`<div class="card founder-card">${avatar('IX',true)}<div class="role">Founding member ${n}</div><h3>Profile coming soon</h3><p>We’ll introduce each founder after the team confirms their details.</p></div>`).join('')}</div><div class="section-heading"><h2>How the club is led</h2></div><div class="grid grid-3"><div class="card"><h3>Club leadership</h3><p>Club leaders coordinate training, projects, communications and finance.</p></div><div class="card"><h3>Founders</h3><p>Founders set the club’s direction and lead its mentoring and partnerships.</p></div><div class="card"><h3>Internal accountability</h3><p>Administrators keep records of club funds, inventory and approvals; founders review financial entries.</p></div></div>`;
+  <div class="section-heading"><h2>How the club is led</h2></div><div class="grid grid-3"><div class="card"><h3>Club leadership</h3><p>Club leaders coordinate training, projects, communications and finance.</p></div><div class="card"><h3>Founders</h3><p>Founders set the club’s direction and lead its mentoring and partnerships.</p></div><div class="card"><h3>Internal accountability</h3><p>Administrators keep records of club funds, inventory and approvals; founders review financial entries.</p></div></div>`;
 }
 function investors(){
   return `${head('PARTNER WITH INNOVATEX','Investors & partners','Explore how engineering ideas become useful prototypes through shared learning and practical projects.')}
@@ -1278,7 +1322,8 @@ function signInDialog(mode='signin') {
   if(!configured) return show('Add your Supabase URL and publishable key to config.js first.');
   if(pendingEmail) return codeDialog();
   pendingAuthMode=mode==='signup'?'signup':'signin';
-  modal(`<span class="eyebrow">INNOVATEX ENGINEERING CLUB</span><h2>${pendingAuthMode==='signup'?'Create your account':'Sign in'}</h2><div class="auth-switch"><button type="button" class="${pendingAuthMode==='signin'?'selected':''}" data-action="signin">I have an account</button><button type="button" class="${pendingAuthMode==='signup'?'selected':''}" data-action="signup">Create an account</button></div><p class="muted">${pendingAuthMode==='signup'?'Choose the type of account you are applying for. Verify your email once to create the account; an administrator will review the application.':'Enter the email for your existing account. We’ll send a fresh one-time sign-in code.'}</p><form id="editor" data-kind="login" class="form-stack">${pendingAuthMode==='signup'?select('I am applying as','application_type',['member','teacher','founder','investor'],pendingType):''}${field('Email address','email','email')}<button class="button" type="submit">${pendingAuthMode==='signup'?'Create account and send code':'Send sign-in code'}</button></form>`);
+  const destination=pendingProtectedPage?pendingProtectedPage.replace(/-/g,' '):'';
+  modal(`<span class="eyebrow">INNOVATEX ENGINEERING CLUB</span><h2>${pendingAuthMode==='signup'?'Create your account':'Sign in'}</h2>${destination?`<div class="auth-access-note"><strong>${esc(destination[0].toUpperCase()+destination.slice(1))} is in the club workspace.</strong><span>Sign in to continue, or create an account for administrator approval.</span></div>`:''}<div class="auth-switch"><button type="button" class="${pendingAuthMode==='signin'?'selected':''}" data-action="signin">I have an account</button><button type="button" class="${pendingAuthMode==='signup'?'selected':''}" data-action="signup">Create an account</button></div><p class="muted">${pendingAuthMode==='signup'?'Choose the type of account you are applying for. Verify your email once to create the account; an administrator will review the application.':'Enter the email for your existing account. We’ll send a fresh one-time sign-in code.'}</p><form id="editor" data-kind="login" class="form-stack">${pendingAuthMode==='signup'?select('I am applying as','application_type',['member','teacher','founder','investor'],pendingType):''}${field('Email address','email','email')}<button class="button" type="submit">${pendingAuthMode==='signup'?'Create account and send code':'Send sign-in code'}</button></form>`);
 }
 function codeDialog() {
   modal(`<span class="eyebrow">INNOVATEX ENGINEERING CLUB</span><h2>${pendingAuthMode==='signup'?'Verify your new account':'Enter your sign-in code'}</h2><p class="muted">Enter the one-time code sent to <strong>${esc(pendingEmail)}</strong>.</p><form id="editor" data-kind="verify" class="form-stack"><div class="field"><label for="code">One-time code</label><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" maxlength="10" placeholder="Your code" required></div><button class="button" type="submit">${pendingAuthMode==='signup'?'Verify account':'Sign in'}</button></form><div class="otp-actions"><button class="text-button" data-action="resendCode">Resend code</button><button class="text-button" data-action="changeEmail">Use another email</button></div><p class="hint">Only the latest code will work. Check your spam folder if you don't see the email.</p>`);
@@ -1309,7 +1354,7 @@ function projectDetail(id) {
     <div class="row" style="margin-top:22px"><h3>Project discussions</h3><button class="text-button" data-action="projectTopic" data-id="${esc(id)}">Start discussion +</button></div>${threads.length?threads.map(t=>`<div class="list-item"><div><strong>${esc(t.title)}</strong><small>${date(t.created_at)}</small></div><button class="text-button" data-action="topicDetail" data-id="${esc(t.id)}">Open →</button></div>`).join(''):'<p class="muted">No project discussions yet.</p>'}${can?`<div class="profile-action">${button('Update project','projectEdit','button-outline button-sm')}</div>`:''}`);
 }
 function topicDetail(id) {const t=(cache.topics||[]).find(x=>x.id===id);if(!t)return;const list=(cache.replies||[]).filter(x=>x.topic_id===id).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));modal(`<span class="tag">${esc(t.category)}</span><h2 style="margin-top:15px">${esc(t.title)}</h2><p>${esc(t.body)}</p><h3>Replies (${list.length})</h3><div style="max-height:300px;overflow:auto">${list.map(r=>`<div class="reply"><strong>${esc((cache.profiles||[]).find(p=>p.id===r.author_id)?.full_name||'Member')}</strong><span class="subtle"> · ${dateTime(r.created_at)}</span><p>${esc(r.body)}</p></div>`).join('')||'<p class="muted">Be the first to reply.</p>'}</div><form id="editor" data-kind="reply" class="form-stack">${area('Your reply','body')}<button class="button" type="submit">Post reply</button></form>`);}
-async function signOut() {try{await touchPresence(false);const {error}=await db.auth.signOut();if(error)throw error;await signedIn(null);show('Signed out. See you soon.');}catch(e){fail(e);}}
+async function signOut() {try{await touchPresence(false);const {error}=await db.auth.signOut();if(error)throw error;pendingProtectedPage='';history.replaceState(null,'','#home');await signedIn(null);show('Signed out. See you soon.');}catch(e){fail(e);}}
 
 async function deleteAnnouncement(id){
   if(!admin())return;
@@ -1641,7 +1686,11 @@ function actions(e) {
   if(action==='courseForm'&&teacher())return form('Practical workshop','Choose one of the four tracks and describe the project learners will complete.','course',field('Workshop title','title')+select('Learning track','category',courseTracks.map(t=>t.name))+select('Level','level',['Beginner','Intermediate','Advanced'])+area('What will learners build?','build_goal')+area('Hands-on activities and tests','practice_steps')+field('Tools and materials','tools')+field('Start date and time','starts_at',coursePlanningReady?'datetime-local':'date','',false)+(coursePlanningReady?field('Project deadline (optional)','submission_due_at','datetime-local','',false):'')+field('Resource URL (optional)','resource_url','url','',false));
   if(action==='eventForm')return form('Event','The calendar and meeting link stay together.','event',field('Title','title')+area('Description','description')+field('Start','starts_at','datetime-local')+field('End','ends_at','datetime-local')+field('Location','location','text','',false)+field('Google Meet URL','meet_url','url','',false));
   if(action==='announcementForm')return form('Alert','Important updates appear on the home page.','announcement',field('Title','title')+select('Priority','priority',['normal','urgent'])+area('Message','body'));
-  if(action==='founderForm')return form('Founder','Publish only approved biographical details.','founder',field('Name','name')+field('Role','role')+area('Short bio','bio')+field('Profile URL','link_url','url','',false)+field('Order','sort_order','number','1'));
+  if(action==='founderForm'&&admin())return form('Founder','Publish only details and photos this person has agreed to share.','founder',field('Name','name')+field('Role','role')+area('Bio','bio')+field('Profile URL','link_url','url','',false)+field('Order','sort_order','number','1')+(founderPortraitReady?'<div class="field"><label for="portrait_file">Public portrait (optional, JPG, PNG or WebP, max 5 MB)</label><input id="portrait_file" name="portrait_file" type="file" accept="image/jpeg,image/png,image/webp"><p class="hint">This photograph is visible to everyone on the Founders page.</p></div>':'<p class="hint">Portrait upload will be available after the founder portrait setup.</p>'));
+  if(action==='editFounderForm'&&admin()&&founderPortraitReady){
+    const card=(cache.founders||[]).find(f=>f.id===id);if(!card)return;
+    return form('Founder profile','Update the public card with the founder’s consent.','founderEdit',`<input type="hidden" name="card_id" value="${esc(card.id)}">`+field('Name','name','text',card.name)+field('Role','role','text',card.role)+area('Bio','bio',card.bio||'')+field('Profile URL','link_url','url',card.link_url||'',false)+field('Order','sort_order','number',card.sort_order||1)+`<div class="field"><label for="portrait_file">${card.portrait_path?'Replace public portrait':'Add public portrait'} (optional, max 5 MB)</label><input id="portrait_file" name="portrait_file" type="file" accept="image/jpeg,image/png,image/webp"></div>${card.portrait_path?'<label class="hint"><input type="checkbox" name="remove_portrait" value="yes"> Remove current portrait</label>':''}`);
+  }
   if(action==='calendar'||action==='ics'){const item=(cache.events||[]).find(x=>x.id===id);if(item)calendar(item,action==='ics');}
 }
 async function mutate(fn) {try{const {error}=await fn();if(error)throw error;close();await refresh();show('Saved successfully.');}catch(e){fail(e);}}
@@ -1699,11 +1748,14 @@ async function removeFounderRole(id,nextRole) {
   }catch(error){fail(error);}
 }
 async function removeFounderCard(id) {
-  if(!admin()||!(cache.founders||[]).some(f=>f.id===id))return;
+  const card=(cache.founders||[]).find(f=>f.id===id);
+  if(!admin()||!card)return;
   try {
     const {error}=await db.from('founders').delete().eq('id',id);
     if(error)throw error;
-    close();await refresh();show('Public founder profile removed.');
+    let cleanupFailed=false;
+    if(card.portrait_path){const removed=await db.storage.from('club-founder-portraits').remove([card.portrait_path]);if(removed.error){console.error('Founder portrait cleanup',removed.error);cleanupFailed=true;}}
+    close();await refresh();show(cleanupFailed?'Profile removed. Delete its orphaned portrait from Storage manually.':'Public founder profile removed.');
   }catch(error){fail(error);}
 }
 async function markNotification(id) {
@@ -2262,7 +2314,46 @@ async function submit(e) {
     if(kind==='task'){payload.project_id=activeProject;if('assignee_id' in payload)payload.assignee_id=payload.assignee_id||null;if('milestone_id' in payload)payload.milestone_id=payload.milestone_id||null;return await mutate(()=>db.from('project_tasks').insert(payload));}
     if(kind==='topic'){payload.author_id=session.user.id;payload.project_id=payload.project_id||null;return await mutate(()=>db.from('topics').insert(payload));}
     if(kind==='reply'){payload.author_id=session.user.id;payload.topic_id=activeProject;return await mutate(()=>db.from('replies').insert(payload));}
-    if(kind==='course'||kind==='event'||kind==='announcement'||kind==='founder'){
+    if(kind==='founder'||kind==='founderEdit'){
+      if(!admin())throw Error('Only an administrator can publish founder profiles.');
+      const file=formEl.querySelector('[name=portrait_file]')?.files?.[0];
+      const ext=file&&{'image/jpeg':'jpg','image/png':'png','image/webp':'webp'}[file.type];
+      if(file&&(!founderPortraitReady||!ext||file.size<1||file.size>5242880))throw Error('Choose a JPG, PNG or WebP portrait up to 5 MB after setting up founder portraits.');
+      if(file&&payload.remove_portrait)throw Error('Choose either a replacement portrait or removal.');
+      if(formEl.elements.link_url.value&&!payload.link_url)throw Error('Enter a valid HTTPS profile URL.');
+      const fields={name:String(payload.name).trim(),role:String(payload.role).trim(),bio:String(payload.bio).trim(),link_url:payload.link_url||null,sort_order:Number(payload.sort_order)||1};
+      const existing=kind==='founderEdit'?(cache.founders||[]).find(f=>f.id===payload.card_id):null;
+      if(kind==='founderEdit'&&(!founderPortraitReady||!existing))throw Error('Refresh the founder profiles and try again.');
+      let id=existing?.id||'',uploaded='',created=false,oldPath=existing?.portrait_path||'';
+      try{
+        if(!existing){
+          const {data,error}=await db.from('founders').insert(fields).select('id').single();
+          if(error)throw error;
+          id=data.id;created=true;
+        }
+        if(file){
+          uploaded=`${id}/${crypto.randomUUID()}.${ext}`;
+          const {error}=await db.storage.from('club-founder-portraits').upload(uploaded,file,{upsert:false,contentType:file.type});
+          if(error)throw error;
+        }
+        if(existing||uploaded){
+          if(uploaded||payload.remove_portrait)fields.portrait_path=uploaded||null;
+          const {error}=await db.from('founders').update(fields).eq('id',id).select('id').single();
+          if(error)throw error;
+        }
+      }catch(error){
+        if(uploaded){const cleanup=await db.storage.from('club-founder-portraits').remove([uploaded]);if(cleanup.error)console.error('Portrait cleanup',cleanup.error);}
+        if(created){const cleanup=await db.from('founders').delete().eq('id',id);if(cleanup.error)console.error('Founder rollback',cleanup.error);}
+        throw error;
+      }
+      let cleanupFailed=false;
+      if(oldPath&&(uploaded||payload.remove_portrait)){
+        const {error}=await db.storage.from('club-founder-portraits').remove([oldPath]);
+        if(error){console.error('Old founder portrait cleanup',error);cleanupFailed=true;}
+      }
+      close();await refresh();show(cleanupFailed?'Profile saved. Remove the old portrait from Storage manually.':'Founder profile saved.');return;
+    }
+    if(kind==='course'||kind==='event'||kind==='announcement'){
       if(kind==='course'){
         if(!teacher())throw Error('Only approved teachers and administrators can publish courses.');
         if(!courseTracks.some(t=>t.name===payload.category))throw Error('Choose one of the four learning tracks.');
@@ -2285,8 +2376,7 @@ async function submit(e) {
         courseTrack=payload.category;
       }else if(!admin())throw Error('Only an administrator can publish this item.');
       if(kind==='event'&&new Date(payload.ends_at)<=new Date(payload.starts_at))throw Error('End time must be after start time.');
-      if(kind==='founder')payload.sort_order=Number(payload.sort_order)||1;
-      const table={course:'courses',event:'events',announcement:'announcements',founder:'founders'}[kind];
+      const table={course:'courses',event:'events',announcement:'announcements'}[kind];
       return await mutate(()=>db.from(table).insert(payload));
     }
   }catch(error){fail(error);}finally{submitBtn.disabled=false;}
