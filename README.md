@@ -31,6 +31,12 @@ A responsive workspace for a practical engineering and technology club. The site
 - Phone, tablet and desktop layouts. Untrusted member text is escaped before display.
 - Server-paged applications, feed, channel history and direct messages, with all-authorized-row CSV export for selected records and a separate private Storage backup procedure.
 
+## Finding your way around SPACE
+
+Home, Notifications, Direct messages and Calendar are the daily shortcuts. The sidebar groups the rest into Learning & projects, Community, Club activities, Leadership & partners, Administration and About SPACE. Open a group to see its pages; selecting a page opens its group, and background refreshes preserve a group you manually collapsed. Groups with no pages permitted for the current account are hidden.
+
+Use **My learning** for workshops you have joined, their materials, your submissions and teacher feedback. Approved teachers manage classes and upload slides in **Teaching studio**. **Direct messages** are private conversations; **Team chat** contains group channels and threads; **Discussion forum** holds longer questions and decisions. **Notifications** are personal updates, while **Announcements** are official club notices. **Shared files** is the club document library; course-specific slides stay in the workshop classroom. Search also recognizes familiar names such as Inbox, Channels, Courses and Document library.
+
 ## SPACE branding
 
 The segmented monochrome logo uses source frames from the club’s supplied recording. The matching animated reveal appears briefly after successful interactive email-code verification, with a Continue button and Escape support. Restoring a saved session and routine role/access refreshes do not replay it. Reduced motion, unsupported video playback and media errors use a still image, so branding never blocks account access.

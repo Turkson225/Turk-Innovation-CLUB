@@ -91,6 +91,89 @@ let pendingProtectedPage = '';
 let founderPortraitReady = false;
 let toastTimer;
 const pages = ['home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','discussions','courses','teaching','events','calendar','announcements','founder-room'];
+const workspacePageInfo={
+  home:{title:'Home',section:'Your workspace'},
+  about:{title:'About the club',section:'About SPACE'},
+  founders:{title:'Club leadership',section:'About SPACE',aliases:'Founders founding team'},
+  investors:{title:'Investors & partners',section:'Leadership & partners'},
+  'investor-portal':{title:'Investor portal',section:'Leadership & partners'},
+  admin:{title:'Admin overview',section:'Administration',aliases:'Admin dashboard club oversight'},
+  privacy:{title:'Privacy & conduct',section:'About SPACE'},
+  application:{title:'My application',section:'Your workspace'},
+  applications:{title:'Membership approvals',section:'Administration',aliases:'Applications new accounts'},
+  moderation:{title:'Moderation',section:'Administration'},
+  notifications:{title:'Notifications',section:'Your workspace',aliases:'Inbox alerts mentions replies'},
+  members:{title:'Members',section:'Community',aliases:'Profiles people'},
+  messages:{title:'Direct messages',section:'Your workspace',aliases:'Messages DM private chat'},
+  feed:{title:'Member feed',section:'Community',aliases:'Activity feed posts'},
+  channels:{title:'Team chat',section:'Community',aliases:'Channels group chat'},
+  library:{title:'Shared files',section:'Learning & projects',aliases:'Document library resources'},
+  news:{title:'Technology news',section:'Community'},
+  projects:{title:'Projects',section:'Learning & projects'},
+  inventory:{title:'Inventory',section:'Club activities'},
+  finance:{title:'Finance',section:'Administration'},
+  'finance-review':{title:'Finance approvals',section:'Leadership & partners',aliases:'Finance review'},
+  discussions:{title:'Discussion forum',section:'Community',aliases:'Discussions questions ideas'},
+  courses:{title:'My learning',section:'Learning & projects',aliases:'Courses workshops enrolled classes'},
+  teaching:{title:'Teaching studio',section:'Learning & projects',aliases:'Teachers students reviews'},
+  events:{title:'Events',section:'Club activities'},
+  calendar:{title:'Calendar',section:'Your workspace'},
+  announcements:{title:'Announcements',section:'Club activities',aliases:'Club alerts notices'},
+  'founder-room':{title:'Founder meetings',section:'Leadership & partners',aliases:'Founder room'}
+};
+let sidebarContext='',sidebarPage='';
+function pageGuide(current=page){
+  if(!clubAccess())return '';
+  const guides={
+    messages:['Private conversations with one member.',['channels','Use Team chat for group conversations']],
+    channels:['Group conversations, threads and files.',['messages','Send a private message']],
+    notifications:['Your personal mentions, replies and reminders.',['announcements','Read club announcements']],
+    announcements:['Updates published by club administrators.',['notifications','Open your personal notifications']],
+    discussions:['Questions and decisions members can return to.',['channels','Use Team chat for quick conversations']],
+    library:['Files shared with the club. Teacher slides stay with their workshop.',['courses','Open workshop materials in My learning']],
+    calendar:['All your dates in one view: events, workshops and deadlines.',['events','Browse club events']],
+    events:['Club meetups and scheduled sessions.',['calendar','See all dates in Calendar']],
+    teaching:['Manage the workshops you teach here.',['courses','Use My learning for workshops you have joined']]
+  };
+  const guide=guides[current];
+  if(!guide||current==='teaching'&&!teacher())return '';
+  return `<div class="workspace-guide"><p>${esc(guide[0])}</p><a href="#${guide[1][0]}">${esc(guide[1][1])} →</a></div>`;
+}
+function updateWorkspaceNavigation(){
+  const nav=$('#nav');if(!nav)return;
+  const links=[...nav.querySelectorAll('a[data-page]')];
+  const allowed=target=>{
+    if(target==='application')return !!session&&!approved();
+    if(target==='teaching')return teacher();
+    if(target==='founder-room'||target==='investors')return founder();
+    if(target==='finance-review')return founderOnly();
+    if(target==='investor-portal')return investor()||admin();
+    if(['admin','applications','moderation','finance'].includes(target))return admin();
+    if(['home','about','founders','privacy'].includes(target))return true;
+    return pages.includes(target)&&clubAccess();
+  };
+  for(const link of links){
+    const active=link.dataset.page===page;
+    link.hidden=!allowed(link.dataset.page);link.classList.toggle('active',active);
+    if(active&&!link.hidden)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
+  }
+  const context=`${session?.user.id||'guest'}:${me?.membership_status||''}:${me?.role||''}:${me?.founder_teaching_enabled===true}`;
+  const changed=context!==sidebarContext;
+  for(const section of nav.querySelectorAll('details[data-nav-group]')){
+    const children=[...section.querySelectorAll('a[data-page]')];
+    section.hidden=!children.some(link=>!link.hidden);
+    if(section.hidden){section.open=false;continue;}
+    if(changed){
+      section.open=section.dataset.navGroup==='learning'&&clubAccess()
+        ||section.dataset.navGroup==='administration'&&admin()
+        ||section.dataset.navGroup==='leadership'&&(founderOnly()||investor())
+        ||section.dataset.navGroup==='about'&&!clubAccess()&&!investor();
+    }
+    if((changed||page!==sidebarPage)&&children.some(link=>!link.hidden&&link.dataset.page===page))section.open=true;
+  }
+  sidebarContext=context;sidebarPage=page;
+  const label=$('#workspaceLabel');if(label)label.textContent=!session?'Explore SPACE':!approved()?'Your application':admin()?'Admin workspace':founderOnly()?'Founder workspace':teacher()?'Teaching workspace':investor()?'Investor workspace':'Member workspace';
+}
 const approved = () => !!me && (!('membership_status' in me) || me.membership_status==='approved');
 const investor = () => approved() && me?.role==='investor';
 const clubAccess = () => approved() && !investor();
@@ -118,7 +201,7 @@ function updateInboxIndicators(){
   const count=clubAccess()?(inboxUnreadCount??(cache.notifications||[]).filter(n=>!n.read_at).length):0;
   const bell=$('#memberBell'),bubble=$('#memberBellCount');
   bell.hidden=!clubAccess()||!enhancedReady;
-  bell.setAttribute('aria-label',`${count} unread club ${count===1?'update':'updates'}. Open inbox`);
+  bell.setAttribute('aria-label',`${count} unread club ${count===1?'update':'updates'}. Open Notifications`);
   bubble.textContent=count>99?'99+':String(count);
   bubble.hidden=!count;
   bell.classList.toggle('has-unread',count>0);
@@ -146,7 +229,7 @@ function showMemberAlert(notification){
   memberDeferredNotification=null;
   memberAlertNotificationId=notification.id;
   $('#memberAlertTitle').textContent=notification.kind==='direct_message'?'New direct message':'New club update';
-  $('#memberAlertMessage').textContent=String(notificationTitle(notification)||'Open your inbox for the latest update.').slice(0,180);
+  $('#memberAlertMessage').textContent=String(notificationTitle(notification)||'Open Notifications for the latest update.').slice(0,180);
   $('#memberAlert').hidden=false;
   clearTimeout(memberAlertTimer);
   memberAlertTimer=setTimeout(dismissMemberAlert,11000);
@@ -235,7 +318,7 @@ async function refreshAdminAlerts(){
 }
 const button = (label,action,extra='') => `<button class="button ${extra}" data-action="${action}">${label}</button>`;
 const empty = (title,body) => `<div class="empty"><strong>${esc(title)}</strong>${esc(body)}</div>`;
-const head = (label,title,subtitle,action='') => `<div class="page-head"><div><span class="eyebrow">${esc(label)}</span><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${action}</div>`;
+const head = (label,title,subtitle,action='') => `<div class="page-head"><div><span class="eyebrow">${esc(workspacePageInfo[page]?.section||label)}</span><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${action}</div>${pageGuide()}`;
 const avatar = (name,large=false,photoPath='') => {const url=mediaUrl(photoPath);return `<span class="avatar ${large?'large':''}">${url?`<img src="${esc(url)}" alt="" loading="lazy">`:esc(initials(name))}</span>`;};
 const memberAvatar = (id,large=false) => {const p=(cache.profiles||[]).find(x=>x.id===id);return avatar(p?.full_name||'Member',large,p?.avatar_path);};
 const roleBadge = p => {const labels={member:'Member',teacher:'Teacher',founder:'Founder',investor:'Investor',admin:'Administrator'};const role=Object.hasOwn(labels,p?.role)?p.role:'member';return `<span class="member-badge badge-${role}" title="Approved ${esc(labels[role])} account">${labels[role]}</span>${role==='founder'&&p?.founder_teaching_enabled===true?'<span class="member-badge badge-teacher" title="Can lead practical workshops">Teaching lead</span>':''}`;};
@@ -1113,17 +1196,8 @@ function render() {
   $('#authButton').textContent=session?'Sign out':'Join / sign in';
   $('#connectionLabel').textContent=!configured?'Setup required':session&&!approved()?'Application pending':investor()?'Investor portal live':session?'Member workspace live':'Public preview';
   $('#accountBadge').hidden=!approved();$('#accountBadge').innerHTML=approved()?roleBadge(me):'';
-  $('#pageCrumb').textContent=page==='founder-room'?'Founder room':page[0].toUpperCase()+page.slice(1);
-  document.querySelectorAll('#nav a').forEach(a=>{a.classList.toggle('active',a.dataset.page===page);a.hidden=a.hasAttribute('data-private')&&!clubAccess();});
-  document.querySelectorAll('#nav [data-founder]').forEach(a=>a.hidden=!founder());
-  document.querySelectorAll('#nav [data-leadership]').forEach(a=>a.hidden=!founder());
-  document.querySelectorAll('#nav [data-founder-only]').forEach(a=>a.hidden=!founderOnly());
-  document.querySelectorAll('#nav [data-investors-nav]').forEach(a=>a.hidden=!founder());
-  document.querySelectorAll('#nav [data-teacher]').forEach(a=>a.hidden=!teacher());
-  document.querySelectorAll('#nav [data-investor]').forEach(a=>a.hidden=!investor()&&!admin());
-  document.querySelectorAll('#nav [data-admin]').forEach(a=>a.hidden=!admin());
-  document.querySelectorAll('#nav [data-pending]').forEach(a=>a.hidden=!session||approved());
-  document.querySelectorAll('#nav .nav-group:not([data-admin])').forEach(a=>a.hidden=!clubAccess());
+  $('#pageCrumb').textContent=workspacePageInfo[page]?.title||'Home';
+  updateWorkspaceNavigation();
   $('#guestSidebarCta').hidden=!!session||configured&&!authReady;
   const online=(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length;
   $('#onlineBadge').textContent=online;
@@ -1159,7 +1233,7 @@ function workspaceSearchItems(){
   if(founderOnly())destinations.push(['finance-review','Finance review','Review club transactions']);
   if(investor()||admin())destinations.push(['investor-portal','Investor portal','Approved investor updates']);
   if(admin())destinations.push(['admin','Admin dashboard','Club oversight'],['applications','Applications','Review new accounts'],['moderation','Moderation','Review reports'],['finance','Finance','Funds and records']);
-  for(const [id,label,meta] of destinations)add('page:'+id,label,meta,id);
+  for(const [id,label,meta] of destinations)add('page:'+id,workspacePageInfo[id]?.title||label,meta,id,'','',label+' '+(workspacePageInfo[id]?.aliases||''));
   if(!clubAccess())return result;
   for(const c of cache.courses||[])add('course:'+c.id,c.title,'Workshop · '+courseTrackFor(c),'courses','focusCourse',c.id,c.description||'');
   for(const p of cache.projects||[])add('project:'+p.id,p.title,'Project · '+(p.status||'planning'),'projects','projectDetail',p.id,p.summary||'');
@@ -1184,12 +1258,12 @@ function openWorkspaceSearch(){
   if(!$('#workspaceSearchInput'))modal('<span class="eyebrow">FIND YOUR NEXT MOVE</span><h2>Search workspace</h2><p class="subtle">Find pages and loaded club records you have access to.</p><label class="sr-only" for="workspaceSearchInput">Search pages, members, workshops and projects</label><input id="workspaceSearchInput" class="workspace-search-input" type="search" placeholder="A workshop, teammate, project…" autocomplete="off"><p id="workspaceSearchStatus" class="sr-only" role="status" aria-live="polite"></p><div id="workspaceSearchResults" class="workspace-search-results"></div>');
   updateWorkspaceSearch($('#workspaceSearchInput')?.value||'');$('#workspaceSearchInput')?.focus();
 }
-function openWorkspaceCourse(id){
+function openWorkspaceCourse(id,detailView='overview'){
   if(!clubAccess()||!(cache.courses||[]).some(c=>c.id===id))return;
   if($('#modal').open)close();
   const enrolled=(cache.course_enrollments||[]).some(e=>e.course_id===id&&e.learner_id===session?.user.id);
   courseView=enrolled?'mine':'explore';activeCourseId=enrolled?id:null;
-  courseDetailView='overview';courseTrack='all';location.hash='#courses';render();
+  courseDetailView=enrolled&&['overview','materials','submit','feedback'].includes(detailView)?detailView:'overview';courseTrack='all';location.hash='#courses';render();
   setTimeout(()=>{const target=document.getElementById(`course-${id}`);target?.querySelector('h2,h3')?.focus({preventScroll:true});target?.scrollIntoView({behavior:'smooth',block:'center'});},80);
 }
 function homeAgendaMarkup(userId,activeIds,assigned){
@@ -1202,11 +1276,11 @@ function homeAgendaMarkup(userId,activeIds,assigned){
   const upcoming=items.sort((a,b)=>a.stamp-b.stamp).slice(0,5);
   const agenda=upcoming.length?upcoming.map(item=>{const d=new Date(item.at);return `<button type="button" class="home-agenda-item" data-action="calendarItem" data-kind="${item.kind}" data-id="${esc(item.id)}"><span class="home-agenda-date"><b>${d.getDate()}</b><small>${esc(d.toLocaleDateString(undefined,{month:'short'}))}</small></span><div><strong>${esc(item.title)}</strong><small>${esc(item.label)} · ${item.stamp<now?'Past due · ':''}${esc(dateTime(item.at))}</small></div><span aria-hidden="true">↗</span></button>`;}).join(''):empty('Room for the next build','Your scheduled workshops, events and assigned deadlines will appear here.');
   const posts=(cache.activity_posts||[]).slice().sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,4);
-  const recent=posts.length?posts.map(post=>`<a class="home-recent-item" href="#feed">${memberAvatar(post.author_id)}<div><strong>${esc(post.title||post.category||'Club update')}</strong><p>${esc(String(post.body||'').slice(0,130))}${String(post.body||'').length>130?'…':''}</p><small>${esc(memberName(post.author_id))} · ${esc(date(post.created_at))}</small></div></a>`).join(''):`<div class="empty-state"><h3>Share what you’re building</h3><p>A question, a prototype or a useful resource can get the next conversation started.</p><a href="#feed" class="link">Open the activity feed →</a></div>`;
-  return `<div class="home-workspace-columns"><section><div class="section-heading"><div><span class="eyebrow">ON YOUR HORIZON</span><h2>Your agenda</h2></div><a class="link" href="#calendar">Calendar →</a></div><div class="home-agenda">${agenda}</div></section><section><div class="section-heading"><div><span class="eyebrow">FROM THE CLUB</span><h2>On the workbench</h2></div><a class="link" href="#feed">Feed →</a></div><div class="home-agenda">${recent}</div></section></div>`;
+  const recent=posts.length?posts.map(post=>`<a class="home-recent-item" href="#feed">${memberAvatar(post.author_id)}<div><strong>${esc(post.title||post.category||'Club update')}</strong><p>${esc(String(post.body||'').slice(0,130))}${String(post.body||'').length>130?'…':''}</p><small>${esc(memberName(post.author_id))} · ${esc(date(post.created_at))}</small></div></a>`).join(''):`<div class="empty-state"><h3>Share what you’re building</h3><p>A question, a prototype or a useful resource can get the next conversation started.</p><a href="#feed" class="link">Open Member feed →</a></div>`;
+  return `<div class="home-workspace-columns"><section><div class="section-heading"><div><span class="eyebrow">ON YOUR HORIZON</span><h2>Your agenda</h2></div><a class="link" href="#calendar">Calendar →</a></div><div class="home-agenda">${agenda}</div></section><section><div class="section-heading"><div><span class="eyebrow">FROM THE CLUB</span><h2>Recent member posts</h2></div><a class="link" href="#feed">Member feed →</a></div><div class="home-agenda">${recent}</div></section></div>`;
 }
-function homeFocusCard(icon,label,title,detail,href,action='Open details',urgent=false,priority=false){
-  return `<a class="home-focus-card ${urgent?'is-urgent':''} ${urgent||priority?'is-priority':''}" href="${href}"><span class="home-focus-icon">${iconSvg(icon)}</span><span class="home-focus-label">${esc(label)}</span><strong>${esc(title)}</strong><span class="home-focus-detail">${esc(detail)}</span><span class="home-focus-action">${esc(action)} →</span></a>`;
+function homeFocusCard(icon,label,title,detail,href,action='Open details',urgent=false,priority=false,courseId='',detailView='overview'){
+  return `<a class="home-focus-card ${urgent?'is-urgent':''} ${urgent||priority?'is-priority':''}" href="${href}"${courseId?` data-action="focusCourse" data-id="${esc(courseId)}" data-view="${esc(detailView)}"`:''}><span class="home-focus-icon">${iconSvg(icon)}</span><span class="home-focus-label">${esc(label)}</span><strong>${esc(title)}</strong><span class="home-focus-detail">${esc(detail)}</span><span class="home-focus-action">${esc(action)} →</span></a>`;
 }
 function personalHome(){
   const userId=session.user.id,now=Date.now();
@@ -1220,10 +1294,11 @@ function personalHome(){
   const deadline=deadlines.find(c=>courseDeadline(c).getTime()<now)||deadlines[0];
   const feedback=courseReady?(cache.course_submissions||[]).filter(s=>s.learner_id===userId&&s.review_status!=='submitted'&&s.teacher_feedback).sort((a,b)=>new Date(b.reviewed_at||b.created_at)-new Date(a.reviewed_at||a.created_at))[0]:null;
   const feedbackCourse=feedback?(cache.courses||[]).find(c=>c.id===feedback.course_id):null;
+  const feedbackClassroom=feedbackCourse&&enrollments.some(e=>e.course_id===feedbackCourse.id)?feedbackCourse:null;
   const tasks=(cache.project_tasks||[]).filter(t=>t.assignee_id===userId&&t.status!=='done').sort((a,b)=>new Date(a.due_at||'9999-12-31')-new Date(b.due_at||'9999-12-31'));
   const event=(cache.events||[]).filter(e=>new Date(e.starts_at).getTime()>=now).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at))[0];
   const notifications=(cache.notifications||[]).filter(n=>!n.read_at).length;
-  const unreadMessages=unreadCountsReady?unreadCounts.direct_total+Object.values(unreadCounts.channels).reduce((sum,n)=>sum+(Number(n)||0),0):null;
+  const unreadMessages=unreadCountsReady?unreadCounts.direct_total:null;
   const assigned=teacher()?(cache.courses||[]).filter(c=>c.instructor_id===userId):[],assignedIds=new Set(assigned.map(c=>c.id));
   const reviews=courseReady?(cache.course_submissions||[]).filter(s=>assignedIds.has(s.course_id)&&s.review_status==='submitted'):[];
   const teachingDate=assigned.flatMap(c=>[{title:c.title,at:c.starts_at,label:'Workshop starts'},{title:c.title,at:coursePlanningReady?c.submission_due_at:null,label:'Project deadline'}]).filter(x=>x.at&&new Date(x.at).getTime()>=now).sort((a,b)=>new Date(a.at)-new Date(b.at))[0];
@@ -1243,17 +1318,18 @@ function personalHome(){
   if(founderOnly()&&teacher())queue.push(homeFocusCard('teaching','TEACHING LEAD · REVIEWS',courseReady?`${reviews.length} ${reviews.length===1?'submission':'submissions'} awaiting feedback`:'Project reviews',teachingDate?`${teachingDate.label}: ${teachingDate.title} · ${dateTime(teachingDate.at)}`:'Open Teaching studio to plan your workshops.','#teaching','Open teaching studio',reviews.length>0));
   const priority=admin()?'Club oversight':founderOnly()?'Founder priorities':teacher()?'Teaching priorities':'';
   const focus=[
-    homeFocusCard('courses','YOUR NEXT WORKSHOP',workshop?.title||'Choose a practical workshop',workshop?`${dateTime(workshop.starts_at)} · ${courseTrackFor(workshop)}`:courseReady?'Browse the four tracks and join a build.':'Open Courses to see your learning options.','#courses','Open courses',false,soon(workshop?.starts_at)),
-    homeFocusCard('calendar','PROJECT DEADLINE',deadline?.title||'No project deadline set',deadline?`${courseDeadline(deadline).getTime()<now?'Past due · submissions remain open':'Due'} ${dateTime(deadline.submission_due_at)}`:'Your course deadlines will appear here.','#calendar','View calendar',!!deadline&&courseDeadline(deadline).getTime()<now,soon(deadline?.submission_due_at)),
-    homeFocusCard('courses','TEACHER FEEDBACK',feedbackCourse?.title||'No feedback yet',feedback?`${feedback.review_status==='revision_requested'?'Revision requested':'Project accepted'} · ${feedback.teacher_feedback.slice(0,130)}${feedback.teacher_feedback.length>130?'…':''}`:'Your latest project review will appear here.','#courses','See my courses',feedback?.review_status==='revision_requested'),
-    homeFocusCard('projects','ASSIGNED PROJECT TASKS',tasks.length?`${tasks.length} ${tasks.length===1?'task':'tasks'} in progress`:'No tasks assigned',tasks.length?`${tasks[0].title}${tasks[0].due_at?' · due '+dateTime(tasks[0].due_at):''}`:'Join a project or start one with your team.','#projects','View projects',!!tasks[0]?.due_at&&new Date(tasks[0].due_at).getTime()<now,soon(tasks[0]?.due_at))
-  ];
-  return `<section class="home-personal-intro"><div><span class="eyebrow">YOUR SPACE WORKSPACE</span><h1>Welcome back, ${esc(name)}.</h1><p>Pick up your next build, answer your team and keep the club moving.</p></div><a class="button button-outline" href="#calendar">Open calendar ↗</a></section>
-  <div class="home-glance"><a href="#courses"><small>Courses in your plan</small><strong>${courseReady?enrollments.length:'—'}</strong><span>Explore your workshops →</span></a><a href="#events"><small>Next club event</small><strong class="home-glance-date">${esc(event?date(event.starts_at):'To be announced')}</strong><span>${esc(event?.title||'See the calendar')} →</span></a><a href="#notifications"><small>Unread alerts</small><strong>${notifications}</strong><span>Open inbox →</span></a><a href="#channels"><small>Unread messages</small><strong>${unreadMessages??'—'}</strong><span>${unreadMessages===null?'Open member channels':'Open conversations'} →</span></a></div>
-  ${queue.length?`<div class="section-heading"><div><span class="eyebrow">NEEDS YOUR ATTENTION</span><h2>${priority}</h2></div></div><div class="home-focus-grid home-role-grid">${queue.join('')}</div>`:''}
-  <div class="section-heading"><div><span class="eyebrow">YOUR NEXT MOVES</span><h2>Learning and projects</h2></div><a class="link" href="#calendar">See full calendar →</a></div><div class="home-focus-grid">${focus.join('')}</div>
+    workshop&&homeFocusCard('courses','YOUR NEXT WORKSHOP',workshop.title,`${dateTime(workshop.starts_at)} · ${courseTrackFor(workshop)}`,'#courses','Open my classroom',false,soon(workshop.starts_at),workshop.id),
+    deadline&&homeFocusCard('calendar','PROJECT DEADLINE',deadline?.title||'No project deadline set',deadline?`${courseDeadline(deadline).getTime()<now?'Past due · submissions remain open':'Due'} ${dateTime(deadline.submission_due_at)}`:'Your course deadlines will appear here.','#calendar','View calendar',!!deadline&&courseDeadline(deadline).getTime()<now,soon(deadline?.submission_due_at)),
+    feedback&&homeFocusCard('courses','TEACHER FEEDBACK',feedbackCourse?.title||'Latest project review',`${feedback.review_status==='revision_requested'?'Revision requested':'Project accepted'} · ${feedback.teacher_feedback.slice(0,130)}${feedback.teacher_feedback.length>130?'…':''}`,'#courses',feedbackClassroom?'Read teacher feedback':'Open My learning',feedback.review_status==='revision_requested',false,feedbackClassroom?.id,'feedback'),
+    tasks.length>0&&homeFocusCard('projects','ASSIGNED PROJECT TASKS',tasks.length?`${tasks.length} ${tasks.length===1?'task':'tasks'} in progress`:'No tasks assigned',tasks.length?`${tasks[0].title}${tasks[0].due_at?' · due '+dateTime(tasks[0].due_at):''}`:'Join a project or start one with your team.','#projects','View projects',!!tasks[0]?.due_at&&new Date(tasks[0].due_at).getTime()<now,soon(tasks[0]?.due_at))
+  ].filter(Boolean);
+  const orientation=admin()?'Start with membership approvals and reports, then check club activity.':founderOnly()?'Start with founder meetings and finance approvals. Your learning and project work is below.':teacher()?'Review student builds in Teaching studio. Use My learning for workshops you have joined.':'Follow your workshops and project tasks below. Direct messages are private; Team chat is for groups.';
+  return `<section class="home-personal-intro"><div><span class="eyebrow">YOUR SPACE WORKSPACE</span><h1>Welcome back, ${esc(name)}.</h1><p>${esc(orientation)}</p></div><a class="button button-outline" href="#calendar">Open calendar ↗</a></section>
+  <div class="home-glance"><a href="#courses"><small>My workshops</small><strong>${courseReady?enrollments.length:'—'}</strong><span>Open My learning →</span></a><a href="#events"><small>Next club event</small><strong class="home-glance-date">${esc(event?date(event.starts_at):'To be announced')}</strong><span>${esc(event?.title||'See the calendar')} →</span></a><a href="#notifications"><small>Unread notifications</small><strong>${notifications}</strong><span>Open Notifications →</span></a><a href="#messages"><small>Unread direct messages</small><strong>${unreadMessages??'—'}</strong><span>${'Open Direct messages'} →</span></a></div>
+  ${queue.length?`<div class="section-heading"><div><span class="eyebrow">YOUR ROLE</span><h2>${priority}</h2></div></div><div class="home-focus-grid home-role-grid">${queue.join('')}</div>`:''}
+  <div class="section-heading"><div><span class="eyebrow">YOUR NEXT MOVES</span><h2>Learning and projects</h2></div><a class="link" href="#calendar">See full calendar →</a></div>${focus.length?`<div class="home-focus-grid">${focus.join('')}</div>`:`<div class="home-start"><div><strong>Start with a practical workshop</strong><p>Open My learning, browse the four tracks and choose your first build. Your next workshop, feedback and assigned tasks will appear here.</p></div><a class="button button-sm" href="#courses">Open My learning →</a></div>`}
   ${homeAgendaMarkup(userId,activeIds,assigned)}
-  <div class="section-heading"><div><span class="eyebrow">BUILD TOGETHER</span><h2>Stay in the conversation</h2></div></div><div class="home-community-links"><a href="#feed">Share a build update <span>Activity feed →</span></a><a href="#channels">Ask your team <span>Member channels →</span></a><a href="#library">Find a resource <span>Document library →</span></a></div>`;
+  <div class="section-heading"><div><span class="eyebrow">BUILD TOGETHER</span><h2>Stay in the conversation</h2></div></div><div class="home-community-links"><a href="#feed">Share a build update <span>Member feed →</span></a><a href="#channels">Talk with your team <span>Team chat →</span></a><a href="#library">Find a document <span>Shared files →</span></a></div>`;
 }
 function home() {
   if(investor())return `${head('SPACE PARTNERS','Welcome, '+(me?.full_name||'investor'),'Your approved investor space brings together curated updates and a direct inquiry form.')}<div class="grid grid-2"><a class="card feature-card" href="#investor-portal"><span class="feature-icon">${iconSvg('investors')}</span><h3>Investor portal</h3><p>Read updates the club has approved for investors and send a question to the team.</p><span class="link">Open portal →</span></a><a class="card feature-card" href="founders/"><span class="feature-icon">${iconSvg('founders')}</span><h3>Meet the founders</h3><p>Learn about the people guiding SPACE.</p><span class="link">View founders →</span></a></div>`;
@@ -1320,7 +1396,7 @@ function founderProfile(f){
 }
 function founders() {
   const list=cache.founders||[];
-  return `${head('THE PEOPLE BEHIND THE IDEA','Founding team','The founding team shaping SPACE with members, teachers and mentors.',admin()?button('+ Add founder','founderForm'):'')}
+  return `${head('ABOUT SPACE','Club leadership','Meet the founders and mentors guiding SPACE.',admin()?button('+ Add founder','founderForm'):'')}
   <div class="notice">Founder profiles are added only after each person agrees to be listed.</div>
   <div class="section-heading"><h2>Meet the founders</h2></div><div class="founder-list ${list.length===1?'single':''}">${list.length?list.map(founderProfile).join(''):`<div class="founder-empty"><h3>Meet the team soon</h3><p>Founders will appear here after they approve their public profiles.</p></div>`}</div>
   <div class="founder-invite-banner"><div><span class="eyebrow">FOUNDER ACCESS</span><h3>Build the club together.</h3><p>Administrators approve founder applications. Accepted founders can plan together and meet in a private room.</p></div>${founder()?`<a class="button" href="#founder-room">Open founder room →</a>`:!session?button('Apply as founder','login'):''}</div>
@@ -1447,7 +1523,7 @@ function dmSearchMarkup(peer){
   return `<div class="dm-search-panel"><form id="dmSearchForm" data-peer="${esc(peer.id)}"><label class="sr-only" for="dmSearchInput">Search this conversation</label><input id="dmSearchInput" name="query" type="search" maxlength="120" value="${esc(dmSearchTerm)}" placeholder="Search this conversation"><button type="submit" class="text-button" ${dmSearchBusy?'disabled':''}>${dmSearchBusy?'Searching…':'Search'}</button><button type="button" class="text-button" data-action="toggleDmSearch" aria-label="Close message search">×</button></form>${dmSearchError?`<p class="subtle" role="status">${esc(dmSearchError)}</p>`:dmSearchTerm&&!dmSearchBusy?`<div class="dm-search-results">${dmSearchRows.length?dmSearchRows.map(m=>`<article><small>${esc(m.sender_id===session.user.id?'You':peer.full_name)} · ${esc(dateTime(m.created_at))}</small><p>${esc(dmPreviewText(m))}</p>${dmRepliesReady?`<button type="button" class="text-button" data-action="dmReply" data-id="${esc(m.id)}">Reply to this message</button>`:''}</article>`).join(''):'<p class="subtle">No matching messages.</p>'}${dmSearchRows.length===50?'<p class="subtle">Showing the latest 50 matches. Refine your search to find older messages.</p>':''}</div>`:''}</div>`;
 }
 function messages(){
-  if(!dmReady)return head('MEMBER CONNECTIONS','Direct messages','Private conversations with club members.')+communityNotice();
+  if(!dmReady)return head('YOUR WORKSPACE','Direct messages','Private conversations with club members.')+communityNotice();
   const history=cache.direct_messages||[],peers=new Set(history.map(m=>m.sender_id===session.user.id?m.recipient_id:m.sender_id));
   if(unreadCountsReady)for(const id of unreadCounts.direct_peers)peers.add(id);
   for(const id of dmLatestMessages.keys())peers.add(id);
@@ -1461,7 +1537,7 @@ function messages(){
   const online=peer?.last_seen_at&&Date.now()-new Date(peer.last_seen_at).getTime()<65000;
   const preview=draft?.file?`<div class="dm-image-preview"><img src="${esc(draft.url)}" alt="Selected image preview"><span>${esc(draft.file.name)}<small>Ready to share</small></span><button type="button" class="dm-preview-remove" data-action="removeDmImage" aria-label="Remove selected image">×</button></div>`:'';
   const reply=draft?.reply?`<div class="dm-reply-preview"><div><strong>Replying to ${esc(draft.reply.sender_id===session.user.id?'yourself':peer.full_name)}</strong><p>${esc(dmPreviewText(draft.reply))}</p></div><button type="button" data-action="dmCancelReply" aria-label="Cancel reply">×</button></div>`:'';
-  return `${head('MEMBER CONNECTIONS','Messages','Good conversations lead to great builds.')}
+  return `${head('YOUR WORKSPACE','Direct messages','Start or continue a private conversation with a club member.')}
   <div class="dm-layout ${peer?'thread-open':''}"><div class="dm-list"><div class="dm-heading">Your conversations <span>${peers.size}</span></div><div class="dm-tabs" role="group" aria-label="Conversation list"><button type="button" data-action="setDmListView" data-view="chats" aria-pressed="${dmListView==='chats'}">Chats</button><button type="button" data-action="setDmListView" data-view="people" aria-pressed="${dmListView==='people'}">Find members</button></div><div class="dm-search"><label class="sr-only" for="dmFilter">Find a member</label><input id="dmFilter" type="search" value="${esc(dmFilterTerm)}" placeholder="Search members" autocomplete="off"></div>${ordered.map(p=>{
     const last=latest.get(p.id),seen=(cache.direct_message_reads||[]).find(r=>r.peer_id===p.id)?.last_read_at;
     const unread=unreadCountsReady?Number(unreadCounts.direct_messages[p.id]||0):history.filter(m=>m.sender_id===p.id&&(!seen||new Date(m.created_at)>new Date(seen))).length;
@@ -1543,7 +1619,7 @@ function projects() {
 }
 function discussions() {
   const list=cache.topics||[];
-  return `${head('SHARE IDEAS','Discussions','Ask questions, debate designs and keep decisions visible.',button('+ New discussion','topicForm'))}<div class="grid">${list.length?list.map(t=>{const replies=(cache.replies||[]).filter(r=>r.topic_id===t.id),project=(cache.projects||[]).find(p=>p.id===t.project_id);return `<div class="card topic"><div class="row"><span class="tag">${esc(t.category||'General')}</span><span class="subtle">${date(t.created_at)}</span></div><h3>${esc(t.title)}</h3>${project?`<small class="muted">Project: ${esc(project.title)}</small>`:''}<p>${esc(t.body)}</p><div class="card-footer"><span>${replies.length} replies</span><button class="text-button" data-action="topicDetail" data-id="${esc(t.id)}">Read discussion →</button></div></div>`}).join(''):empty('Start the conversation','Your first discussion could be a workshop idea or a prototype challenge.')}</div>`;
+  return `${head('COMMUNITY','Discussion forum','Ask a question, explore a design and keep the decision in one thread.',button('+ New discussion','topicForm'))}<div class="grid">${list.length?list.map(t=>{const replies=(cache.replies||[]).filter(r=>r.topic_id===t.id),project=(cache.projects||[]).find(p=>p.id===t.project_id);return `<div class="card topic"><div class="row"><span class="tag">${esc(t.category||'General')}</span><span class="subtle">${date(t.created_at)}</span></div><h3>${esc(t.title)}</h3>${project?`<small class="muted">Project: ${esc(project.title)}</small>`:''}<p>${esc(t.body)}</p><div class="card-footer"><span>${replies.length} replies</span><button class="text-button" data-action="topicDetail" data-id="${esc(t.id)}">Read discussion →</button></div></div>`}).join(''):empty('Start the conversation','Your first discussion could be a workshop idea or a prototype challenge.')}</div>`;
 }
 const courseDateInput = value => {
   if(!value)return '';
@@ -1655,7 +1731,7 @@ function courses() {
     <h3>What you will build</h3><p>${esc(brief.goal||'Your teacher will add the project brief soon.')}</p>
     ${brief.practice?`<h4>Hands-on activities and tests</h4><p>${esc(brief.practice)}</p>`:''}
     ${brief.tools?`<h4>Tools and components</h4><p>${esc(brief.tools)}</p>`:''}
-    <div class="course-next-step"><strong>${completedProject?'Your build is complete':latest?.review_status==='submitted'?'Your teacher is reviewing your work':latest?.review_status==='revision_requested'?'Your next step: improve your build':'Your next step: prepare and build'}</strong><p>${completedProject?'Read the teacher’s final feedback and keep your completion record.':latest?.review_status==='submitted'?'You can see the work you sent in Submit project.':latest?.review_status==='revision_requested'?'Open Feedback for specific improvements, then submit a revision.':'Download the workshop materials, test your project, and submit your results.'}</p><div class="course-next-actions"><button class="button button-sm" data-action="courseDetailView" data-view="${completedProject||latest?.review_status==='revision_requested'?'feedback':latest?.review_status==='submitted'?'submit':'materials'}">${completedProject||latest?.review_status==='revision_requested'?'See feedback':latest?.review_status==='submitted'?'View submitted work':'Open materials'} →</button>${!completedProject&&latest?.review_status!=='submitted'?`<button class="button button-outline button-sm" data-action="courseDetailView" data-view="submit">Submit project</button>`:''}</div></div>
+    <div class="course-next-step"><strong>${completedProject?'Your build is complete':latest?.review_status==='submitted'?'Your teacher is reviewing your work':latest?.review_status==='revision_requested'?'Your next step: improve your build':'Your next step: prepare and build'}</strong><p>${completedProject?'Read the teacher’s final feedback and keep your completion record.':latest?.review_status==='submitted'?'Open My submissions to see the work you sent.':latest?.review_status==='revision_requested'?'Open Teacher feedback for specific improvements, then submit a revision.':'Download the workshop materials, test your project, and submit your results.'}</p><div class="course-next-actions"><button class="button button-sm" data-action="courseDetailView" data-view="${completedProject||latest?.review_status==='revision_requested'?'feedback':latest?.review_status==='submitted'?'submit':'materials'}">${completedProject||latest?.review_status==='revision_requested'?'See feedback':latest?.review_status==='submitted'?'View submitted work':'Open materials'} →</button>${!completedProject&&latest?.review_status!=='submitted'?`<button class="button button-outline button-sm" data-action="courseDetailView" data-view="submit">Submit project</button>`:''}</div></div>
   </section>`:'';
   const materialPanel=selected?`<section id="course-detail-panel" class="course-classroom-panel" aria-label="Workshop materials"><h3>Materials and slides</h3><p class="subtle">Use these resources as you build and test your project.</p>
     ${selected.resource_url&&cleanUrl(selected.resource_url)?`<a class="course-resource-link" href="${esc(cleanUrl(selected.resource_url))}" target="_blank" rel="noopener noreferrer"><strong>Workshop resource link</strong><span>Open resource ↗</span></a>`:''}
@@ -1665,7 +1741,7 @@ function courses() {
   const classroom=selected?`<article class="course-classroom" id="course-${esc(selected.id)}">
     <div class="course-classroom-head"><div><span class="eyebrow">YOUR CLASSROOM · ${esc(courseTrackFor(selected))}</span><h2 tabindex="-1">${esc(selected.title)}</h2><p>${esc(brief.goal||'Build and test a real project with your teacher.')}</p></div><div class="course-classroom-status">${courseLifecycleReady&&!courseOpen(selected)?`<span class="tag gold">${esc(courseStateLabel(selected))} · no new enrollments</span>`:''}<span class="tag ${completedProject?'blue':latest?.review_status==='revision_requested'?'gold':''}">${esc(courseProgress(enrollment))}</span></div></div>
     <div class="course-classroom-meta"><span><b>Teacher</b> ${esc(selected.instructor_id?memberName(selected.instructor_id):'To be assigned')}</span>${courseTimeline(selected,enrollment.status==='enrolled')}</div>
-    <div class="course-detail-switch" role="group" aria-label="Inside this workshop">${detailTab('overview','Overview')}${detailTab('materials','Materials',selectedMaterials.length)}${detailTab('submit','Submit project',attempts.length)}${detailTab('feedback','Feedback',feedbackCount)}</div>
+    <div class="course-detail-switch" role="group" aria-label="Inside this workshop">${detailTab('overview','Overview')}${detailTab('materials','Materials & slides',selectedMaterials.length)}${detailTab('submit','My submissions',attempts.length)}${detailTab('feedback','Teacher feedback',feedbackCount)}</div>
     ${courseDetailView==='materials'?materialPanel:courseDetailView==='submit'?courseJourney(selected):courseDetailView==='feedback'?courseFeedback(selected):overview}
   </article>`:'';
   const myLearning=`<section id="course-view-panel" class="course-view-panel" aria-label="My learning">
@@ -1681,8 +1757,8 @@ function courses() {
     <div class="section-heading"><div><span class="eyebrow">PUBLISHED WORKSHOPS</span><h2>${courseTrack==='all'?'All workshops':esc(courseTrack)}</h2></div></div>
     <div class="grid grid-3">${visible.length?visible.map(c=>{const joined=enrolled.some(e=>e.course_id===c.id);return `<article class="card course-card" id="course-${esc(c.id)}"><span class="tag blue">${esc(c.level||'Practical')}</span><h3 tabindex="-1">${esc(c.title)}</h3><p>${esc(courseBrief(c).goal||'A practical project brief is coming soon.')}</p><div class="pill-row"><span class="subtle">${esc(courseTrackFor(c))}</span><span class="subtle">${c.instructor_id?`Teacher: ${esc(memberName(c.instructor_id))}`:'Teacher to be assigned'}</span></div>${courseTimeline(c,false)}<div class="course-catalog-action">${joined?`<button class="button button-outline button-sm" data-action="focusCourse" data-id="${esc(c.id)}">Open my classroom →</button>`:courseReady?`<button class="button button-sm" data-action="enrollCourse" data-id="${esc(c.id)}">Join workshop →</button>`:`<small class="subtle">Enrollment opens after course setup.</small>`}</div></article>`}).join(''):proposedWorkshops.filter(w=>courseTrack==='all'||w.track===courseTrack).map(w=>`<article class="card course-card course-proposal"><span class="tag gold">Proposed workshop</span><h3>${esc(w.title)}</h3><small>${esc(w.track)}</small><p>${esc(w.detail)}</p><div class="card-footer"><span>Planning draft · Date and teacher to be confirmed</span></div></article>`).join('')||empty('No open workshops in this track','Approved teachers can publish the next practical workshop.')}</div>
   </section>`;
-  return `${head('LEARN BY BUILDING','Courses and workshops','Choose a practical build, follow your teacher’s materials and keep your feedback in one classroom.',teacher()?`<div class="profile-buttons">${button('+ Publish workshop','courseForm')}${learningReady?button('+ Upload material','learningForm','button-outline'):''}</div>`:'')}
-    <div class="course-view-switch" role="group" aria-label="Course views">${tab('mine','My learning',myCourses.length)}${tab('explore','Explore workshops',available.length)}</div>
+  return `${head('LEARNING & PROJECTS','My learning','Open a joined workshop for its materials, submissions and teacher feedback. Browse workshops to join a new build.',teacher()?'<a class="button button-outline" href="#teaching">Teaching studio →</a>':'')}
+    <div class="course-view-switch" role="group" aria-label="Course views">${tab('mine','My learning',myCourses.length)}${tab('explore','Browse workshops',available.length)}</div>
     ${courseView==='explore'?explore:myLearning}`;
 }
 function materialRow(m){return `<div class="learning-row"><span class="tag blue">${esc(m.kind)}</span><div><strong>${esc(m.title)}</strong><small>${esc(m.file_name)} · ${fileSize(m.file_size)} · ${date(m.created_at)}</small>${m.description?`<p>${esc(m.description)}</p>`:''}</div>${m.hidden_at?'<span class="tag gold">Hidden</span>':`<button class="text-button" data-action="downloadLearning" data-id="${esc(m.id)}">Download ↓</button>`}</div>`;}
@@ -1734,11 +1810,11 @@ function teaching(){
       Number.isFinite(due)&&due>=now?{course:c,label:'Project deadline',at:due}:null].filter(Boolean);
   }).sort((a,b)=>a.at-b.at).slice(0,5);
   const profile=admin()?'':teacherProfileReady?`<section class="card teacher-onboarding"><div class="row"><div><span class="eyebrow">YOUR TEACHING PROFILE</span><h2>${teacherProfile?'Update your teaching details':'Complete your teaching details'}</h2><p class="subtle">Describe the practical work you can lead. These details are visible only to you and administrators.</p></div><span class="tag ${teacherProfile?'blue':'gold'}">${teacherProfile?'Saved':'To complete'}</span></div><form id="teacherProfileForm" data-kind="teacherProfile" class="form-stack">${select('Primary learning track','track',courseTracks.map(t=>t.name),teacherProfile?.track||courseTracks[0].name)}<div class="field"><label for="teacher_experience">Relevant experience or skills</label><textarea id="teacher_experience" name="experience" minlength="20" maxlength="2000" required placeholder="Describe the tools, projects and topics you can teach.">${esc(teacherProfile?.experience||'')}</textarea></div><div class="field"><label for="teacher_practical_focus">Practical teaching plan</label><textarea id="teacher_practical_focus" name="practical_focus" minlength="20" maxlength="2000" required placeholder="What will members build or test with you?">${esc(teacherProfile?.practical_focus||'')}</textarea></div><div class="field"><label for="teacher_availability">Availability</label><textarea id="teacher_availability" name="availability" minlength="5" maxlength="500" required placeholder="For example, Saturdays or two sessions each month.">${esc(teacherProfile?.availability||'')}</textarea></div><button class="button" type="submit">${teacherProfile?'Save changes':'Save teaching profile'}</button></form></section>`:'<div class="notice">Run the teacher promotions migration to enable your teaching profile.</div>';
-  const tabs=[['overview','Overview'],['workshops',`Open workshops (${currentWorkshops.length})`],...(courseLifecycleReady?[['past',`Past workshops (${pastWorkshops.length})`]]:[]),['reviews',`To review (${pending.length})`],['materials',`Materials (${materials.length})`],...(!admin()?[['profile','My profile']]:[])];
+  const tabs=[['overview','Overview'],['workshops',`Open workshops (${currentWorkshops.length})`],...(courseLifecycleReady?[['past',`Past workshops (${pastWorkshops.length})`]]:[]),['reviews',`To review (${pending.length})`],['materials',`Materials (${materials.length})`],...(!admin()?[['profile','Teaching profile']]:[])];
   if(!tabs.some(([key])=>key===teachingTab))teachingTab='overview';
   const panel=(key,content)=>`<section id="teaching-panel-${key}" role="tabpanel" aria-labelledby="teaching-tab-${key}" ${teachingTab===key?'':'hidden'}>${content}</section>`;
   const overview=courseReady?`<div class="teaching-overview"><section class="teaching-agenda"><span class="eyebrow">WHAT TO DO NEXT</span><h2>Your teaching checklist</h2>
-    <div class="teaching-agenda-row"><div><strong>${pending.length?`${pending.length} project${pending.length===1?'':'s'} need feedback`:'Project reviews are clear'}</strong><small class="subtle">Read each build, give practical feedback, then accept it or request a revision.</small></div><button class="text-button" data-action="teachingTab" data-tab="reviews">Open reviews →</button></div>
+    <div class="teaching-agenda-row"><div><strong>${pending.length?`${pending.length} project${pending.length===1?'':'s'} need feedback`:'Project reviews are clear'}</strong><small class="subtle">Read each build, give practical feedback, then accept it or request a revision.</small></div><button class="text-button" data-action="teachingTab" data-tab="reviews">Review student submissions →</button></div>
     <div class="teaching-agenda-row"><div><strong>${currentWorkshops.length?`${currentWorkshops.length} open workshop${currentWorkshops.length===1?'':'s'}`:'Publish your next workshop'}</strong><small class="subtle">Set the project goal, dates and students for each workshop. End enrollment when the next intake should use a new workshop.</small></div><button class="text-button" data-action="teachingTab" data-tab="workshops">Open workshops →</button></div>
     <div class="teaching-agenda-row"><div><strong>${materials.length} published material${materials.length===1?'':'s'}</strong><small class="subtle">Attach slides or notes to the workshop students will use them in.</small></div><button class="text-button" data-action="teachingTab" data-tab="materials">Open materials →</button></div>
     ${!admin()&&!teacherProfile?'<div class="teaching-agenda-row"><div><strong>Complete your teaching profile</strong><small class="subtle">Add your experience, practical focus and availability.</small></div><button class="text-button" data-action="teachingTab" data-tab="profile">Open profile →</button></div>':''}</section>
@@ -1845,7 +1921,7 @@ function rsvpControls(kind,id) {
 }
 function events() {
   const list=(cache.events||[]).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));
-  return `${head('MAKE TIME TO BUILD','Events calendar','Workshops, project reviews, club meetings and demo days.',admin()?button('+ Schedule event','eventForm'):'')}
+  return `${head('CLUB ACTIVITIES','Events','Browse scheduled workshops, meetings and demo days.',admin()?button('+ Schedule event','eventForm'):'')}
   <div class="grid grid-2">${list.length?list.map(e=>`<div class="card"><div class="row"><span class="tag ${new Date(e.starts_at)<new Date()?'gold':''}">${new Date(e.starts_at)<new Date()?'Past event':'Upcoming'}</span><span class="subtle">${dateTime(e.starts_at)}</span></div><h3 style="margin-top:18px">${esc(e.title)}</h3><p>${esc(e.description||'')}</p><div class="meta"><span>◷ ${dateTime(e.starts_at)}</span><span>⌁ ${esc(e.location||'Online')}</span></div>${rsvpControls("event",e.id)}<div class="card-footer"><div>${e.meet_url?`<a class="link" href="${esc(cleanUrl(e.meet_url))}" target="_blank" rel="noopener noreferrer">Join Google Meet ↗</a>`:''}</div><div>${admin()&&!e.meet_url?`<button class="text-button" data-action="createMeet" data-kind="event" data-id="${esc(e.id)}">Create Meet</button> · `:''}<button class="text-button" data-action="calendar" data-id="${esc(e.id)}">Add to calendar</button> · <button class="text-button" data-action="ics" data-id="${esc(e.id)}">ICS</button></div></div></div>`).join(''):empty('No events yet','Events will appear here when the team sets the schedule.')}</div>`;
 }
 const calendarDayKey = value => {const d=new Date(value);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
@@ -1877,7 +1953,7 @@ function calendarPage() {
   const selectedItems=byDay.get(selected)||[];
   const card=item=>`<button class="cal-agenda-item" data-action="calendarItem" data-kind="${item.kind}" data-id="${esc(item.id)}"><span class="cal-dot ${item.kind}"></span><span><strong>${esc(item.title)}</strong><small>${calendarLabel(item)} · ${dateTime(item.starts_at)}</small></span><span aria-hidden="true">↗</span></button>`;
   const upcoming=entries.filter(item=>new Date(item.starts_at)>=new Date()).slice(0,5);
-  return `${head('PLAN TOGETHER','Club calendar','See club events, your workshops and project deadlines in one place. Founder meetings appear only for approved founders.',admin()?button('+ Schedule event','eventForm'):'')}
+  return `${head('YOUR WORKSPACE','Calendar','Plan around club events, your workshops and project deadlines. Leadership meetings appear to authorized accounts.',admin()?button('+ Schedule event','eventForm'):'')}
   <div class="cal-toolbar"><div><h2>${esc(calendarMonth.toLocaleDateString(undefined,{month:'long',year:'numeric'}))}</h2><p class="subtle">${entries.filter(item=>{const d=new Date(item.starts_at);return d.getMonth()===month&&d.getFullYear()===year;}).length} items this month</p></div><div class="cal-nav"><button data-action="calendarToday" class="button button-outline button-sm">Today</button><button data-action="calendarPrev" aria-label="Previous month" class="cal-arrow">‹</button><button data-action="calendarNext" aria-label="Next month" class="cal-arrow">›</button></div></div>
   <div class="cal-layout"><div class="cal-board"><div class="cal-weekdays">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<span>${d}</span>`).join('')}</div><div class="cal-grid">${cells}</div></div><aside class="cal-agenda"><h3>${esc(calendarSelected.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}))}</h3>${selectedItems.length?selectedItems.map(card).join(''):empty('Nothing scheduled','Choose a date with an item to view its details.')}<h3 class="cal-upcoming-title">Coming up</h3>${upcoming.length?upcoming.map(card).join(''):empty('No upcoming items','New events will show here when scheduled.')}<a href="#events" class="link cal-events-link">All club events →</a><a href="#courses" class="link cal-events-link">My courses →</a>${teacher()?'<a href="#teaching" class="link cal-events-link">Teaching studio →</a>':''}</aside></div><div class="cal-legend"><span><i class="cal-dot event"></i> Club event</span><span><i class="cal-dot course"></i> Workshop starts</span>${coursePlanningReady?'<span><i class="cal-dot course_due"></i> Course project deadline</span>':''}<span><i class="cal-dot task"></i> Task deadline</span>${founder()?'<span><i class="cal-dot meeting"></i> Founder meeting</span>':''}</div>`;
 }
@@ -1900,7 +1976,7 @@ function calendarItem(kind,id) {
 }
 function announcements() {
   const list=cache.announcements||[];
-  return `${head('STAY INFORMED','Club alerts','Important updates, deadlines and opportunities.',admin()?button('+ Post alert','announcementForm'):'')}
+  return `${head('CLUB ACTIVITIES','Announcements','Read important club updates, deadlines and opportunities.',admin()?button('+ Post announcement','announcementForm'):'')}
   <div class="grid">${list.length?list.map(a=>`<div class="card"><div class="row"><span class="tag ${a.priority==='urgent'?'gold':''}">${esc(a.priority)}</span><span class="subtle">${date(a.created_at)}</span></div><h3 style="margin-top:15px">${esc(a.title)}</h3><p class="detail">${esc(a.body)}</p>${admin()?`<div class="card-footer"><span>Published club alert</span><button class="text-button alert-delete" type="button" data-action="deleteAnnouncement" data-id="${esc(a.id)}">Delete alert</button></div>`:''}</div>`).join(''):empty('No alerts yet','Official updates will appear here.')}</div>`;
 }
 
@@ -1943,12 +2019,12 @@ function privacy() {
     ${admin()&&privacyReady?`<div class="section-heading" id="privacy-admin-queue"><h2>Administrator queue</h2><p>${adminRequests.length} awaiting action</p></div><div class="grid grid-2">${adminRequests.length?adminRequests.map(r=>privacyRequestCard(r,true)).join(''):empty('No open requests','Member privacy requests will appear here.')}</div>`:''}`:'<div class="notice" style="margin-top:22px">Sign in to manage your profile or send a request to an administrator.</div>'}`;
 }
 function feed() {
-  if(!feedReady)return head('CLUB COMMUNITY','Activity feed','Member projects, questions and progress.')+communityNotice();
+  if(!feedReady)return head('COMMUNITY','Member feed','Member projects, questions and progress.')+communityNotice();
   const posts=(cache.activity_posts||[]).slice().sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
   const updates=[...(cache.announcements||[]).map(a=>({title:a.title,at:a.created_at,kind:'Alert',page:'announcements'})),...posts.map(p=>({title:p.title||memberName(p.author_id)+' shared an update',at:p.created_at,kind:'Post',id:p.id}))].sort((a,b)=>new Date(b.at)-new Date(a.at)).slice(0,6);
   const recentNews=(cache.news_posts||[]).filter(n=>n.status==='published').slice(0,5);
   const people=(cache.profiles||[]).filter(p=>p.membership_status==='approved'&&p.role!=='investor'&&p.last_seen_at).sort((a,b)=>new Date(b.last_seen_at)-new Date(a.last_seen_at)).slice(0,10);
-  return `${head('COMMUNITY PULSE','Activity feed','Share builds, ask for feedback and follow what members are creating.')}
+  return `${head('COMMUNITY','Member feed','Share a build update, ask for feedback and reply to member posts.')}
   <div class="feed-layout">
     <aside class="feed-rail"><section class="card feed-side"><div class="row"><h2>Recent stories</h2><a class="link" href="#news">See all</a></div>${recentNews.length?recentNews.map(n=>`<a class="feed-story" href="${esc(cleanUrl(n.url))}" target="_blank" rel="noopener noreferrer"><span class="feed-story-icon">◈</span><span><strong>${esc(n.title)}</strong><small>${esc(n.category)}</small></span></a>`).join(''):empty('No stories yet','Share a technology article for review.')}</section><section class="card feed-side"><h2>Explore together</h2><p>Find the right space for a deeper discussion.</p><a class="feed-shortcut" href="#projects">▥ &nbsp; Project plans →</a><a class="feed-shortcut" href="#channels">▣ &nbsp; Member channels →</a><a class="feed-shortcut" href="#events">▦ &nbsp; Club events →</a></section></aside>
     <section class="feed-main" aria-label="Member posts"><div class="card feed-composer">${memberAvatar(session.user.id)}<button class="feed-composer-prompt" data-action="feedPostForm">What are you building, ${esc(me?.full_name?.split(' ')[0]||'member')}?</button>${button('Share update','feedPostForm','button-sm')}</div>${feedError?`<div class="notice">${esc(feedError)} <button class="text-button" data-action="reloadFeed">Retry</button></div>`:''}<div class="feed-posts">${posts.length?posts.map(feedPostCard).join(''):feedLoading?empty('Loading posts','Fetching this page of club activity…'):empty('Start the conversation','Share a project milestone, question or useful resource with the club.')}</div>${feedTotal>30?`<div class="records-toolbar"><small class="subtle">Posts ${feedPage*30+1}–${Math.min(feedTotal,feedPage*30+30)} of ${feedTotal}</small><div class="records-actions"><button class="button button-outline button-sm" data-action="feedPrev" ${feedPage===0||feedLoading?'disabled':''}>← Newer</button><button class="button button-outline button-sm" data-action="feedNext" ${(feedPage+1)*30>=feedTotal||feedLoading?'disabled':''}>Older →</button></div></div>`:''}</section>
@@ -1986,10 +2062,10 @@ function application() {
 }
 function applications() {
   if(!admin())return '';
-  if(!enhancedReady)return head('ADMINISTRATION','Applications','Review club membership.')+communityNotice();
+  if(!enhancedReady)return head('ADMINISTRATION','Membership approvals','Review club membership.')+communityNotice();
   const applicants=applicationsOwner===session.user.id?applicationRows:[];
   const accounts=applicationsOwner===session.user.id?approvedAccountRows:[];
-  return `${head('ADMINISTRATION','Applications','Review new accounts and submitted details before granting club access.')}
+  return `${head('ADMINISTRATION','Membership approvals','Review verified applications, approve accounts and manage member roles.')}
     ${applicationsError?`<div class="notice">${esc(applicationsError)} <button class="text-button" data-action="reloadApplications">Retry</button></div>`:''}
     ${applicationVerificationError?`<div class="notice">${esc(applicationVerificationError)}</div>`:''}
     <div class="section-heading"><h2>Applications (${applicationTotal})</h2><p>All pending, rejected and suspended accounts, newest first.</p></div>
@@ -2005,7 +2081,7 @@ function adminDashboard(){
   const inquiries=(cache.investor_inquiries||[]).filter(q=>q.status==='new');
   const posts=cache.activity_posts||[],projects=cache.projects||[];
   const exports=[['profiles','Applications & members'],['projects','Projects'],['events','Events'],['activity_posts','Activity posts'],['reports','Reports'],['investor_inquiries','Investor inquiries'],['audit_events','Audit log']];
-  return `${head('ADMINISTRATION','Club oversight','Review membership, community activity, founder planning and investor communication.')}
+  return `${head('ADMINISTRATION','Admin overview','Start with membership approvals, then check reports, club records and recent actions.')}
   ${!roleReady?'<div class="notice">Run the roles and investors migration to enable applicant types and the investor portal.</div>':''}
   <div class="grid grid-4"><a class="stat dashboard-stat" href="#applications"><small>Pending applications</small><b>${adminPendingCount}</b><span>Review requests →</span></a><a class="stat dashboard-stat" href="#moderation"><small>Open reports</small><b>${reports.length}</b><span>Moderate content →</span></a><a class="stat dashboard-stat" href="#feed"><small>Recent activity posts</small><b>${posts.length}</b><span>View feed →</span></a><a class="stat dashboard-stat" href="#projects"><small>Projects</small><b>${projects.length}</b><span>View plans →</span></a></div>
   ${privacyQueue.length?`<div class="notice privacy-admin-notice"><strong>${privacyQueue.length} privacy ${privacyQueue.length===1?'request needs':'requests need'} review.</strong> <a href="#privacy">Open the administrator queue →</a></div>`:''}
@@ -2018,7 +2094,7 @@ function pushSettingsCard(){
   const state=window.InnovateXPush?.state();
   const needsAttention=state?.supported&&!state.subscribed&&state.permission!=='denied'&&!!state.reason;
   const status=pushBusy?'Updating…':!state?.supported?state?.installed?'Unavailable on this browser':'Install the web app first':state.permission==='denied'?'Blocked in device settings':state.subscribed?'On for this device':needsAttention?'Needs attention':'Off for this device';
-  const detail=!state?.supported?state?.installed?'This browser cannot receive web push. You can still use the club inbox while the app is open.':'On iPhone, add SPACE to your Home Screen and open it from the app icon before enabling alerts. Other devices may support alerts directly in the browser.':state.permission==='denied'?'Allow SPACE notifications in your device or browser settings, then return here.':state.subscribed?'New club messages and updates can appear even while this app is closed. Your device controls lock-screen visibility.':needsAttention?state.reason:'Turn on device alerts for direct messages, mentions, replies and club updates. Message text will not appear in lock-screen previews.';
+  const detail=!state?.supported?state?.installed?'This browser cannot receive web push. You can still open Notifications while the app is open.':'On iPhone, add SPACE to your Home Screen and open it from the app icon before enabling alerts. Other devices may support alerts directly in the browser.':state.permission==='denied'?'Allow SPACE notifications in your device or browser settings, then return here.':state.subscribed?'New club messages and updates can appear even while this app is closed. Your device controls lock-screen visibility.':needsAttention?state.reason:'Turn on device alerts for direct messages, mentions, replies and club updates. Message text will not appear in lock-screen previews.';
   const control=state?.supported&&state.permission!=='denied'?`<button class="button ${state.subscribed?'button-outline':''} button-sm" type="button" data-action="togglePush" ${pushBusy?'disabled':''}>${state.subscribed?'Turn off device alerts':'Enable device alerts'}</button>`:'';
   const guide=admin()&&needsAttention?'<a class="link" href="https://github.com/Turkson225/Turk-Innovation-CLUB/blob/main/supabase/PUSH_NOTIFICATIONS_SETUP.md" target="_blank" rel="noopener noreferrer">Notification setup guide ↗</a>':'';
   return `<div class="card push-settings"><span class="push-settings-icon" aria-hidden="true">${iconSvg('notifications')}</span><div><span class="eyebrow">PHONE &amp; DESKTOP</span><h2>Alerts on this device</h2><p>${esc(detail)}</p><strong class="push-status">${esc(status)}</strong>${guide}</div>${control}</div>`;
@@ -2061,11 +2137,11 @@ const communityNotice = () => `<div class="notice">This feature needs the Supaba
 const memberName = id => (cache.profiles||[]).find(p=>p.id===id)?.full_name || 'Member';
 const fileSize = bytes => bytes >= 1048576 ? `${(bytes/1048576).toFixed(1)} MB` : `${Math.ceil(bytes/1024)} KB`;
 function channels() {
-  if(!communityReady) return head('COMMUNITY','Channels','Talk and build together.')+communityNotice();
+  if(!communityReady) return head('COMMUNITY','Team chat','Talk and build together.')+communityNotice();
   const list=(cache.channels||[]).slice().sort((a,b)=>a.name.localeCompare(b.name));
   if(!list.some(c=>c.id===activeChannelId)) activeChannelId=list[0]?.id||null;
   const selected=list.find(c=>c.id===activeChannelId);
-  return `${head('CLUB CONVERSATIONS','Channels','Focused spaces for ideas, help and project updates.',admin()?button('+ Create channel','channelForm'):'')}
+  return `${head('COMMUNITY','Team chat','Choose a channel, share a message or file, and reply in its thread.',admin()?button('+ Create channel','channelForm'):'')}
     ${!unreadCountsReady?'<div class="notice">Unread counts may be incomplete while the club finishes setup. Contact an administrator if a conversation seems missing.</div>':''}
     <div class="chat-layout"><div class="channel-list"><div class="channel-label">YOUR CHANNELS</div>${list.map(c=>{const seen=(cache.channel_reads||[]).find(r=>r.channel_id===c.id)?.last_read_at;const unread=unreadCountsReady?Number(unreadCounts.channels[c.id]||0):enhancedReady?(cache.channel_messages||[]).filter(m=>m.channel_id===c.id&&!m.deleted_at&&m.author_id!==session.user.id&&(!seen||new Date(m.created_at)>new Date(seen))).length:0;return `<button class="channel-button ${c.id===activeChannelId?'selected':''}" data-action="selectChannel" data-id="${esc(c.id)}"><strong># ${esc(c.name)} ${unread?`<i class="unread-badge">${unread}</i>`:''}</strong><small>${esc(c.description)}</small></button>`}).join('')}</div>
     <div class="chat-panel">${selected?`<div class="chat-head"><div><h2># ${esc(selected.name)}</h2><p>${esc(selected.description)}</p></div><div class="chat-tools">${button('Search','searchChat','button-outline button-sm')}${button('Share file','shareDoc','button-outline button-sm')}</div></div>${channelHistoryError?`<div class="notice">${esc(channelHistoryError)} <button class="text-button" data-action="reloadChannelHistory">Retry</button></div>`:''}${channelTotal>50?`<div class="records-toolbar"><small class="subtle">Messages ${channelPage*50+1}–${Math.min(channelTotal,channelPage*50+50)} of ${channelTotal}</small><div class="records-actions"><button class="button button-outline button-sm" data-action="channelOlder" ${(channelPage+1)*50>=channelTotal||channelHistoryLoading?'disabled':''}>← Older</button><button class="button button-outline button-sm" data-action="channelNewer" ${channelPage===0||channelHistoryLoading?'disabled':''}>Newer →</button></div></div>`:''}<div id="messageStream" class="message-stream" aria-live="polite">${messageList()}</div><form id="chatComposer" class="chat-composer">${mediaReady?`<label class="gallery-picker" title="Choose an image from your gallery">▧<span class="sr-only">Choose image</span><input name="chat_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>`:''}<label class="sr-only" for="chatBody">Message</label><input id="chatBody" name="body" maxlength="3000" placeholder="Message #${esc(selected.name)} · mention @handle" ${mediaReady?'':'required'} autocomplete="off"><button class="button" type="submit">Send ↗</button>${mediaReady?`<span id="chatImageName" class="chat-image-name" hidden></span>`:''}</form>`:empty('No channels yet','An administrator can add the first channel.')}</div></div>`;
@@ -2098,9 +2174,9 @@ function renderChatMessages() {
   if(atBottom) stream.scrollTop=stream.scrollHeight;
 }
 function library() {
-  if(!communityReady) return head('SHARED KNOWLEDGE','Document library','Files for the club.')+communityNotice();
+  if(!communityReady) return head('LEARNING & PROJECTS','Shared files','Files for the club.')+communityNotice();
   const docs=cache.documents||[];
-  return `${head('SHARED KNOWLEDGE','Document library','Project notes, design files, workshop material and research shared by members.',button('+ Share document','shareDoc'))}
+  return `${head('LEARNING & PROJECTS','Shared files','Find and share project notes, designs, documents and research with the club.',button('+ Share document','shareDoc'))}
   <div class="notice">Files are available to approved members. Maximum size: 10 MB. Share only files you have permission to distribute.</div>
   <div class="grid grid-3" style="margin-top:22px">${docs.length?docs.map(d=>`<div class="card document-card"><span class="feature-icon">▤</span><h3>${esc(d.title)}</h3><p>Shared by ${esc(memberName(d.author_id))} · ${date(d.created_at)}</p><div class="meta">${d.channel_id?`<span># ${esc((cache.channels||[]).find(c=>c.id===d.channel_id)?.name||'Channel')}</span>`:''}<span>${fileSize(d.file_size)}</span></div><div class="card-footer"><span>${esc(d.file_type||'Document')}</span><div class="doc-actions"><button class="text-button" data-action="downloadDoc" data-id="${esc(d.id)}">Open ↗</button>${enhancedReady?`<button class="text-button" data-action="documentVersions" data-id="${esc(d.id)}">Versions</button>${d.author_id===session.user.id?`<button class="text-button" data-action="uploadRevision" data-id="${esc(d.id)}">Revise</button>`:''}<button class="text-button" data-action="report" data-type="document" data-id="${esc(d.id)}">Report</button>`:''}</div></div></div>`).join(''):empty('No files shared yet','Upload the first project note or useful resource.')}</div>`;
 }
@@ -2116,11 +2192,11 @@ function news() {
 }
 function newsCard(n,pending=false) {return `<div class="card news-card"><div class="row"><span class="tag ${pending?'gold':'blue'}">${pending?'Pending review':esc(n.category)}</span><span class="subtle">${date(n.created_at)}</span></div><h3>${esc(n.title)}</h3><p>${esc(n.summary)}</p><div class="card-footer"><span>By ${esc(memberName(n.submitted_by))}</span>${pending&&admin()?`<div><button class="text-button" data-action="reviewNews" data-status="published" data-id="${esc(n.id)}">Publish</button> · <button class="text-button" data-action="reviewNews" data-status="rejected" data-id="${esc(n.id)}">Reject</button></div>`:pending?'<span>Awaiting approval</span>':`<div class="doc-actions"><a class="link" href="${esc(cleanUrl(n.url))}" target="_blank" rel="noopener noreferrer">Read source ↗</a>${enhancedReady?`<button class="text-button" data-action="report" data-type="news" data-id="${esc(n.id)}">Report</button>`:''}</div>`}</div></div>`;}
 function founderRoom() {
-  if(!founder()) return head('FOUNDING TEAM','Founder room','For accepted founders.')+empty('Founder access required','Accept an invitation to enter this room.');
-  if(!communityReady) return head('FOUNDING TEAM','Founder room','Private planning and meetings.')+communityNotice();
+  if(!founder()) return head('LEADERSHIP & PARTNERS','Founder meetings','For accepted founders.')+empty('Founder access required','Accept an invitation to enter this room.');
+  if(!communityReady) return head('LEADERSHIP & PARTNERS','Founder meetings','Private planning and meetings.')+communityNotice();
   const meetings=(cache.founder_meetings||[]).slice().sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));
   const invites=cache.founder_invites||[];
-  return `${head('FOUNDING TEAM','Founder room','A private place for accepted founders to plan and meet.',button('+ Schedule meeting','founderMeetingForm'))}
+  return `${head('LEADERSHIP & PARTNERS','Founder meetings','Schedule leadership meetings, share the agenda and keep planning together.',button('+ Schedule meeting','founderMeetingForm'))}
   <div class="founder-invite-banner"><div><span class="eyebrow">PRIVATE SPACE</span><h3>Keep the founding team aligned.</h3><p>Schedule a Google Meet, share an agenda and add meetings to your calendar. Only accepted founders and administrators can view this space.</p></div><span class="founder-mark">S✦</span></div>
   ${admin()?`<div class="section-heading"><h2>Founder invitations</h2>${button('+ Invite founder','inviteFounder','button-outline button-sm')}</div><div class="card"><div class="invite-list">${invites.length?invites.map(i=>`<div class="list-item"><div><strong>${esc(i.email)}</strong><small>${i.accepted_at?'Accepted '+date(i.accepted_at):'Waiting for founder to sign in and accept'}</small></div><span class="tag ${i.accepted_at?'':'gold'}">${i.accepted_at?'Accepted':'Pending'}</span></div>`).join(''):empty('No invitations yet','Invite founders using the email they will sign in with.')}</div></div>`:''}
   <div class="section-heading"><h2>Meetings</h2><p>Private meeting links are shown only in this room.</p></div><div class="grid grid-2">${meetings.length?meetings.map(m=>`<div class="card"><div class="row"><span class="tag ${new Date(m.starts_at)<new Date()?'gold':''}">${new Date(m.starts_at)<new Date()?'Past meeting':'Upcoming'}</span><span class="subtle">${dateTime(m.starts_at)}</span></div><h3 style="margin-top:17px">${esc(m.title)}</h3><p>${esc(m.agenda||'Agenda to follow.')}</p><div class="meta"><span>◷ ${dateTime(m.starts_at)}</span><span>Hosted by ${esc(memberName(m.host_id))}</span></div>${rsvpControls("meeting",m.id)}<div class="card-footer"><div>${m.meet_url?`<a class="link" href="${esc(cleanUrl(m.meet_url))}" target="_blank" rel="noopener noreferrer">Join Google Meet ↗</a>`:'Meet link to follow'}</div><div>${!m.meet_url&&(admin()||m.host_id===session?.user.id)?`<button class="text-button" data-action="createMeet" data-kind="meeting" data-id="${esc(m.id)}">Create Meet</button> · `:''}<button class="text-button" data-action="founderCalendar" data-id="${esc(m.id)}">Calendar</button> · <button class="text-button" data-action="founderIcs" data-id="${esc(m.id)}">ICS</button></div></div></div>`).join(''):empty('No founder meetings yet','Schedule a planning call for the founding team.')}</div>`;
@@ -2350,7 +2426,7 @@ function actions(e) {
     return;
   }
   if(action==='courseTrack'){const track=el.dataset.track;if(track==='all'||courseTracks.some(t=>t.name===track)){courseTrack=track;render();}return;}
-  if(action==='focusCourse')return openWorkspaceCourse(id);
+  if(action==='focusCourse'){e.preventDefault();return openWorkspaceCourse(id,el.dataset.view);}
   if(action==='courseRoster'&&teacher()&&courseReady&&coursePlanningReady){
     const course=(cache.courses||[]).find(c=>c.id===id);
     if(!course||!admin()&&course.instructor_id!==session.user.id)return;

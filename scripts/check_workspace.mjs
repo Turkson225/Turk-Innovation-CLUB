@@ -323,6 +323,83 @@ for(const replacementPhoto of [false,true])test(`Pending photo send unlocks repl
   assert.equal(send.disabled,false);assert.equal(removed,!replacementPhoto);assert.equal(picker.value,replacementPhoto?'new.png':'');assert.equal(h.run("dmDraftFor('a').file"),replacementPhoto?next:null);assert.equal(h.run("dmSendingPeers.has('a')"),false);
 });
 
+// Navigation fixtures use the actual sidebar markup, so moved links stay covered.
+function navigationHarness(){
+  const h=harness(),html=fs.readFileSync(root+'/index.html','utf8');
+  const navHtml=html.slice(html.indexOf('<nav id="nav"'),html.indexOf('</nav>',html.indexOf('<nav id="nav"')));
+  const links=new Map();
+  for(const match of navHtml.matchAll(/<a\s+[^>]*data-page="([^"]+)"[^>]*>/g)){
+    const attributes=new Map(),classes=new Set();
+    const link=node({dataset:{page:match[1]},hidden:/\shidden(?:\s|>)/.test(match[0]),setAttribute(key,value){attributes.set(key,value);},removeAttribute(key){attributes.delete(key);},getAttribute(key){return attributes.get(key)??null;},classList:{toggle(key,on){if(on)classes.add(key);else classes.delete(key);},contains(key){return classes.has(key);}}});
+    links.set(match[1],link);
+  }
+  const sections=new Map();
+  for(const match of navHtml.matchAll(/<details\s+([^>]*data-nav-group="([^"]+)"[^>]*)>([\s\S]*?)<\/details>/g)){
+    const children=[...match[3].matchAll(/data-page="([^"]+)"/g)].map(m=>links.get(m[1]));
+    sections.set(match[2],node({dataset:{navGroup:match[2]},open:/\bopen\b/.test(match[1]),querySelectorAll(){return children;}}));
+  }
+  h.elements.set('#nav',node({querySelectorAll(selector){return selector==='a[data-page]'?[...links.values()]:[...sections.values()];}}));
+  h.elements.set('#workspaceLabel',node());h.run("page='home';sidebarContext='';sidebarPage='';");
+  return {...h,links,sections};
+}
+for(const role of ['guest','pending','member','teacher','founder','investor','admin'])test(`Organized sidebar preserves ${role} permissions and every allowed destination`,()=>{
+  const h=navigationHarness();
+  if(role==='guest')h.run('session=null;me=null;');else if(role==='pending')h.run("me.membership_status='pending'");else h.exec('me.role=qaArgs;',role);
+  h.run('updateWorkspaceNavigation()');
+  const expected=Array.from(h.run("workspaceSearchItems().filter(r=>r.key.startsWith('page:')).map(r=>r.page)")).sort();
+  const actual=[...h.links].filter(([_,link])=>!link.hidden).map(([id])=>id).sort();
+  assert.deepEqual(actual,expected);
+  assert.equal(h.links.get('finance').hidden,role!=='admin');
+  assert.equal(h.links.get('investors').hidden,!['admin','founder'].includes(role));
+  assert.equal(h.links.get('finance-review').hidden,role!=='founder');
+  for(const section of h.sections.values())assert.equal(section.hidden,!section.querySelectorAll().some(link=>!link.hidden));
+  assert.equal(h.links.get('home').getAttribute('aria-current'),'page');
+});
+test('Navigation opens the current section while respecting a manual collapse during background refresh',()=>{
+  const h=navigationHarness();h.run('updateWorkspaceNavigation()');
+  assert.equal(h.sections.get('learning').open,true);assert.equal(h.sections.get('community').open,false);
+  h.run("page='channels';updateWorkspaceNavigation()");assert.equal(h.sections.get('community').open,true);assert.equal(h.links.get('channels').getAttribute('aria-current'),'page');assert.equal(h.links.get('home').getAttribute('aria-current'),null);
+  h.sections.get('community').open=false;h.run('updateWorkspaceNavigation()');assert.equal(h.sections.get('community').open,false);
+  h.run("page='home';updateWorkspaceNavigation();page='feed';updateWorkspaceNavigation()");assert.equal(h.sections.get('community').open,true);
+});
+test('Role changes update groups and remove teaching, finance and investor shortcuts immediately',()=>{
+  const h=navigationHarness();h.run("me.role='admin';updateWorkspaceNavigation()");assert.equal(h.sections.get('administration').open,true);assert.equal(h.links.get('finance').hidden,false);
+  h.run("me.role='member';updateWorkspaceNavigation()");assert.equal(h.sections.get('administration').hidden,true);assert.equal(h.sections.get('administration').open,false);assert.equal(h.sections.get('leadership').hidden,true);assert.equal(h.links.get('teaching').hidden,true);
+  h.run("me.role='founder';me.founder_teaching_enabled=true;updateWorkspaceNavigation()");assert.equal(h.links.get('teaching').hidden,false);assert.equal(h.sections.get('leadership').open,true);
+  h.run("me.founder_teaching_enabled=false;updateWorkspaceNavigation()");assert.equal(h.links.get('teaching').hidden,true);
+});
+test('Renamed pages remain discoverable using familiar search terms',()=>{
+  const h=harness();
+  for(const [term,id,title] of [['Inbox','notifications','Notifications'],['Channels','channels','Team chat'],['Courses','courses','My learning'],['Document library','library','Shared files']]){
+    const result=h.exec("workspaceSearchMatches(qaArgs.term).find(r=>r.key==='page:'+qaArgs.id)",{term,id});assert(result);assert.equal(result.label,title);
+  }
+});
+test('A new member gets one learning starting point instead of four empty work cards',()=>{
+  const h=harness();h.run("page='home';courseReady=true;cache.courses=[];cache.course_enrollments=[];cache.course_submissions=[];cache.project_tasks=[];cache.events=[];");
+  const markup=h.run('home()');assert(markup.includes('Start with a practical workshop'));assert(!markup.includes('No feedback yet'));assert(!markup.includes('No tasks assigned'));assert.equal((markup.match(/class="home-focus-card /g)||[]).length,0);
+});
+test('Home workshops and feedback open the exact enrolled classroom and appropriate tab',()=>{
+  const h=harness(),future=new Date(Date.now()+3600000).toISOString();
+  h.exec("courseReady=true;cache.courses=[{id:'build',title:'My build',starts_at:qaArgs}];cache.course_enrollments=[{course_id:'build',learner_id:'self',status:'completed'}];cache.course_submissions=[{course_id:'build',learner_id:'self',review_status:'accepted',teacher_feedback:'Well tested.',reviewed_at:qaArgs}];",future);
+  const feedback=h.run('personalHome()');assert(feedback.includes('data-id="build" data-view="feedback"'));assert(feedback.includes('Read teacher feedback'));
+  action(h,{action:'focusCourse',id:'build',view:'feedback'});assert.equal(h.run('activeCourseId'),'build');assert.equal(h.run('courseDetailView'),'feedback');assert.equal(h.run('courseView'),'mine');
+  h.run("cache.course_enrollments[0].status='enrolled'");assert(h.run('personalHome()').includes('data-id="build" data-view="overview"'));
+  action(h,{action:'focusCourse',id:'build',view:'invalid'});assert.equal(h.run('courseDetailView'),'overview');
+  h.run('cache.course_enrollments=[]');action(h,{action:'focusCourse',id:'build',view:'feedback'});assert.equal(h.run('courseView'),'explore');assert.equal(h.run('courseDetailView'),'overview');assert(!h.run('personalHome()').includes('Read teacher feedback'));
+});
+test('Home direct-message count excludes channel messages and opens the correct inbox',()=>{
+  const h=harness();h.run("page='home';unreadCountsReady=true;unreadCounts={channels:{general:9},direct_total:2,direct_messages:{},direct_peers:[]};");
+  const markup=h.run('home()');assert(markup.includes('<a href="#messages"><small>Unread direct messages</small><strong>2</strong>'));assert(!markup.includes('<strong>11</strong>'));
+});
+test('Learner views direct teachers to Teaching studio without duplicate publishing controls',()=>{
+  const h=harness();h.run("page='courses';me.role='teacher';courseReady=true;courseView='mine';cache.courses=[];cache.course_enrollments=[];");
+  const markup=h.run('courses()');assert(markup.includes('Teaching studio →'));assert(!markup.includes('data-action="courseForm"'));assert(!markup.includes('data-action="learningForm"'));assert(markup.includes('Browse workshops'));
+});
+test('Page guides distinguish private messages from team chat and stay out of investor and guest views',()=>{
+  const h=harness();assert(h.run("pageGuide('messages')").includes('href="#channels"'));assert(h.run("pageGuide('channels')").includes('href="#messages"'));
+  h.run("me.role='investor'");assert.equal(h.run("pageGuide('messages')"),'');h.run('session=null;me=null;');assert.equal(h.run("pageGuide('library')"),'');
+});
+
 let failed=0;
 for(const t of tests){try{await t.fn();console.log('PASS',t.name);}catch(e){failed++;console.log('FAIL',t.name,'\n',e.stack);}}
 console.log(`${tests.length-failed}/${tests.length} checks passed`);
