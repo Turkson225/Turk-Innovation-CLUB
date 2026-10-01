@@ -1,5 +1,5 @@
 /* InnovateX public offline shell. Member data and API responses never enter Cache Storage. */
-const PUBLIC_CACHE = 'innovatex-public-v1';
+const PUBLIC_CACHE = 'innovatex-public-v2';
 const CACHE_PREFIX = 'innovatex-public-';
 const scope = new URL(self.registration.scope);
 const urlFor = path => new URL(path, scope).href;
@@ -8,8 +8,8 @@ const publicFiles = [
   'offline.html',
   'about/index.html',
   'founders/index.html',
-  'styles.css',
-  'public-pages.css?v=20260927b',
+  'styles.css?v=platform-20261001',
+  'public-pages.css?v=platform-20261001',
   'assets/club-about-lab.webp'
 ];
 const staticUrls = new Set(publicFiles.slice(3).map(urlFor));

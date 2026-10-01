@@ -31,6 +31,22 @@ A responsive workspace for a practical engineering and technology club. The site
 - Phone, tablet and desktop layouts. Untrusted member text is escaped before display.
 - Server-paged applications, feed, channel history and direct messages, with all-authorized-row CSV export for selected records and a separate private Storage backup procedure.
 
+## October 1 workspace upgrade
+
+The workspace now has a warmer visual system, clearer navigation groups and a keyboard-accessible search palette (**Ctrl/Command + K**). Search includes permitted pages and loaded courses, projects, members, events, documents and published technology news; it never indexes application answers. Home combines role-specific priorities, a personal agenda and recent club posts.
+
+Direct messages now separate existing chats from member discovery, retain text/photo/reply drafts per conversation, offer scoped message search, group nearby messages and load earlier history without replacing the current thread. On phones, Back returns to the conversation list and the composer follows the visible keyboard viewport. Photos still open in the existing full-screen viewer.
+
+### Enable the new chat tools
+
+On an already configured club database, run **only** [supabase/upgrade_dm_conversations.sql](supabase/upgrade_dm_conversations.sql) in **Supabase → SQL Editor → New query**. Copy the **entire file**, including the opening `begin;` and final `commit;`, and click **Run**. It is safe to rerun and requires the existing direct-message, media and role migrations listed at the top of the file. It adds private quoted replies, participant reactions, a paginated conversation inbox and a narrowly scoped peer read-receipt function.
+
+Reload the app after SQL succeeds. The additional tools are detected at sign-in; **Reply** and **React** appear when their database support is available. Base messaging, emoji, image sharing and message search continue to work before this upgrade. Sent messages show a single check; a double check appears only when the peer's saved read position covers that message. New-message notifications trigger immediate thread loading where Realtime is available; the open conversation also refreshes every nine seconds. Reactions and read receipts use that refresh rather than a new Realtime publication.
+
+For a practical access check, use two approved members and a third unrelated member. Send a message, quote it, react, and open it as the recipient. Verify the sender sees the read indicator, older messages stay available, and the unrelated account cannot retrieve that conversation, its reactions or another pair's receipt. Check guest, pending, teacher, founder, investor and administrator menus as well.
+
+Run `node scripts/check_workspace.mjs` for the 55 dependency-free frontend regression checks. The mocked runtime checks cover draft/send races, scoped queries, migration fallback, replies, reactions, read positions, history, search escaping and role-specific navigation. Browser screenshots and execution against the live Supabase database still require separate verification.
+
 ## Set up Supabase
 
 1. Create a Supabase project and open **SQL Editor**. Run [`supabase/schema.sql`](supabase/schema.sql) once. Use a new project or review existing schema before running it.

@@ -12,7 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
-  <link rel="stylesheet" href="styles.css?v=dm-mobile-20260927">
+  <link rel="stylesheet" href="styles.css?v=platform-20261001">
 </head>
 <body>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -21,32 +21,34 @@
       <a class="brand" href="#home" aria-label="InnovateX home"><span class="brand-mark">IX<span>✦</span></span><span><strong>INNOVATE<span class="brand-x">X</span></strong><small>ENGINEERING CLUB</small></span></a>
       <div class="sidebar-caption">CLUB SPACE</div>
       <nav id="nav" aria-label="Main navigation">
-        <a href="#home" data-page="home"><span>◫</span> Overview</a>
+        <a href="#home" data-page="home"><span>◫</span> Home</a>
         <a href="about/" data-page="about"><span>◈</span> About the club</a>
         <a href="founders/" data-page="founders"><span>◇</span> Founders</a>
         <a href="#investors" data-page="investors" data-investors-nav hidden><span>◇</span> Investors</a>
         <a href="#privacy" data-page="privacy"><span>◌</span> Privacy &amp; conduct</a>
         <a href="#application" data-page="application" data-pending hidden><span>✧</span> My application</a>
         <a href="#members" data-page="members" data-private hidden><span>◎</span> Members <i id="onlineBadge">—</i></a>
-        <a href="#messages" data-page="messages" data-private hidden><span>◍</span> Direct messages <i id="dmBadge" hidden>0</i></a>
+        <a href="#messages" data-page="messages" data-private hidden><span>◍</span> Messages <i id="dmBadge" hidden>0</i></a>
         <a href="#notifications" data-page="notifications" data-private hidden><span>◉</span> Inbox <i id="notificationBadge">0</i></a>
         <div class="sidebar-caption nav-group" data-private hidden>COMMUNITY</div>
         <a href="#feed" data-page="feed" data-private hidden><span>▧</span> Activity feed</a>
         <a href="#channels" data-page="channels" data-private hidden><span>▣</span> Channels</a>
-        <a href="#library" data-page="library" data-private hidden><span>▤</span> Document library</a>
-        <a href="#news" data-page="news" data-private hidden><span>◈</span> Technology news</a>
-        <a href="#projects" data-page="projects" data-private hidden><span>▥</span> Projects</a>
-        <a href="#inventory" data-page="inventory" data-private hidden><span>▤</span> Inventory</a>
-        <a href="#finance" data-page="finance" data-admin hidden><span>◈</span> Finance</a>
-        <a href="#finance-review" data-page="finance-review" data-founder-only hidden><span>✓</span> Finance review <i id="financeReviewBadge" hidden>0</i></a>
         <a href="#discussions" data-page="discussions" data-private hidden><span>◌</span> Discussions</a>
+        <a href="#news" data-page="news" data-private hidden><span>◈</span> Technology news</a>
+        <div class="sidebar-caption nav-group" data-private hidden>LEARN & BUILD</div>
         <a href="#courses" data-page="courses" data-private hidden><span>▤</span> Courses</a>
-        <a href="#teaching" data-page="teaching" data-teacher hidden><span>▤</span> Teach courses</a>
+        <a href="#teaching" data-page="teaching" data-teacher hidden><span>▤</span> Teaching studio</a>
+        <a href="#projects" data-page="projects" data-private hidden><span>▥</span> Projects</a>
+        <a href="#library" data-page="library" data-private hidden><span>▤</span> Document library</a>
+        <div class="sidebar-caption nav-group" data-private hidden>CLUB OPERATIONS</div>
         <a href="#events" data-page="events" data-private hidden><span>▦</span> Events</a>
         <a href="#calendar" data-page="calendar" data-private hidden><span>▦</span> Calendar</a>
         <a href="#announcements" data-page="announcements" data-private hidden><span>◈</span> Alerts</a>
+        <a href="#inventory" data-page="inventory" data-private hidden><span>▤</span> Inventory</a>
         <a href="#founder-room" data-page="founder-room" data-founder hidden><span>✦</span> Founder room</a>
         <a href="#investor-portal" data-page="investor-portal" data-investor hidden><span>◇</span> Investor portal</a>
+        <a href="#finance" data-page="finance" data-admin hidden><span>◈</span> Finance</a>
+        <a href="#finance-review" data-page="finance-review" data-founder-only hidden><span>✓</span> Finance review <i id="financeReviewBadge" hidden>0</i></a>
         <div class="sidebar-caption nav-group" data-admin hidden>ADMINISTRATION</div>
         <a href="#admin" data-page="admin" data-admin hidden><span>▧</span> Admin dashboard</a>
         <a href="#applications" data-page="applications" data-admin hidden><span>✓</span> Applications</a>
@@ -62,6 +64,7 @@
         <div class="crumb">INNOVATE<span class="brand-x">X</span><span class="crumb-separator">/</span><strong id="pageCrumb">Overview</strong></div>
         <a class="mobile-wordmark" href="#home" aria-label="InnovateX home"><span class="mobile-wordmark-long">INNOVATE</span><span class="mobile-wordmark-short">I</span><span class="brand-x">X</span></a>
         <div class="top-actions">
+          <button id="workspaceSearchButton" class="workspace-search-trigger" type="button" data-action="workspaceSearch" aria-label="Search workspace" title="Search workspace (Ctrl or Command + K)"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><span>Search</span><kbd>⌘ K</kbd></button>
           <button id="memberBell" class="admin-top-button member-bell" type="button" data-action="openMemberInbox" aria-label="Open club inbox" title="Club inbox" hidden>
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></svg>
             <span id="memberBellCount" class="admin-bell-count" hidden>0</span>
@@ -98,6 +101,6 @@
   <script src="config.js"></script>
   <script src="pwa-register.js?v=push-status-20260927" defer></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script type="module" src="app.js?v=sidebar-close-20260927"></script>
+  <script type="module" src="app.js?v=platform-20261001"></script>
 </body>
 </html>

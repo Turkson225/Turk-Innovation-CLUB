@@ -29,6 +29,13 @@ let channelPage = 0, channelTotal = 0, channelHistoryId = null, channelHistoryRo
 let dmPage = 0, dmTotal = 0, dmThreadPeer = null, dmThreadRows = [], dmThreadLoading = false, dmThreadError = '', dmRequest = 0;
 let dmFilterTerm = '';
 let dmListScrollTop = 0;
+let dmListView='chats',dmUpgradeChecked=false,dmRepliesReady=false,dmReactionsReady=false,dmInboxReady=false,dmReceiptsReady=false,dmReceiptsChecked=false;
+let dmInboxOffset=0,dmInboxMore=false,dmInboxLoading=false,dmHasMore=false,dmEarlierLoading=false,dmEmojiOpen=false,dmReactionTarget=null;
+let dmSearchOpen=false,dmSearchTerm='',dmSearchRows=[],dmSearchBusy=false,dmSearchError='',dmSearchRequest=0;
+const dmReplyRows=new Map(),dmPeerReceipts=new Map();
+let dmReactionRows=[];
+const dmReactionInFlight=new Set();
+const dmEmojis=['👍','❤️','😂','🎉','👀','🙌','✅','💡','🔧','🤖','🚀','😊'];
 const dmDrafts = new Map(), dmLatestMessages = new Map(), dmThreadCoveredNotices = new Map(), dmReadInFlight = new Set(), dmSendingPeers = new Set();
 let unreadCounts = {channels:{},direct_messages:{},direct_peers:[],direct_total:0}, unreadCountsReady = false;
 let calendarMonth = new Date(new Date().getFullYear(),new Date().getMonth(),1), calendarSelected = new Date();
@@ -531,41 +538,92 @@ async function loadChannelHistory(renderAfter=true){
   }catch(error){if(request===channelRequest)channelHistoryError=error?.message||'Could not load channel history.';}
   finally{if(request===channelRequest){channelHistoryLoading=false;if(renderAfter&&page==='channels')render();}}
 }
-async function loadDmThread(renderAfter=true){
-  if(!clubAccess()||!dmReady||!activePeerId||!session)return;
+async function loadDmCapabilities(){
+  if(!clubAccess()||!dmReady||dmUpgradeChecked)return;
+  const owner=session.user.id,generation=authGeneration;
+  const results=await Promise.allSettled([
+    db.from('direct_messages').select('reply_to_id').limit(1),
+    db.from('direct_message_reactions').select('message_id').limit(1),
+    db.rpc('club_dm_inbox',{p_limit:100,p_offset:0})
+  ]);
+  if(session?.user.id!==owner||generation!==authGeneration||!clubAccess())return;
+  dmUpgradeChecked=true;
+  dmRepliesReady=results[0].status==='fulfilled'&&!results[0].value.error;
+  dmReactionsReady=results[1].status==='fulfilled'&&!results[1].value.error;
+  const inbox=results[2].status==='fulfilled'?results[2].value:null;
+  dmInboxReady=!!inbox&&!inbox.error;
+  if(dmInboxReady){for(const row of inbox.data||[])dmLatestMessages.set(row.peer_id,{...row,id:row.message_id,recipient_id:row.sender_id===owner?row.peer_id:owner});dmInboxOffset=(inbox.data||[]).length;dmInboxMore=dmInboxOffset===100;}
+}
+async function loadDmInbox(reset=true){
+  if(!dmInboxReady||!clubAccess()||dmInboxLoading)return;
+  const owner=session.user.id,generation=authGeneration,offset=reset?0:dmInboxOffset;
+  dmInboxLoading=true;
+  try{
+    const {data,error}=await db.rpc('club_dm_inbox',{p_limit:100,p_offset:offset});
+    if(error)throw error;
+    if(session?.user.id!==owner||generation!==authGeneration||!clubAccess())return;
+    for(const row of data||[])dmLatestMessages.set(row.peer_id,{...row,id:row.message_id,recipient_id:row.sender_id===owner?row.peer_id:owner});
+    dmInboxOffset=offset+(data||[]).length;dmInboxMore=(data||[]).length===100;
+  }catch(error){console.error('Load conversations',error);}
+  finally{if(generation===authGeneration)dmInboxLoading=false;}
+}
+async function loadDmThread(renderAfter=true,earlier=false){
+  if(!clubAccess()||!dmReady||!activePeerId||!session||dmEarlierLoading)return;
   const peer=activePeerId,owner=session.user.id,request=++dmRequest;
   const coveredNotices=new Set((cache.notifications||[]).filter(n=>n.kind==='direct_message'&&n.target_id===peer).map(n=>n.id));
-  if(dmThreadPeer!==peer){dmThreadPeer=peer;dmPage=0;dmTotal=0;dmThreadRows=[];}
-  dmThreadLoading=true;dmThreadError='';
+  const stream=$('#dmStream'),priorTop=stream?.scrollTop||0,priorHeight=stream?.scrollHeight||0;
+  if(dmThreadPeer!==peer){dmThreadPeer=peer;dmPage=0;dmTotal=0;dmThreadRows=[];dmReactionRows=[];dmHasMore=false;dmReplyRows.clear();dmSearchOpen=false;dmSearchRows=[];}
+  const oldest=earlier?dmThreadRows[dmThreadRows.length-1]:null;
+  dmThreadLoading=!earlier;dmEarlierLoading=earlier;dmThreadError='';
   try{
-    const fetchThread=()=>db.from('direct_messages').select('*',{count:'exact'}).in('sender_id',[owner,peer]).in('recipient_id',[owner,peer]).order('created_at',{ascending:false}).order('id',{ascending:false}).range(dmPage*50,dmPage*50+49);
-    let result=await fetchThread();
+    let query=db.from('direct_messages').select('*',{count:'exact'}).in('sender_id',[owner,peer]).in('recipient_id',[owner,peer]).order('created_at',{ascending:false}).order('id',{ascending:false});
+    if(oldest)query=query.or(`created_at.lt.${oldest.created_at},and(created_at.eq.${oldest.created_at},id.lt.${oldest.id})`);
+    const result=await query.range(0,49);
     if(result.error)throw result.error;
-    if(result.count===null)throw Error('Could not count direct messages. Please retry.');
-    if(dmPage>0&&dmPage*50>=result.count){dmPage=Math.max(0,Math.ceil(result.count/50)-1);result=await fetchThread();if(result.error)throw result.error;}
     if(request!==dmRequest||activePeerId!==peer||session?.user.id!==owner||!clubAccess())return;
-    dmThreadRows=result.data||[];dmTotal=result.count||0;
+    if(result.count===null)throw Error('Could not load conversation history. Please retry.');
+    const rows=result.data||[];
+    const merged=new Map(dmThreadRows.map(m=>[m.id,m]));for(const row of rows)merged.set(row.id,row);
+    dmThreadRows=[...merged.values()].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)||String(b.id).localeCompare(String(a.id)));
+    if(!earlier)dmTotal=result.count;
+    dmHasMore=earlier?rows.length===50:dmThreadRows.length<dmTotal;
     dmThreadCoveredNotices.set(peer,coveredNotices);
-    if(dmPage===0&&dmThreadRows[0])dmLatestMessages.set(peer,dmThreadRows[0]);
+    if(dmThreadRows[0])dmLatestMessages.set(peer,dmThreadRows[0]);
+    if(dmRepliesReady){
+      const ids=[...new Set(dmThreadRows.map(m=>m.reply_to_id).filter(id=>id&&!merged.has(id)&&!dmReplyRows.has(id)))];
+      for(let offset=0;offset<ids.length;offset+=100){const parents=await db.from('direct_messages').select('*').in('id',ids.slice(offset,offset+100)).in('sender_id',[owner,peer]).in('recipient_id',[owner,peer]);if(!parents.error&&request===dmRequest&&session?.user.id===owner)for(const m of parents.data||[])dmReplyRows.set(m.id,m);}
+    }
+    if(dmReactionsReady&&dmThreadRows.length){
+      const reactions=await readRelatedRows('direct_message_reactions','message_id',dmThreadRows.map(m=>m.id),['message_id','user_id']);
+      if(request===dmRequest)dmReactionRows=reactions;
+    }
+    if(dmReceiptsReady||!dmReceiptsChecked){
+      const receipt=await db.rpc('club_dm_peer_read_at',{p_peer_id:peer});
+      if(request===dmRequest){dmReceiptsChecked=true;if(!receipt.error){dmReceiptsReady=true;dmPeerReceipts.set(peer,receipt.data);}}
+    }
     await hydrateMedia();
   }catch(error){if(request===dmRequest)dmThreadError=error?.message||'Could not load direct messages.';}
-  finally{if(request===dmRequest){dmThreadLoading=false;if(renderAfter&&page==='messages'){if(document.activeElement?.closest('#dmComposer'))dmShowThreadUpdate();else render();}}}
+  finally{
+    if(request===dmRequest){
+      dmThreadLoading=false;dmEarlierLoading=false;
+      if(renderAfter&&page==='messages'){
+        if(document.activeElement?.closest('#dmComposer'))dmShowThreadUpdate();else render();
+        if(earlier&&$('#dmStream'))$('#dmStream').scrollTop=priorTop+$('#dmStream').scrollHeight-priorHeight;
+      }
+    }
+  }
 }
 async function refreshDmAfterNotification(peerId){
   if(!clubAccess()||!dmReady||!peerId||!session)return;
   const owner=session.user.id;
   await refreshUnreadCounts();
-  if(session?.user.id!==owner||page!=='messages'||document.hidden)return;
-  if(activePeerId===peerId){await loadDmThread();return;}
+  if(session?.user.id!==owner||document.hidden)return;
+  if(page==='messages'&&activePeerId===peerId){await loadDmThread();return;}
   const {data,error}=await db.from('direct_messages').select('*').in('sender_id',[owner,peerId]).in('recipient_id',[owner,peerId]).order('created_at',{ascending:false}).order('id',{ascending:false}).limit(1);
   if(error){console.error('Conversation preview',error);return;}
-  if(session?.user.id!==owner||page!=='messages')return;
-  if(data?.[0]){
-    dmLatestMessages.set(peerId,data[0]);
-    cache.direct_messages=[data[0],...(cache.direct_messages||[]).filter(m=>m.id!==data[0].id)].slice(0,120);
-  }
-  if(document.activeElement?.closest('#dmComposer'))dmPeerPreview(peerId,data?.[0]);
-  else render();
+  if(session?.user.id!==owner)return;
+  if(data?.[0]){dmLatestMessages.set(peerId,data[0]);cache.direct_messages=[data[0],...(cache.direct_messages||[]).filter(m=>m.id!==data[0].id)].slice(0,120);}
+  if(page==='messages'){if(document.activeElement?.closest('#dmComposer'))dmPeerPreview(peerId,data?.[0]);else render();}
 }
 async function refreshUnreadCounts(){
   if(!session||!clubAccess())return;
@@ -579,7 +637,7 @@ async function refreshUnreadCounts(){
   const badge=$('#dmBadge');if(badge){badge.textContent=unreadCounts.direct_total;badge.hidden=!unreadCounts.direct_total;}
   for(const [selector,key,target] of [['[data-action="selectChannel"]','channels','strong'],['[data-action="openDm"]','direct_messages','button']]){
     for(const item of document.querySelectorAll(selector)){
-      const parent=target==='button'?item:item.querySelector(target),value=Number(unreadCounts[key][item.dataset.id]||0);
+      const parent=target==='button'?(item.querySelector('.dm-peer-meta')||item):item.querySelector(target),value=Number(unreadCounts[key][item.dataset.id]||0);
       if(!parent)continue;
       let chip=parent.querySelector('.unread-badge');
       if(!value){chip?.remove();continue;}
@@ -592,7 +650,7 @@ async function refreshUnreadCounts(){
 // Keep the complete load for sign-in and mutations. Background checks only revisit
 // data used by the visible page, while the separate chat and approval loops stay focused.
 const pageRefreshDependencies={
-  home:['project_tasks','courses','course_enrollments','course_submissions','course_completions','events'],
+  home:['project_tasks','courses','course_enrollments','course_submissions','course_completions','events','activity_posts','profiles'],
   about:[],founders:['founders'],investors:['founders','investor_updates'],
   privacy:['privacy_requests','profiles'],application:[],
   admin:['profiles','projects','reports','privacy_requests','investor_inquiries','activity_posts','founder_meetings','events','channels','news_posts','documents','audit_events'],
@@ -729,7 +787,8 @@ async function refresh(mode='full') {
   await refreshUnreadCounts();
   if(page==='feed'&&feedReady)await loadFeedPage(false);
   if(page==='channels'&&communityReady&&activeChannelId)await loadChannelHistory(false);
-  if(page==='messages'&&dmReady&&activePeerId)await loadDmThread(false);
+  if(dmReady&&!dmUpgradeChecked)await loadDmCapabilities();
+  if(page==='messages'&&dmReady){if(dmInboxReady)await loadDmInbox();if(activePeerId)await loadDmThread(false);}
   if(!scoped){
     const {error:mediaError}=feedReady?await db.from('activity_posts').select('image_path').limit(1):{error:true};
     mediaReady=!mediaError;
@@ -770,11 +829,12 @@ async function touchPresence(online=true) {
 async function signedIn(newSession) {
   const generation=++authGeneration;
   closeImageViewer(false);
+  if($('#workspaceSearchInput'))close();
   session=newSession;
   inboxUnreadCount=null;inboxCountRequest++;dismissMemberAlert();memberDeferredNotification=null;memberNotificationPrimed=false;
   unreadCounts={channels:{},direct_messages:{},direct_peers:[],direct_total:0};unreadCountsReady=false;
   for(const draft of dmDrafts.values())clearDmDraftFile(draft);
-  dmDrafts.clear();dmLatestMessages.clear();dmThreadCoveredNotices.clear();dmReadInFlight.clear();dmSendingPeers.clear();dmFilterTerm='';dmListScrollTop=0;activePeerId=null;dmRequest++;
+  dmDrafts.clear();dmLatestMessages.clear();dmThreadCoveredNotices.clear();dmReplyRows.clear();dmPeerReceipts.clear();dmReactionRows=[];dmUpgradeChecked=false;dmRepliesReady=false;dmReactionsReady=false;dmInboxReady=false;dmReceiptsReady=false;dmReceiptsChecked=false;dmInboxOffset=0;dmInboxMore=false;dmInboxLoading=false;dmHasMore=false;dmEarlierLoading=false;dmReactionInFlight.clear();dmSearchTerm='';dmSearchBusy=false;dmSearchError='';dmListView='chats';dmEmojiOpen=false;dmSearchOpen=false;dmSearchRows=[];dmSearchRequest++;dmReadInFlight.clear();dmSendingPeers.clear();dmFilterTerm='';dmListScrollTop=0;activePeerId=null;dmRequest++;
   applicationVerification=new Map();applicationsOwner=null;feedOwner=null;channelHistoryId=null;dmThreadPeer=null;
   applicationRows=[];approvedAccountRows=[];channelHistoryRows=[];dmThreadRows=[];
   authReady=true;
@@ -807,7 +867,7 @@ async function signedIn(newSession) {
     pollTimer=setInterval(refreshVisiblePage,45000);
     if(approved()){
       presenceTimer=setInterval(()=>{if(!document.hidden)void touchPresence();},20000);
-      if(clubAccess())chatTimer=setInterval(()=>{if(!document.hidden)void refreshChat();},9000);
+      if(clubAccess())chatTimer=setInterval(()=>{if(document.hidden)return;if(page==='messages'){if(activePeerId&&!dmThreadLoading&&!dmEarlierLoading)void loadDmThread();void refreshUnreadCounts();}else if(page==='channels')void refreshChat();},9000);
     }
     if(communityReady && clubAccess()) chatRealtime=db.channel('innovatex-chat')
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'channel_messages'},refreshChat).subscribe();
@@ -861,6 +921,9 @@ async function init() {
   $('#modal').addEventListener('click',e=>{ if(e.target===$('#modal')) close(); });
   $('.modal-close').onclick=close;
   setupImageViewer();
+  updateDmViewport();
+  window.visualViewport?.addEventListener('resize',updateDmViewport);
+  window.visualViewport?.addEventListener('scroll',updateDmViewport);
   window.addEventListener('hashchange',route);
   window.addEventListener('hashchange',()=>{
     if(session&&authReady&&!document.hidden&&!['feed','channels','messages','applications'].includes(page))void refreshVisiblePage();
@@ -868,6 +931,13 @@ async function init() {
   $('#authButton').onclick=()=>session ? signOut() : signInDialog();
   document.addEventListener('click',actions);
   document.addEventListener('keydown',e=>{
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openWorkspaceSearch();return;}
+    if(e.target.id==='workspaceSearchInput'||e.target.closest?.('.workspace-search-results')){
+      const input=$('#workspaceSearchInput'),rows=[...document.querySelectorAll('.workspace-search-result')],current=rows.indexOf(document.activeElement);
+      if(e.key==='ArrowDown'){e.preventDefault();rows[Math.min(current+1,rows.length-1)]?.focus();return;}
+      if(e.key==='ArrowUp'){e.preventDefault();if(current<=0)input?.focus();else rows[current-1]?.focus();return;}
+      if(e.key==='Enter'&&e.target===input){e.preventDefault();rows[0]?.click();return;}
+    }
     if(e.target.id==='dmBody'&&e.key==='Enter'&&!e.shiftKey&&!e.isComposing){
       e.preventDefault();e.target.form?.requestSubmit();return;
     }
@@ -882,7 +952,8 @@ async function init() {
   document.addEventListener('scroll',e=>{
     if(e.target.id==='dmStream'&&page==='messages'&&activePeerId&&dmPage===0)void markDmRead(activePeerId);
   },true);
-  document.addEventListener('input',e=>{if(e.target.id==='dmFilter'){dmFilterTerm=e.target.value;const term=dmFilterTerm.toLowerCase();document.querySelectorAll('.dm-peer').forEach(b=>b.hidden=!b.querySelector('strong')?.textContent.toLowerCase().includes(term));}
+  document.addEventListener('input',e=>{if(e.target.id==='workspaceSearchInput')updateWorkspaceSearch(e.target.value);
+    if(e.target.id==='dmFilter'){dmFilterTerm=e.target.value;const term=dmFilterTerm.toLowerCase();document.querySelectorAll('.dm-peer').forEach(b=>b.hidden=!b.querySelector('strong')?.textContent.toLowerCase().includes(term));}
     if(e.target.id==='dmBody'&&activePeerId){dmDraftFor(activePeerId).text=e.target.value;resizeDmTextarea(e.target);}
     if(e.target.id==='inventorySearch'){inventorySearchTerm=e.target.value;applyInventorySearch();}
   });
@@ -938,6 +1009,15 @@ async function installInnovateX(){
   modal(`<span class="eyebrow">INNOVATEX ON YOUR PHONE</span><h2>Install the club app</h2><p>Keep InnovateX on your home screen and open it without a browser tab.</p><ol class="install-steps">${directions}</ol><p class="subtle">Chats, courses, account approvals and shared files still need an internet connection.</p>`);
 }
 function updateThemeButton(){const dark=document.documentElement.dataset.theme==='dark';$('#themeButton').textContent=dark?'☀':'☾';$('#themeButton').setAttribute('aria-label',dark?'Switch to light theme':'Switch to dark theme');}
+
+function updateDmViewport(){
+  const viewport=window.visualViewport,style=document.documentElement?.style;
+  if(!viewport||!style||viewport.scale!==1)return;
+  const stream=$('#dmStream'),atBottom=stream&&stream.scrollHeight-stream.scrollTop-stream.clientHeight<96;
+  style.setProperty('--dm-viewport-top',Math.round(viewport.offsetTop+64)+'px');
+  style.setProperty('--dm-viewport-height',Math.max(120,Math.round(viewport.height-64))+'px');
+  if(page==='messages'&&atBottom)requestAnimationFrame(()=>{if(stream.isConnected)stream.scrollTop=stream.scrollHeight;});
+}
 function setSidebarOpen(open){
   $('#sidebar').classList.toggle('open',open);
   $('#menuBtn').setAttribute('aria-expanded',String(open));
@@ -961,12 +1041,13 @@ function route() {
   if(page==='finance-review'&&authReady&&!founderOnly()){page=admin()?'finance':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
   if(page==='founder-room'&&authReady&&!founder()){page='founders';history.replaceState(null,'','#founders');show('Founder access required.');}
   if(['admin','applications','moderation'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
+  if(page==='messages'){const peer=location.hash.slice(1).split('/')[1]||'';const next=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(peer)?peer:null;if(next!==activePeerId){activePeerId=next;dmRequest++;dmSearchRequest++;dmThreadLoading=false;dmEarlierLoading=false;dmSearchOpen=false;dmSearchBusy=false;dmReactionTarget=null;dmEmojiOpen=false;}}
   setSidebarOpen(false);render();
   if(protectedGuestPage&&(authReady||!configured))signInDialog('signin');
   if(page==='applications'&&admin())void loadAdminApplicationPages();
   if(page==='feed'&&feedReady)void loadFeedPage();
   if(page==='channels'&&communityReady&&activeChannelId)void loadChannelHistory();
-  if(page==='messages'&&dmReady&&activePeerId)void loadDmThread();
+  if(page==='messages'&&dmReady){if(dmInboxReady)void loadDmInbox().then(()=>{if(page==='messages'&&!activePeerId)render();});if(activePeerId)void loadDmThread();}
 }
 function render() {
   const previousDmStream=page==='messages'?$('#dmStream'):null;
@@ -975,6 +1056,7 @@ function render() {
   const sameDmThread=previousDmStream?.dataset.peer===activePeerId&&Number(previousDmStream.dataset.page)===dmPage;
   const dmWasAtBottom=sameDmThread&&previousDmStream.scrollHeight-previousDmStream.scrollTop-previousDmStream.clientHeight<96;
   const dmScrollTop=sameDmThread?previousDmStream.scrollTop:0;
+  $('#workspaceSearchButton')?.setAttribute('aria-label',clubAccess()?'Search workspace':'Find a page');
   $('#authButton').textContent=session?'Sign out':'Join / sign in';
   $('#connectionLabel').textContent=!configured?'Setup required':session&&!approved()?'Application pending':investor()?'Investor portal live':session?'Member workspace live':'Public preview';
   $('#accountBadge').hidden=!approved();$('#accountBadge').innerHTML=approved()?roleBadge(me):'';
@@ -1005,12 +1087,70 @@ function render() {
   $('#content').classList.toggle('view-enter',page!==lastRenderedPage);lastRenderedPage=page;
   if(page==='channels'){const stream=$('#messageStream');if(stream)stream.scrollTop=channelPage>0?0:stream.scrollHeight;if(channelPage===0&&activeChannelId&&enhancedReady)markChannelRead(activeChannelId);}
   if(page==='messages'){
+    updateDmViewport();
     const list=$('.dm-list');if(list)list.scrollTop=dmListScrollTop;
     const stream=$('#dmStream');
     if(stream)stream.scrollTop=sameDmThread&&!dmWasAtBottom?dmScrollTop:dmPage>0?0:stream.scrollHeight;
     resizeDmTextarea($('#dmBody'));
     if(stream&&dmPage===0&&activePeerId&&dmReady&&!dmThreadLoading&&!dmThreadError)void markDmRead(activePeerId);
   }
+}
+
+function workspaceSearchItems(){
+  const result=[],add=(key,label,meta,page,action='',id='',text='')=>result.push({key,label,meta,page,action,id,text:label+' '+meta+' '+text});
+  const destinations=[['home','Home','Your workspace'],['about','About the club','Our mission and vision'],['founders','Founders','Meet the founding team'],['privacy','Privacy & conduct','Profile choices and data requests']];
+  if(session&&!approved())destinations.push(['application','My application','Check your membership request']);
+  if(clubAccess())destinations.push(['feed','Activity feed','Build updates and conversations'],['messages','Messages','Private conversations'],['channels','Team channels','Discuss and share files'],['members','Members','Find a collaborator'],['courses','Courses','Your practical learning plan'],['projects','Projects','Plans, tasks and progress'],['library','Document library','Shared resources'],['news','Technology news','Ideas worth exploring'],['calendar','Calendar','Workshops and deadlines'],['events','Events','Club meetups and sessions'],['notifications','Inbox','Your notifications'],['announcements','Alerts','Club announcements'],['discussions','Discussions','Questions and ideas'],['inventory','Inventory','Club tools and components']);
+  if(teacher())destinations.push(['teaching','Teaching studio','Workshops, students and feedback']);
+  if(founder())destinations.push(['founder-room','Founder room','Meetings and decisions'],['investors','Investors','Club partnerships']);
+  if(founderOnly())destinations.push(['finance-review','Finance review','Review club transactions']);
+  if(investor()||admin())destinations.push(['investor-portal','Investor portal','Approved investor updates']);
+  if(admin())destinations.push(['admin','Admin dashboard','Club oversight'],['applications','Applications','Review new accounts'],['moderation','Moderation','Review reports'],['finance','Finance','Funds and records']);
+  for(const [id,label,meta] of destinations)add('page:'+id,label,meta,id);
+  if(!clubAccess())return result;
+  for(const c of cache.courses||[])add('course:'+c.id,c.title,'Workshop · '+courseTrackFor(c),'courses','focusCourse',c.id,c.description||'');
+  for(const p of cache.projects||[])add('project:'+p.id,p.title,'Project · '+(p.status||'planning'),'projects','projectDetail',p.id,p.summary||'');
+  for(const p of cache.profiles||[])if(p.membership_status==='approved'&&p.role!=='investor')add('member:'+p.id,p.full_name,'Member · '+(p.headline||p.role),'members','memberProfile',p.id);
+  for(const e of cache.events||[])add('event:'+e.id,e.title,'Event · '+dateTime(e.starts_at),'events','event',e.id,e.description||'');
+  for(const d of cache.documents||[])add('document:'+d.id,d.title,'Document · Open file','library','document',d.id,d.description||'');
+  for(const n of cache.news_posts||[])if(n.status==='published')add('news:'+n.id,n.title,'Technology news · Open news page','news','',n.id,n.summary||'');
+  return result;
+}
+function workspaceSearchMatches(term=''){
+  const words=String(term).trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  return workspaceSearchItems().filter(r=>words.every(word=>r.text.toLocaleLowerCase().includes(word))).slice(0,30);
+}
+function updateWorkspaceSearch(term=''){
+  const target=$('#workspaceSearchResults');if(!target)return;
+  const matches=workspaceSearchMatches(term);
+  target.innerHTML=matches.length?matches.map(r=>`<button type="button" class="workspace-search-result" data-action="workspaceResult" data-key="${esc(r.key)}"><span><strong>${esc(r.label)}</strong><small>${esc(r.meta)}</small></span>${iconSvg(r.page)}</button>`).join(''):empty('No matches','Try a name, workshop or project, or open its page from the sidebar.');
+  const status=$('#workspaceSearchStatus');if(status)status.textContent=matches.length?`${matches.length}${matches.length===30?' or more':''} results`:'No results';
+}
+function openWorkspaceSearch(){
+  if($('#modal').open&&!$('#workspaceSearchInput'))return;
+  if(!$('#workspaceSearchInput'))modal('<span class="eyebrow">FIND YOUR NEXT MOVE</span><h2>Search workspace</h2><p class="subtle">Find pages and loaded club records you have access to.</p><label class="sr-only" for="workspaceSearchInput">Search pages, members, workshops and projects</label><input id="workspaceSearchInput" class="workspace-search-input" type="search" placeholder="A workshop, teammate, project…" autocomplete="off"><p id="workspaceSearchStatus" class="sr-only" role="status" aria-live="polite"></p><div id="workspaceSearchResults" class="workspace-search-results"></div>');
+  updateWorkspaceSearch($('#workspaceSearchInput')?.value||'');$('#workspaceSearchInput')?.focus();
+}
+function openWorkspaceCourse(id){
+  if(!clubAccess()||!(cache.courses||[]).some(c=>c.id===id))return;
+  if($('#modal').open)close();
+  const enrolled=(cache.course_enrollments||[]).some(e=>e.course_id===id&&e.learner_id===session?.user.id);
+  courseView=enrolled?'mine':'explore';activeCourseId=enrolled?id:null;
+  courseDetailView='overview';courseTrack='all';location.hash='#courses';render();
+  setTimeout(()=>{const target=document.getElementById(`course-${id}`);target?.querySelector('h2,h3')?.focus({preventScroll:true});target?.scrollIntoView({behavior:'smooth',block:'center'});},80);
+}
+function homeAgendaMarkup(userId,activeIds,assigned){
+  const now=Date.now(),items=[],seen=new Set(),myCourseIds=new Set([...activeIds,...assigned.map(c=>c.id)]);
+  const add=(id,title,at,label,kind)=>{const stamp=new Date(at).getTime();if(!at||!Number.isFinite(stamp)||seen.has(kind+id))return;if(stamp<now&&!['task','course_due'].includes(kind))return;seen.add(kind+id);items.push({id,title,at,label,kind,stamp});};
+  for(const e of cache.events||[])add(e.id,e.title,e.starts_at,'Club event','event');
+  for(const c of cache.courses||[])if(myCourseIds.has(c.id)){add(c.id,c.title,c.starts_at,'Practical workshop','course');if(coursePlanningReady)add(c.id,c.title,c.submission_due_at,'Project deadline','course_due');}
+  for(const t of cache.project_tasks||[])if(t.assignee_id===userId&&t.status!=='done')add(t.id,t.title,t.due_at,'Your project task','task');
+  if(founder())for(const m of cache.founder_meetings||[])add(m.id,m.title,m.starts_at,'Founder meeting','meeting');
+  const upcoming=items.sort((a,b)=>a.stamp-b.stamp).slice(0,5);
+  const agenda=upcoming.length?upcoming.map(item=>{const d=new Date(item.at);return `<button type="button" class="home-agenda-item" data-action="calendarItem" data-kind="${item.kind}" data-id="${esc(item.id)}"><span class="home-agenda-date"><b>${d.getDate()}</b><small>${esc(d.toLocaleDateString(undefined,{month:'short'}))}</small></span><div><strong>${esc(item.title)}</strong><small>${esc(item.label)} · ${item.stamp<now?'Past due · ':''}${esc(dateTime(item.at))}</small></div><span aria-hidden="true">↗</span></button>`;}).join(''):empty('Room for the next build','Your scheduled workshops, events and assigned deadlines will appear here.');
+  const posts=(cache.activity_posts||[]).slice().sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,4);
+  const recent=posts.length?posts.map(post=>`<a class="home-recent-item" href="#feed">${memberAvatar(post.author_id)}<div><strong>${esc(post.title||post.category||'Club update')}</strong><p>${esc(String(post.body||'').slice(0,130))}${String(post.body||'').length>130?'…':''}</p><small>${esc(memberName(post.author_id))} · ${esc(date(post.created_at))}</small></div></a>`).join(''):`<div class="empty-state"><h3>Share what you’re building</h3><p>A question, a prototype or a useful resource can get the next conversation started.</p><a href="#feed" class="link">Open the activity feed →</a></div>`;
+  return `<div class="home-workspace-columns"><section><div class="section-heading"><div><span class="eyebrow">ON YOUR HORIZON</span><h2>Your agenda</h2></div><a class="link" href="#calendar">Calendar →</a></div><div class="home-agenda">${agenda}</div></section><section><div class="section-heading"><div><span class="eyebrow">FROM THE CLUB</span><h2>On the workbench</h2></div><a class="link" href="#feed">Feed →</a></div><div class="home-agenda">${recent}</div></section></div>`;
 }
 function homeFocusCard(icon,label,title,detail,href,action='Open details',urgent=false){
   return `<a class="home-focus-card ${urgent?'is-urgent':''}" href="${href}"><span class="home-focus-icon">${iconSvg(icon)}</span><span class="home-focus-label">${esc(label)}</span><strong>${esc(title)}</strong><span class="home-focus-detail">${esc(detail)}</span><span class="home-focus-action">${esc(action)} →</span></a>`;
@@ -1030,7 +1170,7 @@ function personalHome(){
   const event=(cache.events||[]).filter(e=>new Date(e.starts_at).getTime()>=now).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at))[0];
   const notifications=(cache.notifications||[]).filter(n=>!n.read_at).length;
   const unreadMessages=unreadCountsReady?unreadCounts.direct_total+Object.values(unreadCounts.channels).reduce((sum,n)=>sum+(Number(n)||0),0):null;
-  const assigned=(cache.courses||[]).filter(c=>c.instructor_id===userId),assignedIds=new Set(assigned.map(c=>c.id));
+  const assigned=teacher()?(cache.courses||[]).filter(c=>c.instructor_id===userId):[],assignedIds=new Set(assigned.map(c=>c.id));
   const reviews=courseReady?(cache.course_submissions||[]).filter(s=>assignedIds.has(s.course_id)&&s.review_status==='submitted'):[];
   const teachingDate=assigned.flatMap(c=>[{title:c.title,at:c.starts_at,label:'Workshop starts'},{title:c.title,at:coursePlanningReady?c.submission_due_at:null,label:'Project deadline'}]).filter(x=>x.at&&new Date(x.at).getTime()>=now).sort((a,b)=>new Date(a.at)-new Date(b.at))[0];
   const meeting=founder()?(cache.founder_meetings||[]).filter(m=>new Date(m.starts_at).getTime()>=now).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at))[0]:null;
@@ -1058,6 +1198,7 @@ function personalHome(){
   <div class="home-glance"><a href="#courses"><small>Courses in your plan</small><strong>${courseReady?enrollments.length:'—'}</strong><span>Explore your workshops →</span></a><a href="#events"><small>Next club event</small><strong class="home-glance-date">${esc(event?date(event.starts_at):'To be announced')}</strong><span>${esc(event?.title||'See the calendar')} →</span></a><a href="#notifications"><small>Unread alerts</small><strong>${notifications}</strong><span>Open inbox →</span></a><a href="#channels"><small>Unread messages</small><strong>${unreadMessages??'—'}</strong><span>${unreadMessages===null?'Open member channels':'Open conversations'} →</span></a></div>
   ${queue.length?`<div class="section-heading"><div><span class="eyebrow">NEEDS YOUR ATTENTION</span><h2>${priority}</h2></div></div><div class="home-focus-grid home-role-grid">${queue.join('')}</div>`:''}
   <div class="section-heading"><div><span class="eyebrow">YOUR NEXT MOVES</span><h2>Learning and projects</h2></div><a class="link" href="#calendar">See full calendar →</a></div><div class="home-focus-grid">${focus.join('')}</div>
+  ${homeAgendaMarkup(userId,activeIds,assigned)}
   <div class="section-heading"><div><span class="eyebrow">BUILD TOGETHER</span><h2>Stay in the conversation</h2></div></div><div class="home-community-links"><a href="#feed">Share a build update <span>Activity feed →</span></a><a href="#channels">Ask your team <span>Member channels →</span></a><a href="#library">Find a resource <span>Document library →</span></a></div>`;
 }
 function home() {
@@ -1165,7 +1306,7 @@ function memberProfile(id) {
   }).catch(console.error);
 }
 function dmDraftFor(peerId){
-  if(!dmDrafts.has(peerId))dmDrafts.set(peerId,{text:'',file:null,url:''});
+  if(!dmDrafts.has(peerId))dmDrafts.set(peerId,{text:'',file:null,url:'',reply:null});
   return dmDrafts.get(peerId);
 }
 function clearDmDraftFile(draft){
@@ -1192,22 +1333,39 @@ function dmDayLabel(value){
   yesterday.setDate(today.getDate()-1);
   return day.toDateString()===today.toDateString()?'Today':day.toDateString()===yesterday.toDateString()?'Yesterday':date(value);
 }
-function dmMessageMarkup(message,peer){
+
+function dmIcon(kind){
+  const paths={back:'<path d="m15 18-6-6 6-6"/>',search:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>',image:'<rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1"/><path d="m3 17 5-5 4 4 3-3 6 6"/>',emoji:'<circle cx="12" cy="12" r="9"/><path d="M8 14a4 4 0 0 0 8 0M8 9h.01M16 9h.01"/>',send:'<path d="m21 3-7 18-4-7-7-4 18-7ZM10 14 21 3"/>',check:'<path d="m5 12 4 4L19 6"/>',read:'<path d="m2 12 4 4L16 6m-5 8 2 2L23 6"/>'};
+  return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[kind]||paths.search}</svg>`;
+}
+function dmFindMessage(id){return dmThreadRows.find(m=>m.id===id)||dmReplyRows.get(id)||dmSearchRows.find(m=>m.id===id);}
+function dmQuoteMarkup(message,peer){
+  if(!message.reply_to_id)return '';
+  const parent=dmFindMessage(message.reply_to_id);
+  return `<div class="dm-quote"><strong>${esc(parent?(parent.sender_id===session.user.id?'You':peer.full_name):'Earlier message')}</strong><span>${esc(parent?dmPreviewText(parent):'Message unavailable')}</span></div>`;
+}
+function dmMessageMarkup(message,peer,grouped=false){
   const mine=message.sender_id===session.user.id,photo=mediaUrl(message.image_path);
   const image=message.image_path?(photo?`<a href="${esc(photo)}" data-action="viewImage" data-media-path="${esc(message.image_path)}" data-caption="Image shared in this conversation" target="_blank" rel="noopener noreferrer" aria-label="View private image full screen"><img class="dm-photo" src="${esc(photo)}" loading="lazy" alt="Image shared in this conversation"></a>`:'<span class="subtle">Loading photo…</span>'):'';
   const body=message.image_path&&message.body==='Shared an image'?'':`<p>${esc(message.body)}</p>`;
   const when=new Date(message.created_at).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
-  return `<div class="dm-bubble ${mine?'mine':''}" data-message-id="${esc(message.id)}">${mine?'':memberAvatar(peer.id)}<div>${body}${image}<small>${esc(when)}</small></div></div>`;
+  const read=mine&&dmReceiptsReady&&new Date(dmPeerReceipts.get(peer.id)||0)>=new Date(message.created_at);
+  const groups=new Map();
+  for(const reaction of dmReactionRows.filter(r=>r.message_id===message.id)){const item=groups.get(reaction.emoji)||{count:0,mine:false};item.count++;item.mine||=reaction.user_id===session.user.id;groups.set(reaction.emoji,item);}
+  const reactions=groups.size?`<div class="dm-reactions">${[...groups].map(([emoji,r])=>`<button type="button" data-action="dmReact" data-id="${esc(message.id)}" data-emoji="${esc(emoji)}" aria-pressed="${r.mine}" aria-label="${esc(emoji)} reaction, ${r.count}">${esc(emoji)} <small>${r.count}</small></button>`).join('')}</div>`:'';
+  const actions=`<div class="dm-message-actions">${dmRepliesReady?`<button type="button" data-action="dmReply" data-id="${esc(message.id)}">Reply</button>`:''}${dmReactionsReady?`<button type="button" data-action="dmReactMenu" data-id="${esc(message.id)}" aria-expanded="${dmReactionTarget===message.id}">React</button>`:''}<button type="button" data-action="dmCopy" data-id="${esc(message.id)}">Copy</button></div>`;
+  const picker=dmReactionTarget===message.id?`<div class="dm-reactions">${dmEmojis.slice(0,6).map(emoji=>`<button type="button" data-action="dmReact" data-id="${esc(message.id)}" data-emoji="${esc(emoji)}" aria-label="React with ${esc(emoji)}">${esc(emoji)}</button>`).join('')}</div>`:'';
+  return `<div class="dm-bubble ${mine?'mine':''} ${grouped?'grouped':''}" data-message-id="${esc(message.id)}">${mine?'':memberAvatar(peer.id)}<div>${dmQuoteMarkup(message,peer)}${body}${image}<div class="dm-message-meta"><time datetime="${esc(message.created_at)}">${esc(when)}</time>${mine?`<span class="dm-message-status ${read?'read':''}" aria-label="${read?'Read':'Sent'}" title="${read?'Read':'Sent'}">${dmIcon(read?'read':'check')}</span>`:''}</div>${reactions}${actions}${picker}</div></div>`;
 }
 function dmStreamMarkup(peer,history){
   const thread=dmThreadFor(peer.id,history);
-  if(!thread.length)return dmThreadLoading?empty('Loading messages','Fetching this part of the conversation…'):empty('Start a conversation','Send a message about a club project or upcoming event.');
-  let day='';
-  return thread.map(message=>{
-    const key=new Date(message.created_at).toDateString();
+  if(!thread.length)return dmThreadLoading?empty('Loading your conversation','Fetching messages…'):empty('A conversation starts here','Say hello, share a build or ask a question.');
+  let day='',previous=null;
+  const earlier=dmHasMore?`<div class="dm-history-loader"><button type="button" class="text-button" data-action="loadDmEarlier" ${dmThreadLoading||dmEarlierLoading?'disabled':''}>${dmEarlierLoading?'Loading earlier messages…':'Load earlier messages'}</button></div>`:'';
+  return earlier+thread.map(message=>{
+    const key=new Date(message.created_at).toDateString(),grouped=key===day&&previous?.sender_id===message.sender_id&&new Date(message.created_at)-new Date(previous.created_at)<300000;
     const label=key!==day?`<div class="dm-day"><span>${esc(dmDayLabel(message.created_at))}</span></div>`:'';
-    day=key;
-    return label+dmMessageMarkup(message,peer);
+    day=key;previous=message;return label+dmMessageMarkup(message,peer,grouped);
   }).join('');
 }
 function dmPreviewText(message){
@@ -1216,49 +1374,80 @@ function dmPreviewText(message){
   return message.body||'';
 }
 function dmPeerPreview(peerId,message){
-  const row=[...document.querySelectorAll('.dm-peer[data-id]')].find(item=>item.dataset.id===peerId);
-  const preview=row?.querySelector('small');
-  if(preview&&message)preview.textContent=dmPreviewText(message);
+  const row=[...document.querySelectorAll('.dm-peer[data-id]')].find(item=>item.dataset.id===peerId),preview=row?.querySelector('.dm-peer-copy small');
+  if(preview&&message)preview.textContent=(message.sender_id===session?.user.id?'You: ':'')+dmPreviewText(message);
 }
 function dmShowThreadUpdate(forceBottom=false){
   if(page!=='messages'||!activePeerId)return;
   const stream=$('#dmStream');
-  if(!stream||stream.dataset.peer!==activePeerId||Number(stream.dataset.page)!==dmPage){
-    render();
-    if(forceBottom&&$('#dmStream'))$('#dmStream').scrollTop=$('#dmStream').scrollHeight;
-    return;
-  }
-  const nearBottom=stream.scrollHeight-stream.scrollTop-stream.clientHeight<96;
-  const priorTop=stream.scrollTop;
+  if(!stream||stream.dataset.peer!==activePeerId){render();if(forceBottom&&$('#dmStream'))$('#dmStream').scrollTop=$('#dmStream').scrollHeight;return;}
+  const nearBottom=stream.scrollHeight-stream.scrollTop-stream.clientHeight<96,priorTop=stream.scrollTop;
   const peer=(cache.profiles||[]).find(p=>p.id===activePeerId)||{id:activePeerId,full_name:'Private member'};
   stream.innerHTML=dmStreamMarkup(peer,cache.direct_messages||[]);
-  stream.scrollTop=dmPage===0&&(nearBottom||forceBottom)?stream.scrollHeight:priorTop;
+  stream.scrollTop=nearBottom||forceBottom?stream.scrollHeight:priorTop;
   dmPeerPreview(activePeerId,dmLastMessage(activePeerId,cache.direct_messages||[]));
-  if(dmPage===0&&!dmThreadLoading&&!dmThreadError)void markDmRead(activePeerId);
+  if(!dmThreadLoading&&!dmThreadError)void markDmRead(activePeerId);
 }
-function messages() {
+function dmSearchMarkup(peer){
+  if(!dmSearchOpen)return '';
+  return `<div class="dm-search-panel"><form id="dmSearchForm" data-peer="${esc(peer.id)}"><label class="sr-only" for="dmSearchInput">Search this conversation</label><input id="dmSearchInput" name="query" type="search" maxlength="120" value="${esc(dmSearchTerm)}" placeholder="Search this conversation"><button type="submit" class="text-button" ${dmSearchBusy?'disabled':''}>${dmSearchBusy?'Searching…':'Search'}</button><button type="button" class="text-button" data-action="toggleDmSearch" aria-label="Close message search">×</button></form>${dmSearchError?`<p class="subtle" role="status">${esc(dmSearchError)}</p>`:dmSearchTerm&&!dmSearchBusy?`<div class="dm-search-results">${dmSearchRows.length?dmSearchRows.map(m=>`<article><small>${esc(m.sender_id===session.user.id?'You':peer.full_name)} · ${esc(dateTime(m.created_at))}</small><p>${esc(dmPreviewText(m))}</p>${dmRepliesReady?`<button type="button" class="text-button" data-action="dmReply" data-id="${esc(m.id)}">Reply to this message</button>`:''}</article>`).join(''):'<p class="subtle">No matching messages.</p>'}${dmSearchRows.length===50?'<p class="subtle">Showing the latest 50 matches. Refine your search to find older messages.</p>':''}</div>`:''}</div>`;
+}
+function messages(){
   if(!dmReady)return head('MEMBER CONNECTIONS','Direct messages','Private conversations with club members.')+communityNotice();
-  const history=cache.direct_messages||[];
-  const peers=new Set(history.map(m=>m.sender_id===session.user.id?m.recipient_id:m.sender_id));
+  const history=cache.direct_messages||[],peers=new Set(history.map(m=>m.sender_id===session.user.id?m.recipient_id:m.sender_id));
   if(unreadCountsReady)for(const id of unreadCounts.direct_peers)peers.add(id);
   for(const id of dmLatestMessages.keys())peers.add(id);
+  for(const [id,draft] of dmDrafts)if(draft.text||draft.file||draft.reply)peers.add(id);
   const people=(cache.profiles||[]).filter(p=>p.id!==session.user.id&&p.membership_status==='approved'&&p.role!=='investor');
   for(const id of peers)if(id!==session.user.id&&!people.some(p=>p.id===id))people.push({id,full_name:'Private member',headline:'Profile not shared',private_placeholder:true});
   if(activePeerId&&activePeerId!==session.user.id&&!people.some(p=>p.id===activePeerId))people.push({id:activePeerId,full_name:'Private member',headline:'Profile not shared',private_placeholder:true});
   const latest=new Map(people.map(p=>[p.id,dmLastMessage(p.id,history)]));
-  const ordered=people.slice().sort((a,b)=>Number(!!latest.get(b.id))-Number(!!latest.get(a.id))||new Date(latest.get(b.id)?.created_at||0)-new Date(latest.get(a.id)?.created_at||0)||a.full_name.localeCompare(b.full_name));
+  const ordered=people.filter(p=>dmListView==='people'||peers.has(p.id)||p.id===activePeerId).sort((a,b)=>new Date(latest.get(b.id)?.created_at||0)-new Date(latest.get(a.id)?.created_at||0)||a.full_name.localeCompare(b.full_name));
   const peer=people.find(p=>p.id===activePeerId),draft=peer?dmDraftFor(peer.id):null;
   const online=peer?.last_seen_at&&Date.now()-new Date(peer.last_seen_at).getTime()<65000;
   const preview=draft?.file?`<div class="dm-image-preview"><img src="${esc(draft.url)}" alt="Selected image preview"><span>${esc(draft.file.name)}<small>Ready to share</small></span><button type="button" class="dm-preview-remove" data-action="removeDmImage" aria-label="Remove selected image">×</button></div>`:'';
-  return `${head('MEMBER CONNECTIONS','Direct messages','Discuss a project with another approved club member.')}
-    ${!unreadCountsReady?'<div class="notice">Unread counts may be incomplete while the club finishes setup. Contact an administrator if a conversation seems missing.</div>':''}
-    <div class="dm-layout ${peer?'thread-open':''}"><div class="dm-list"><div class="dm-heading">Conversations <span>${people.length}</span></div><div class="dm-search"><label class="sr-only" for="dmFilter">Find a member</label><input id="dmFilter" type="search" value="${esc(dmFilterTerm)}" placeholder="Search members" autocomplete="off"></div>${ordered.map(p=>{
-      const last=latest.get(p.id),seen=(cache.direct_message_reads||[]).find(r=>r.peer_id===p.id)?.last_read_at;
-      const unread=unreadCountsReady?Number(unreadCounts.direct_messages[p.id]||0):history.filter(m=>m.sender_id===p.id&&(!seen||new Date(m.created_at)>new Date(seen))).length;
-      const hidden=dmFilterTerm&&!p.full_name.toLowerCase().includes(dmFilterTerm.toLowerCase())?'hidden':'';
-      return `<button type="button" class="dm-peer ${p.id===activePeerId?'selected':''}" data-action="openDm" data-id="${esc(p.id)}" ${hidden}>${memberAvatar(p.id)}<span><strong>${esc(p.full_name)}</strong><small>${esc(dmPreviewText(last)||p.headline||p.programme||'Start a conversation')}</small></span>${unread?`<i class="unread-badge">${unread}</i>`:''}</button>`;
-    }).join('')||empty('No other members','Approved members will appear here.')}</div>
-    <div class="dm-conversation">${peer?`<div class="chat-head"><button type="button" class="dm-back" data-action="closeDm" aria-label="Back to conversations">←</button><div class="dm-head-person">${memberAvatar(peer.id)}<div class="dm-head-copy"><h2>${esc(peer.full_name)}</h2><p>${online?'Online':esc(peer.headline||peer.programme||'Club member')}</p></div></div>${peer.private_placeholder?'':`<button type="button" class="text-button" data-action="memberProfile" data-id="${esc(peer.id)}">Profile</button>`}</div>${dmThreadError?`<div class="notice">${esc(dmThreadError)} <button class="text-button" data-action="reloadDmThread">Retry</button></div>`:''}${dmTotal>50?`<div class="records-toolbar"><small class="subtle">Messages ${dmPage*50+1}–${Math.min(dmTotal,dmPage*50+50)} of ${dmTotal}</small><div class="records-actions"><button class="button button-outline button-sm" data-action="dmOlder" ${(dmPage+1)*50>=dmTotal||dmThreadLoading?'disabled':''}>← Older</button><button class="button button-outline button-sm" data-action="dmNewer" ${dmPage===0||dmThreadLoading?'disabled':''}>Newer →</button></div></div>`:''}<div id="dmStream" class="dm-stream" data-peer="${esc(peer.id)}" data-page="${dmPage}" role="log" aria-label="Messages with ${esc(peer.full_name)}">${dmStreamMarkup(peer,history)}</div><form id="dmComposer" class="chat-composer" data-peer="${esc(peer.id)}">${preview}${mediaReady?`<label class="gallery-picker" title="Choose an image from your gallery">▧<span class="sr-only">Choose image</span><input name="dm_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>`:''}<label class="sr-only" for="dmBody">Message</label><textarea id="dmBody" name="body" rows="1" maxlength="3000" placeholder="Message ${esc(peer.full_name)}" aria-label="Write a message" enterkeyhint="send">${esc(draft.text)}</textarea><button class="button" type="submit" aria-label="Send message">➤</button></form>`:empty('Choose a member','Select someone to start a private conversation.')}</div></div>`;
+  const reply=draft?.reply?`<div class="dm-reply-preview"><div><strong>Replying to ${esc(draft.reply.sender_id===session.user.id?'yourself':peer.full_name)}</strong><p>${esc(dmPreviewText(draft.reply))}</p></div><button type="button" data-action="dmCancelReply" aria-label="Cancel reply">×</button></div>`:'';
+  return `${head('MEMBER CONNECTIONS','Messages','Good conversations lead to great builds.')}
+  <div class="dm-layout ${peer?'thread-open':''}"><div class="dm-list"><div class="dm-heading">Your conversations <span>${peers.size}</span></div><div class="dm-tabs" role="group" aria-label="Conversation list"><button type="button" data-action="setDmListView" data-view="chats" aria-pressed="${dmListView==='chats'}">Chats</button><button type="button" data-action="setDmListView" data-view="people" aria-pressed="${dmListView==='people'}">Find members</button></div><div class="dm-search"><label class="sr-only" for="dmFilter">Find a member</label><input id="dmFilter" type="search" value="${esc(dmFilterTerm)}" placeholder="Search members" autocomplete="off"></div>${ordered.map(p=>{
+    const last=latest.get(p.id),seen=(cache.direct_message_reads||[]).find(r=>r.peer_id===p.id)?.last_read_at;
+    const unread=unreadCountsReady?Number(unreadCounts.direct_messages[p.id]||0):history.filter(m=>m.sender_id===p.id&&(!seen||new Date(m.created_at)>new Date(seen))).length;
+    const hidden=dmFilterTerm&&!p.full_name.toLowerCase().includes(dmFilterTerm.toLowerCase())?'hidden':'',pending=dmDrafts.get(p.id);
+    const text=pending?.text?'Draft: '+pending.text:pending?.file?'Draft: Photo':last?(last.sender_id===session.user.id?'You: ':'')+dmPreviewText(last):p.headline||'Start a conversation';
+    const stamp=last?new Date(last.created_at).toDateString()===new Date().toDateString()?new Date(last.created_at).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}):new Date(last.created_at).toLocaleDateString(undefined,{month:'short',day:'numeric'}):'';
+    return `<button type="button" class="dm-peer ${p.id===activePeerId?'selected':''}" data-action="openDm" data-id="${esc(p.id)}" ${hidden}>${memberAvatar(p.id)}<span class="dm-peer-copy"><strong>${esc(p.full_name)}</strong><small>${esc(text)}</small></span><span class="dm-peer-meta"><time>${esc(stamp)}</time>${unread?`<i class="unread-badge" aria-label="${unread} unread messages">${unread}</i>`:''}</span></button>`;
+  }).join('')||(dmListView==='chats'?`<div class="dm-empty"><h3>Your next conversation</h3><p>Find a member to share ideas or talk about a project.</p><button type="button" class="button button-outline button-sm" data-action="setDmListView" data-view="people">Find members</button></div>`:empty('No members yet','Approved members will appear here.'))}
+  ${dmInboxReady&&dmInboxMore&&dmListView==='chats'?`<div class="dm-history-loader"><button type="button" class="text-button" data-action="loadDmInboxMore" ${dmInboxLoading?'disabled':''}>${dmInboxLoading?'Loading…':'More conversations'}</button></div>`:''}</div>
+  <div class="dm-conversation">${peer?`<div class="chat-head"><button type="button" class="dm-back dm-icon-button" data-action="closeDm" aria-label="Back to conversations">${dmIcon('back')}</button><div class="dm-head-person">${memberAvatar(peer.id)}<div class="dm-head-copy"><h2>${esc(peer.full_name)}</h2><p>${online?'Online':esc(peer.headline||peer.programme||'Club member')}</p></div></div><button type="button" class="dm-icon-button" data-action="toggleDmSearch" aria-label="Search conversation" aria-expanded="${dmSearchOpen}">${dmIcon('search')}</button>${peer.private_placeholder?'':`<button type="button" class="text-button dm-profile-button" data-action="memberProfile" data-id="${esc(peer.id)}">Profile</button>`}</div>${dmSearchMarkup(peer)}${dmThreadError?`<div class="notice">${esc(dmThreadError)} <button class="text-button" data-action="reloadDmThread">Retry</button></div>`:''}
+  <div id="dmStream" class="dm-stream" data-peer="${esc(peer.id)}" data-page="0" role="log" aria-label="Messages with ${esc(peer.full_name)}">${dmStreamMarkup(peer,history)}</div>
+  <form id="dmComposer" class="chat-composer" data-peer="${esc(peer.id)}">${reply}${preview}${dmEmojiOpen?`<div class="dm-emoji-picker" role="group" aria-label="Choose an emoji">${dmEmojis.map(emoji=>`<button type="button" data-action="insertDmEmoji" data-emoji="${esc(emoji)}" aria-label="Insert ${esc(emoji)}">${esc(emoji)}</button>`).join('')}</div>`:''}<div class="dm-compose-tools"><button type="button" class="dm-icon-button" data-action="toggleDmEmoji" aria-label="Choose emoji" aria-expanded="${dmEmojiOpen}">${dmIcon('emoji')}</button>${mediaReady?`<label class="gallery-picker dm-icon-button" title="Choose an image from your gallery">${dmIcon('image')}<span class="sr-only">Choose image</span><input name="dm_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>`:''}</div><label class="sr-only" for="dmBody">Message</label><textarea id="dmBody" name="body" rows="1" maxlength="3000" placeholder="Message ${esc(peer.full_name)}" aria-label="Write a message" enterkeyhint="send">${esc(draft.text)}</textarea><button class="button dm-send" type="submit" aria-label="Send message" ${dmSendingPeers.has(peer.id)?'disabled':''}>${dmIcon('send')}</button></form>`:`<div class="dm-empty"><span class="dm-empty-icon">${dmIcon('send')}</span><h2>A space for your team</h2><p>Share progress, swap ideas and keep your projects moving. Choose a conversation or find a club member.</p><button type="button" class="button button-outline" data-action="setDmListView" data-view="people">Find members</button></div>`}</div></div>`;
+}
+async function searchDmConversation(form){
+  if(!clubAccess()||!activePeerId||form.dataset.peer!==activePeerId)return;
+  const owner=session.user.id,peer=activePeerId,request=++dmSearchRequest,term=form.elements.query.value.trim().slice(0,120);
+  dmSearchTerm=term;dmSearchBusy=!!term;dmSearchRows=[];dmSearchError='';render();
+  if(!term)return;
+  try{
+    const pattern='%'+term.replace(/[\\%_]/g,ch=>String.fromCharCode(92)+ch)+'%';
+    const {data,error}=await db.from('direct_messages').select('*').in('sender_id',[owner,peer]).in('recipient_id',[owner,peer]).ilike('body',pattern).order('created_at',{ascending:false}).order('id',{ascending:false}).limit(50);
+    if(error)throw error;
+    if(session?.user.id===owner&&activePeerId===peer&&dmSearchRequest===request)dmSearchRows=data||[];
+  }catch(error){if(dmSearchRequest===request&&activePeerId===peer)dmSearchError='Search is unavailable. Please try again.';console.error('Conversation search',error);}
+  finally{if(dmSearchRequest===request&&activePeerId===peer&&session?.user.id===owner){dmSearchBusy=false;render();}}
+}
+async function setDmReaction(messageId,emoji){
+  if(!clubAccess()||!dmReactionsReady||!dmEmojis.includes(emoji)||!dmFindMessage(messageId))return;
+  const owner=session.user.id,peer=activePeerId,key=owner+'/'+messageId;
+  if(dmReactionInFlight.has(key))return;dmReactionInFlight.add(key);
+  const prior=dmReactionRows.find(r=>r.message_id===messageId&&r.user_id===owner);
+  try{
+    if(prior){const {error}=await db.from('direct_message_reactions').delete().eq('message_id',messageId).eq('user_id',owner);if(error)throw error;}
+    if(prior?.emoji!==emoji){const {error}=await db.from('direct_message_reactions').insert({message_id:messageId,user_id:owner,emoji});if(error)throw error;}
+    if(session?.user.id!==owner||activePeerId!==peer)return;
+    dmReactionRows=dmReactionRows.filter(r=>!(r.message_id===messageId&&r.user_id===owner));
+    if(prior?.emoji!==emoji)dmReactionRows.push({message_id:messageId,user_id:owner,emoji});
+    dmReactionTarget=null;dmShowThreadUpdate();
+  }catch(error){if(session?.user.id===owner){fail(error);if(activePeerId===peer)void loadDmThread();}}
+  finally{dmReactionInFlight.delete(key);}
 }
 async function markDmRead(peerId) {
   if(!dmReady||!session||!peerId||page!=='messages'||activePeerId!==peerId||document.hidden||dmPage!==0||dmThreadPeer!==peerId||dmThreadLoading||dmThreadError||dmReadInFlight.has(peerId))return;
@@ -1270,15 +1459,22 @@ async function markDmRead(peerId) {
   const coveredNotices=dmThreadCoveredNotices.get(peerId);
   if(unreadNotices.some(n=>!coveredNotices?.has(n.id)))return;
   if(!unreadNotices.length&&(!latest||readAt&&new Date(latest.created_at)<=new Date(readAt)))return;
-  const stamp=new Date().toISOString(),owner=session.user.id;
+  if(!latest)return;
+  // A receipt covers the visible snapshot, never messages arriving after it.
+  const boundary=latest.created_at,stamp=readAt&&new Date(readAt)>new Date(boundary)?readAt:boundary,owner=session.user.id;
+  const noticeIds=unreadNotices.filter(n=>coveredNotices?.has(n.id)&&new Date(n.created_at)<=new Date(boundary)).map(n=>n.id);
   dmReadInFlight.add(peerId);
   try{
     const {error}=await db.from('direct_message_reads').upsert({user_id:owner,peer_id:peerId,last_read_at:stamp},{onConflict:'user_id,peer_id'});if(error)throw error;
     if(session?.user.id!==owner)return;
     cache.direct_message_reads=(cache.direct_message_reads||[]).filter(r=>r.peer_id!==peerId).concat({user_id:owner,peer_id:peerId,last_read_at:stamp});
-    const notices=await db.from('notifications').update({read_at:stamp}).eq('user_id',owner).eq('kind','direct_message').eq('target_id',peerId).is('read_at',null).lte('created_at',stamp);
-    if(notices.error)console.error('Mark message alerts read',notices.error);
-    else for(const n of cache.notifications||[])if(n.kind==='direct_message'&&n.target_id===peerId&&!n.read_at&&new Date(n.created_at)<=new Date(stamp))n.read_at=stamp;
+    if(noticeIds.length){
+      const readStamp=new Date().toISOString();
+      const notices=await db.from('notifications').update({read_at:readStamp}).eq('user_id',owner).eq('kind','direct_message').eq('target_id',peerId).in('id',noticeIds).is('read_at',null).lte('created_at',boundary);
+      if(session?.user.id!==owner)return;
+      if(notices.error)console.error('Mark message alerts read',notices.error);
+      else for(const n of cache.notifications||[])if(noticeIds.includes(n.id)&&!n.read_at)n.read_at=readStamp;
+    }
     await refreshUnreadCounts();void refreshInboxUnreadCount();
   }catch(e){console.error(e);}
   finally{dmReadInFlight.delete(peerId);}
@@ -1934,6 +2130,43 @@ async function deleteAnnouncement(id){
 
 function actions(e) {
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
+
+  if(action==='workspaceSearch')return openWorkspaceSearch();
+  if(action==='workspaceResult'){
+    const result=workspaceSearchItems().find(r=>r.key===el.dataset.key);if(!result)return;
+    close();
+    if(result.action==='focusCourse')return openWorkspaceCourse(result.id);
+    if(result.action==='projectDetail'){location.hash='#projects';return projectDetail(result.id);}
+    if(result.action==='memberProfile')return memberProfile(result.id);
+    if(result.action==='event')return calendarItem('event',result.id);
+    if(result.action==='document')return downloadDocument(result.id);
+    location.hash='#'+result.page;return;
+  }
+  if(action==='setDmListView'){dmListView=el.dataset.view==='people'?'people':'chats';render();return;}
+  if(action==='loadDmInboxMore'){if(clubAccess()&&dmInboxReady&&!dmInboxLoading)void loadDmInbox(false).then(()=>{if(page==='messages')render();});return;}
+  if(action==='loadDmEarlier'){if(clubAccess()&&dmHasMore&&!dmThreadLoading)void loadDmThread(true,true);return;}
+  if(action==='toggleDmSearch'){dmSearchOpen=!dmSearchOpen;if(!dmSearchOpen){dmSearchRequest++;dmSearchBusy=false;}render();if(dmSearchOpen)$('#dmSearchInput')?.focus({preventScroll:true});return;}
+  if(action==='toggleDmEmoji'){dmEmojiOpen=!dmEmojiOpen;render();$('#dmBody')?.focus({preventScroll:true});return;}
+  if(action==='insertDmEmoji'){
+    const input=$('#dmBody');if(!input||!dmEmojis.includes(el.dataset.emoji)||!activePeerId)return;
+    const start=input.selectionStart??input.value.length,end=input.selectionEnd??start,emoji=el.dataset.emoji;
+    if(input.value.length-(end-start)+emoji.length>3000)return;
+    input.value=input.value.slice(0,start)+emoji+input.value.slice(end);dmDraftFor(activePeerId).text=input.value;
+    input.focus({preventScroll:true});input.setSelectionRange(start+emoji.length,start+emoji.length);resizeDmTextarea(input);return;
+  }
+  if(action==='dmReply'){
+    if(!clubAccess()||!dmRepliesReady||!activePeerId)return;
+    const message=dmFindMessage(id);if(!message)return;
+    dmReplyRows.set(message.id,message);dmDraftFor(activePeerId).reply=message;dmSearchOpen=false;render();$('#dmBody')?.focus({preventScroll:true});return;
+  }
+  if(action==='dmCancelReply'){if(!activePeerId)return;dmDraftFor(activePeerId).reply=null;render();$('#dmBody')?.focus({preventScroll:true});return;}
+  if(action==='dmCopy'){
+    const message=dmFindMessage(id);if(!clubAccess()||!message)return;
+    if(navigator.clipboard?.writeText)void navigator.clipboard.writeText(dmPreviewText(message)).then(()=>show('Message copied.')).catch(()=>show('Copy is unavailable. Select the message text to copy it.'));
+    else show('Select the message text to copy it.');return;
+  }
+  if(action==='dmReactMenu'){if(!dmReactionsReady)return;dmReactionTarget=dmReactionTarget===id?null:id;dmShowThreadUpdate();return;}
+  if(action==='dmReact')return void setDmReaction(id,el.dataset.emoji);
   if(action==='viewProfilePhoto'){
     e.preventDefault();
     const profile=(cache.profiles||[]).find(p=>p.id===id&&p.membership_status==='approved'&&p.role!=='investor');
@@ -2063,15 +2296,7 @@ function actions(e) {
     return;
   }
   if(action==='courseTrack'){const track=el.dataset.track;if(track==='all'||courseTracks.some(t=>t.name===track)){courseTrack=track;render();}return;}
-  if(action==='focusCourse'&&clubAccess()){
-    if(!(cache.courses||[]).some(c=>c.id===id))return;
-    if($('#modal').open)close();
-    const enrolled=(cache.course_enrollments||[]).some(e=>e.course_id===id&&e.learner_id===session?.user.id);
-    courseView=enrolled?'mine':'explore';activeCourseId=enrolled?id:null;
-    courseDetailView='overview';courseTrack='all';location.hash='#courses';render();
-    setTimeout(()=>{const target=document.getElementById(`course-${id}`);target?.querySelector('h2,h3')?.focus({preventScroll:true});target?.scrollIntoView({behavior:'smooth',block:'center'});},80);
-    return;
-  }
+  if(action==='focusCourse')return openWorkspaceCourse(id);
   if(action==='courseRoster'&&teacher()&&courseReady&&coursePlanningReady){
     const course=(cache.courses||[]).find(c=>c.id===id);
     if(!course||!admin()&&course.instructor_id!==session.user.id)return;
@@ -2141,16 +2366,18 @@ function actions(e) {
   if(action==='memberProfile')return memberProfile(id);
   if(action==='openDm'){
     if(!clubAccess()||!dmReady||!id||id===session.user.id)return;
+    if(activePeerId!==id){dmSearchRequest++;dmSearchOpen=false;dmSearchTerm='';dmSearchRows=[];dmSearchBusy=false;dmReactionTarget=null;dmEmojiOpen=false;}
+
     activePeerId=id;
     if($('#modal').open)close();
-    if(location.hash!=='#messages'){location.hash='#messages';return;}
-    render();void loadDmThread();
-    return;
+    const hash='#messages/'+id;
+    if(location.hash!==hash){location.hash=hash;return;}
+    render();void loadDmThread();return;
   }
   if(action==='closeDm'){
     if(page!=='messages')return;
-    activePeerId=null;dmRequest++;dmThreadLoading=false;render();
-    return;
+    activePeerId=null;dmRequest++;dmSearchRequest++;dmSearchBusy=false;dmThreadLoading=false;dmEarlierLoading=false;
+    if(location.hash!=='#messages')location.hash='#messages';else render();return;
   }
   if(action==='removeDmImage'){
     const draft=dmDraftFor(activePeerId);
@@ -2184,12 +2411,6 @@ function actions(e) {
     channelPage=next;return loadChannelHistory();
   }
   if(action==='reloadDmThread'&&clubAccess())return loadDmThread();
-  if(action==='dmOlder'||action==='dmNewer'){
-    if(!clubAccess()||dmThreadLoading)return;
-    const next=dmPage+(action==='dmOlder'?1:-1);
-    if(next<0||next*50>=dmTotal)return;
-    dmPage=next;return loadDmThread();
-  }
   if(['memberDirectoryPrev','memberDirectoryNext','projectListPrev','projectListNext'].includes(action)){
     if(!clubAccess())return;
     const memberList=action.startsWith('memberDirectory');
@@ -2432,8 +2653,9 @@ async function openNotification(id) {
   else if(n.target_type==='post'){location.hash='#feed';setTimeout(()=>document.getElementById(`post-${n.target_id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),80);}
   else if(n.target_type==='direct_message'){
     activePeerId=n.target_id;
-    if(location.hash==='#messages'){render();void loadDmThread();}
-    else location.hash='#messages';
+    const hash='#messages/'+n.target_id;
+    if(location.hash===hash){render();void loadDmThread();}
+    else location.hash=hash;
   }
 }
 async function resolveReport(id) {
@@ -2613,29 +2835,38 @@ function uploadRevisionDialog(id) {
   modal(`<span class="eyebrow">DOCUMENT HISTORY</span><h2>Upload a revision</h2><p class="muted">The current file stays in the version history.</p><form id="editor" data-kind="revision" class="form-stack"><input type="hidden" name="document_id" value="${esc(id)}"><div class="field"><label for="revision_file">New file (max 10 MB)</label><input id="revision_file" name="revision_file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.zip,.png,.jpg,.jpeg,.stl" required></div><button class="button" type="submit">Upload revision</button></form>`);
 }
 async function submit(e) {
+  if(e.target.id==='dmSearchForm'){e.preventDefault();return searchDmConversation(e.target);}
   if(e.target.id==='dmComposer'){
     e.preventDefault();
     const form=e.target,peer=form.dataset.peer,input=form.elements.body,body=input.value.trim(),draft=dmDraftFor(peer);
     const file=draft.file||form.querySelector('[name=dm_image]')?.files?.[0],send=form.querySelector('[type=submit]');
     if(!clubAccess()||!dmReady||!peer||peer!==activePeerId||(!body&&!file)||dmSendingPeers.has(peer))return;
     draft.text=input.value;
+    const sentText=draft.text,reply=dmRepliesReady?draft.reply:null;
     dmSendingPeers.add(peer);send.disabled=true;send.textContent='…';
     const owner=session.user.id;
     let path=null,inserted=false;
     try{
       if(file)path=await uploadClubImage(file);
+      if(session?.user.id!==owner)return;
       const record={sender_id:owner,recipient_id:peer,body:body||'Shared an image'};
       if(mediaReady)record.image_path=path;
+      if(reply)record.reply_to_id=reply.id;
       const {data,error}=await db.from('direct_messages').insert(record).select('*').single();
       if(error)throw error;
       inserted=true;
       if(session?.user.id!==owner)return;
-      if(draft.file===file)clearDmDraftFile(draft);
-      if(input.value.trim()===body){draft.text='';input.value='';}
+      if(draft.file===file){
+        clearDmDraftFile(draft);
+        if(page==='messages'&&activePeerId===peer){const current=$('#dmComposer');current?.querySelector('.dm-image-preview')?.remove();const picker=current?.querySelector('[name=dm_image]');if(picker)picker.value='';}
+      }
+      if(draft.text===sentText){draft.text='';if(input.value===sentText)input.value='';if(page==='messages'&&activePeerId===peer&&$('#dmBody')?.value===sentText)$('#dmBody').value='';}
+      if(draft.reply===reply){draft.reply=null;if(page==='messages'&&activePeerId===peer)$('#dmComposer .dm-reply-preview')?.remove();}
       if(form.isConnected){
         const picker=form.querySelector('[name=dm_image]');if(picker)picker.value='';
         form.querySelector('.dm-image-preview')?.remove();
       }
+      if(reply&&activePeerId===peer)dmReplyRows.set(reply.id,reply);
       dmLatestMessages.set(peer,data);
       cache.direct_messages=[data,...(cache.direct_messages||[]).filter(m=>m.id!==data.id)].slice(0,120);
       if(page==='messages'&&activePeerId===peer){
@@ -2644,7 +2875,7 @@ async function submit(e) {
         const older=sameThread&&!wasOnOlderPage?dmThreadRows:(cache.direct_messages||[]).filter(m=>m.id!==data.id&&((m.sender_id===owner&&m.recipient_id===peer)||(m.sender_id===peer&&m.recipient_id===owner)));
         const alreadyCounted=sameThread&&dmThreadRows.some(m=>m.id===data.id);
         dmThreadPeer=peer;dmPage=0;dmTotal=Math.max((sameThread?dmTotal:older.length)+(alreadyCounted?0:1),older.filter(m=>m.id!==data.id).length+1);
-        dmThreadRows=[data,...older.filter(m=>m.id!==data.id)].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)||String(b.id).localeCompare(String(a.id))).slice(0,50);
+        dmThreadRows=[data,...older.filter(m=>m.id!==data.id)].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)||String(b.id).localeCompare(String(a.id)));
         if(path)await hydrateMedia([path]);
         dmShowThreadUpdate(true);
         if(wasOnOlderPage||!sameThread)void loadDmThread();
@@ -2655,12 +2886,13 @@ async function submit(e) {
       if(path&&!inserted)await db.storage.from('club-media').remove([path]);
       if(inserted){
         console.error('Message sent but conversation did not refresh',error);
-        show('Message sent. Reopen this conversation if it does not appear yet.');
+        if(session?.user.id===owner)show('Message sent. Reopen this conversation if it does not appear yet.');
         if(page==='messages'&&activePeerId===peer)void loadDmThread();
-      }else fail(error);
+      }else if(session?.user.id===owner)fail(error);
     }finally{
       dmSendingPeers.delete(peer);
-      if(send.isConnected){send.disabled=false;send.textContent='➤';}
+      if(send.isConnected){send.disabled=false;send.innerHTML=dmIcon('send');}
+      if(session?.user.id===owner&&activePeerId===peer){const current=$('#dmComposer [type=submit]');if(current){current.disabled=false;current.innerHTML=dmIcon('send');}}
     }
     return;
   }
