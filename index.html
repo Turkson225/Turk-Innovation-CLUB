@@ -12,7 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=space-logo-20261001">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?v=space-logo-20261001">
-  <link rel="stylesheet" href="styles.css?v=space-organized-20261001">
+  <link rel="stylesheet" href="styles.css?v=space-calendar-20261001">
 </head>
 <body>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -126,19 +126,19 @@
     <div id="imageViewerStage" class="image-viewer-stage"><span id="imageViewerLoading" class="image-viewer-loading" role="status">Opening photo…</span><img id="imageViewerPhoto" alt="" draggable="false"></div>
     <div class="image-viewer-footer"><span class="image-viewer-hint">Pinch or double tap to zoom</span><div class="image-viewer-buttons"><button id="imageViewerZoomOut" class="image-viewer-control" type="button" aria-label="Zoom out">−</button><output id="imageViewerZoomLabel">100%</output><button id="imageViewerZoomIn" class="image-viewer-control" type="button" aria-label="Zoom in">+</button><button id="imageViewerReset" class="image-viewer-control image-viewer-fit" type="button" aria-label="Fit image to screen">Fit</button></div></div>
   </dialog>
-  <dialog id="loginWelcome" class="login-welcome" aria-label="Welcome to SPACE">
+  <dialog id="loginWelcome" class="login-welcome" aria-label="Welcome to SPACE" aria-live="polite">
     <div class="login-welcome-content">
       <div class="login-welcome-media">
         <video id="loginWelcomeVideo" width="562" height="220" muted playsinline preload="none" src="assets/space-logo-intro.webm" poster="assets/space-logo-poster.png" aria-hidden="true"></video>
         <img id="loginWelcomeStill" src="assets/space-logo-poster.png" width="562" height="220" alt="SPACE" hidden>
       </div>
       <h2 class="login-welcome-title">Welcome to SPACE</h2>
-      <button id="loginWelcomeSkip" class="login-welcome-continue" type="button">Continue to SPACE</button>
+      <button id="loginWelcomeSkip" class="login-welcome-continue" type="button">Dismiss welcome</button>
     </div>
   </dialog>
   <script src="config.js"></script>
-  <script src="pwa-register.js?v=space-organized-20261001" defer></script>
+  <script src="pwa-register.js?v=space-calendar-20261001" defer></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script type="module" src="app.js?v=space-organized-20261001"></script>
+  <script type="module" src="app.js?v=space-calendar-20261001"></script>
 </body>
 </html>

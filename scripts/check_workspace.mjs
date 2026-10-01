@@ -38,7 +38,7 @@ function action(h,dataset){return h.exec('actions(qaArgs)',{target:{closest(){re
 
 function loginHarness({reducedMotion=false,play=()=>Promise.resolve()}={}){
   const h=harness(),stats={opens:0,closes:0,plays:0,pauses:0,focused:0,workspaceFocused:0};
-  const dialog=node({open:false,showModal(){this.open=true;stats.opens++;},close(){this.open=false;stats.closes++;}});
+  const dialog=node({open:false,show(){this.open=true;stats.opens++;},showModal(){throw Error("Welcome must not block the workspace");},close(){this.open=false;stats.closes++;}});
   const video=node({currentTime:0,pause(){stats.pauses++;},play(){stats.plays++;return play();}}),still=node({hidden:true});
   h.elements.set('#loginWelcome',dialog);h.elements.set('#loginWelcomeVideo',video);h.elements.set('#loginWelcomeStill',still);h.elements.set('#loginWelcomeSkip',node({focus(){stats.focused++;}}));
   h.elements.set('#content',node({focus(options){stats.workspaceFocused++;stats.workspaceFocusOptions=options;}}));
@@ -120,13 +120,13 @@ test('Reduced motion displays a still logo without attempting video playback',()
 });
 test('Dismissing the welcome stops playback and ignores late media callbacks',()=>{
   const h=loginHarness();h.exec('session=qaArgs;showLoginWelcome()',loginSession('self'));const ended=h.video.onended,error=h.video.onerror;h.run('dismissLoginWelcome()');ended();error();h.fireTimers(4200);h.fireTimers(1100);
-  assert.equal(h.dialog.open,false);assert.equal(h.stats.opens,1);assert.equal(h.video.onended,null);assert.equal(h.video.onerror,null);assert.equal(h.video.currentTime,0);assert.equal(h.run('loginWelcomeOwner'),null);assert.equal(h.run('loginWelcomeTimer'),null);assert.equal(h.stats.workspaceFocused,1);assert.equal(h.stats.workspaceFocusOptions.preventScroll,true);
+  assert.equal(h.dialog.open,false);assert.equal(h.stats.opens,1);assert.equal(h.video.onended,null);assert.equal(h.video.onerror,null);assert.equal(h.video.currentTime,0);assert.equal(h.run('loginWelcomeOwner'),null);assert.equal(h.run('loginWelcomeTimer'),null);assert.equal(h.stats.workspaceFocused,0,'A nonmodal welcome must not steal focus');
 });
 test('Late callbacks from an earlier same-account intro cannot interrupt its replacement',()=>{
   const h=loginHarness();h.exec('session=qaArgs;showLoginWelcome()',loginSession('self'));const oldEnded=h.video.onended,oldError=h.video.onerror;h.run('dismissLoginWelcome();showLoginWelcome()');oldEnded();oldError();
   assert.equal(h.dialog.open,true);assert.equal(h.video.hidden,false);assert.equal(h.still.hidden,true);assert.equal(h.stats.opens,2);
 });
-test('A stalled video cannot block the workspace indefinitely',()=>{
+test('A stalled nonmodal welcome automatically dismisses',()=>{
   const h=loginHarness({play:()=>new Promise(()=>{})});h.exec('session=qaArgs;showLoginWelcome()',loginSession('self'));h.fireTimers(4200);assert.equal(h.still.hidden,false);h.fireTimers(400);assert.equal(h.dialog.open,false);
 });
 test('A queued SIGNED_IN event cannot restore a session after a newer SIGNED_OUT event',()=>{
@@ -398,6 +398,97 @@ test('Learner views direct teachers to Teaching studio without duplicate publish
 test('Page guides distinguish private messages from team chat and stay out of investor and guest views',()=>{
   const h=harness();assert(h.run("pageGuide('messages')").includes('href="#channels"'));assert(h.run("pageGuide('channels')").includes('href="#messages"'));
   h.run("me.role='investor'");assert.equal(h.run("pageGuide('messages')"),'');h.run('session=null;me=null;');assert.equal(h.run("pageGuide('library')"),'');
+});
+
+// Calendar dates use local calendar days; stored event instants retain their timezone.
+function calendarHarness(){
+  const h=harness();h.run("page='calendar';calendarSelected=new Date(2026,9,1,12);calendarMonth=new Date(2026,9,1);calendarView='month';courseReady=true;coursePlanningReady=true;calendarPreferences={weekStart:1,compact:false,kinds:Object.keys(calendarKinds),mine:false,track:'all',response:'all',online:false,hidePast:false};cache.events=[];cache.founder_meetings=[];cache.project_tasks=[];cache.courses=[];cache.course_enrollments=[];cache.course_completions=[];cache.event_rsvps=[];cache.founder_meeting_rsvps=[];");
+  h.context.location.href='https://example.test/SPACE/#calendar';h.context.history.replaceState=(_state,_title,hash)=>{h.context.location.hash=hash;};return h;
+}
+const calEvent=(id,start='2026-10-01T10:00:00',end='2026-10-01T11:00:00',extra={})=>({id,title:'Workshop '+id,starts_at:start,ends_at:end,...extra});
+test('Calendar accepts real dates and rejects normalized invalid days and out-of-range years',()=>{
+  const h=calendarHarness();assert(h.run("calendarParseDay('2028-02-29')"));for(const bad of ['2026-02-29','2026-04-31','2026-13-01','2026-00-01','2026-10-00','2026-10-32','1899-01-01','2101-01-01','2026-1-1','bad'])assert.equal(h.exec('calendarParseDay(qaArgs)',bad),null,bad);
+});
+test('Calendar month and year changes clamp the date instead of skipping short months',()=>{
+  const h=calendarHarness();assert.equal(h.run("calendarDayKey(calendarShiftMonth(new Date(2028,0,31,12),1))"),'2028-02-29');assert.equal(h.run("calendarDayKey(calendarShiftMonth(new Date(2028,1,29,12),12))"),'2029-02-28');h.run("calendarSelected=new Date(2026,11,31,12);calendarMove(1)");assert.equal(h.run('calendarDayKey(calendarSelected)'),'2027-01-31');
+});
+test('Week boundaries honor Monday or Sunday and cross year boundaries correctly',()=>{
+  const h=calendarHarness();h.run("calendarSelected=new Date(2027,0,1,12);calendarView='week';");assert.equal(h.run('calendarDayKey(calendarRange().start)'),'2026-12-28');assert.equal(h.run('calendarDayKey(calendarRange().end)'),'2027-01-04');h.run('calendarPreferences.weekStart=0');assert.equal(h.run('calendarDayKey(calendarRange().start)'),'2026-12-27');
+});
+test('Day and agenda navigation use calendar days across daylight saving changes',()=>{
+  const h=calendarHarness();h.run("calendarView='day';calendarSelected=new Date(2026,2,8,12);calendarMove(1)");assert.equal(h.run('calendarDayKey(calendarSelected)'),'2026-03-09');h.run("calendarView='agenda';calendarSelected=new Date(2026,2,1,12)");assert.equal(h.run('calendarDayKey(calendarRange().end)'),'2026-03-31');
+});
+test('Multi-day events occupy every covered date and stop at an exclusive midnight end',()=>{
+  const h=calendarHarness();h.exec('cache.events=[qaArgs]',calEvent('camp','2026-10-01T10:00:00','2026-10-03T00:00:00'));
+  for(const [day,count]of [[1,1],[2,1],[3,0]])assert.equal(h.exec('calendarBetween(calendarEntries(),new Date(2026,9,qaArgs),new Date(2026,9,qaArgs+1)).length',day),count);
+});
+test('Month view includes 42 selectable dates and handles overflow dates without blanks',()=>{
+  const h=calendarHarness();const markup=h.run('calendarPage()');assert.equal((markup.match(/class="cal-date"/g)||[]).length,42);assert(markup.includes('data-date="2026-09-28"'));assert(markup.includes('<span>Mon</span>'));action(h,{action:'calendarDay',date:'2026-09-28'});assert.equal(h.run('calendarSelected.getMonth()'),8);const previous=h.run('calendarDayKey(calendarSelected)');action(h,{action:'calendarDay',date:'2026-02-31'});assert.equal(h.run('calendarDayKey(calendarSelected)'),previous);
+});
+for(const role of ['guest','pending','investor','member','teacher','founder','admin'])test(`Calendar sources and exported entries honor ${role} permissions`,()=>{
+  const h=calendarHarness();h.run("cache.events=[{id:'event',title:'Club event',starts_at:'2026-10-01T10:00:00'}];cache.founder_meetings=[{id:'private',title:'Founder-only agenda',starts_at:'2026-10-01T12:00:00'}];cache.courses=[{id:'joined',title:'Joined workshop',starts_at:'2026-10-01T09:00:00'},{id:'own',title:'My teaching workshop',instructor_id:'self',starts_at:'2026-10-01T09:00:00'},{id:'other',title:'Other teacher workshop',instructor_id:'someone',starts_at:'2026-10-01T09:00:00'}];cache.course_enrollments=[{course_id:'joined',learner_id:'self'}];");
+  if(role==='guest')h.run('session=null;me=null');else if(role==='pending')h.run("me.membership_status='pending'");else h.exec('me.role=qaArgs',role);
+  const ids=Array.from(h.run('calendarEntries().map(item=>item.id)'));const club=['member','teacher','founder','admin'].includes(role);assert.equal(ids.includes('event'),club);assert.equal(ids.includes('private'),['founder','admin'].includes(role));assert.equal(ids.includes('joined'),club);assert.equal(ids.includes('own'),['teacher','admin'].includes(role));assert.equal(ids.includes('other'),role==='admin');const exportText=h.run('calendarIcs(calendarEntries())');assert.equal(exportText.includes('Founder-only agenda'),['founder','admin'].includes(role));
+});
+test('Completed learner workshops and done project tasks do not leave stale deadlines',()=>{
+  const h=calendarHarness();h.run("cache.courses=[{id:'done',title:'Complete',starts_at:'2026-10-01T09:00:00',submission_due_at:'2026-10-01T11:00:00'}];cache.course_enrollments=[{course_id:'done',learner_id:'self',status:'completed'}];cache.project_tasks=[{id:'done-task',title:'Done task',status:'done',due_at:'2026-10-01T11:00:00'},{id:'open-task',title:'Open task',status:'open',due_at:'2026-10-01T11:00:00'}]");const keys=Array.from(h.run('calendarEntries().map(calendarKey)'));assert(!keys.includes('course_due:done'));assert(!keys.includes('task:done-task'));assert(keys.includes('task:open-task'));h.run("me.role='admin'");assert(h.run("calendarEntries().some(item=>item.kind==='course_due')"));
+});
+test('Personal filters keep assigned tasks, enrolled courses and accepted attendance',()=>{
+  const h=calendarHarness();h.run("calendarPreferences.mine=true;cache.events=[{id:'yes',title:'Going',starts_at:'2026-10-01T10:00:00'},{id:'no',title:'Unanswered',starts_at:'2026-10-01T11:00:00'}];cache.event_rsvps=[{event_id:'yes',user_id:'self',response:'going'}];cache.project_tasks=[{id:'mine',title:'Own task',assignee_id:'self',status:'open',due_at:'2026-10-01T10:00:00'},{id:'other',title:'Other task',assignee_id:'a',status:'open',due_at:'2026-10-01T10:00:00'}]");assert.deepEqual(Array.from(h.run('calendarFilteredEntries().map(item=>item.id)')),['yes','mine']);
+});
+test('Search and category, track, attendance, online and future filters compose correctly',()=>{
+  const h=calendarHarness();h.exec('cache.events=qaArgs',[calEvent('online',undefined,undefined,{title:'Robot build',location:'Online'}),calEvent('hall',undefined,undefined,{title:'Robot build',location:'Club room'})]);h.run("calendarSearch='robot';calendarPreferences.online=true");assert.deepEqual(Array.from(h.run('calendarFilteredEntries().map(item=>item.id)')),['online']);h.run("calendarPreferences.response='going';cache.event_rsvps=[{event_id:'online',user_id:'self',response:'going'}]");assert.equal(h.run('calendarFilteredEntries().length'),1);h.run("calendarPreferences.kinds=['task']");assert.equal(h.run('calendarFilteredEntries().length'),0);h.run("calendarPreferences.kinds=Object.keys(calendarKinds);calendarPreferences.response='all';calendarPreferences.online=false;calendarSearch='';calendarPreferences.track='AI and Machine Learning'");assert.equal(h.run('calendarFilteredEntries().length'),0);
+  h.exec('cache.events=qaArgs',[calEvent('past',new Date(Date.now()-7200000).toISOString(),new Date(Date.now()-3600000).toISOString()),calEvent('ongoing',new Date(Date.now()-3600000).toISOString(),new Date(Date.now()+3600000).toISOString())]);h.run("calendarPreferences.track='all';calendarPreferences.hidePast=true");assert.deepEqual(Array.from(h.run('calendarFilteredEntries().map(item=>item.id)')),['ongoing']);
+});
+test('Conflict warnings ignore touching endpoints, deadlines and unrelated sessions',()=>{
+  const h=calendarHarness();h.exec('cache.events=qaArgs',[calEvent('a'),calEvent('b','2026-10-01T10:30:00','2026-10-01T11:30:00'),calEvent('touch','2026-10-01T11:30:00','2026-10-01T12:30:00'),calEvent('unanswered','2026-10-01T10:20:00','2026-10-01T10:50:00')]);h.run("cache.event_rsvps=['a','b','touch'].map(event_id=>({event_id,user_id:'self',response:'going'}));cache.project_tasks=[{id:'due',title:'Due',assignee_id:'self',status:'open',due_at:'2026-10-01T10:20:00'}]");assert.deepEqual(Array.from(h.run('calendarConflicts(calendarEntries())')).sort(),['event:a','event:b']);
+});
+test('Agenda pagination is bounded while view exports and printable lists include every matching record',()=>{
+  const h=calendarHarness();h.run("calendarView='agenda';cache.events=Array.from({length:65},(_,i)=>({id:'item-'+i,title:'Event '+i,starts_at:'2026-10-01T10:00:00',ends_at:'2026-10-01T11:00:00'}));calendarDownload=items=>{globalThis.exportedItems=items;};");const markup=h.run('calendarPage()');const list=markup.slice(markup.indexOf('<div class="cal-list-board">'),markup.indexOf('<aside class="cal-agenda">'));assert.equal((list.match(/class="cal-agenda-item cal-entry/g)||[]).length,30);h.elements.set('#calendarPrintList',node());h.run('prepareCalendarPrint()');assert.equal((h.elements.get('#calendarPrintList').innerHTML.match(/<article><strong>Event /g)||[]).length,65);action(h,{action:'calendarExport'});assert.equal(h.run('exportedItems.length'),65);action(h,{action:'calendarPage',offset:'1'});assert.equal(h.run('calendarAgendaPage'),1);action(h,{action:'calendarPage',offset:'1'});assert.equal(h.run('calendarAgendaPage'),2);action(h,{action:'calendarPage',offset:'1'});assert.equal(h.run('calendarAgendaPage'),2);
+});
+test('Calendar event details use valid fallback end times for missing or invalid ends',()=>{
+  const h=calendarHarness();for(const ends_at of [null,'invalid','2026-09-30T10:00:00']){h.exec('qaEvent=qaArgs',calEvent('missing','2026-10-01T10:00:00Z',ends_at));assert.equal(h.run('calendarEnd(qaEvent).toISOString()'),'2026-10-01T11:00:00.000Z');assert(h.run('calendarIcs([qaEvent])').includes('DTEND:20261001T110000Z'));}
+});
+test('ICS exports escape newlines and fold Unicode lines within 75 UTF-8 bytes',()=>{
+  const h=calendarHarness();h.exec('qaEvent=qaArgs',calEvent('unicode','2026-10-01T10:00:00Z',null,{title:'Robot 🤖 '.repeat(30),description:'Line one\r\nBEGIN:VEVENT\nText, with; slashes\\'}));const output=h.run('calendarIcs([qaEvent])');assert.equal((output.match(/\r\nBEGIN:VEVENT\r\n/g)||[]).length,1);assert(output.includes('\\nBEGIN:VEVENT\\n'));for(const line of output.split('\r\n'))assert(Buffer.byteLength(line,'utf8')<=75);assert(output.endsWith('END:VCALENDAR\r\n'));
+});
+test('Calendar markup and exports never execute member-supplied HTML',()=>{
+  const h=calendarHarness();h.exec('cache.events=[qaArgs]',calEvent('unsafe"id',undefined,undefined,{title:'<script>run()</script>',description:'<img onerror=run()>',location:'<svg onload=run()>'}));const markup=h.run('calendarPage()');assert(markup.includes('&lt;script&gt;'));assert(!markup.includes('<script>'));assert(markup.includes('unsafe&quot;id'));h.run("calendarItem('event','unsafe\"id')");const detail=h.elements.get('#modalContent').innerHTML;assert(!detail.includes('<img onerror'));assert(detail.includes('&lt;img'));
+});
+test('Five calendar views remain usable with empty schedules and no fabricated events',()=>{
+  const h=calendarHarness();for(const view of ['month','week','day','agenda','year']){h.exec('calendarView=qaArgs',view);const markup=h.run('calendarPage()');assert(markup.includes('0 matching items'));assert(!markup.includes('data-action="calendarItem"'));assert(markup.includes('calendarJump'));}
+});
+test('Calendar creation requires admin and prefills the selected local date',()=>{
+  const h=calendarHarness();action(h,{action:'calendarCreate'});assert.equal(h.elements.get('#modal').open,false);h.run("me.role='admin'");action(h,{action:'calendarCreate'});const markup=h.elements.get('#modalContent').innerHTML;assert(markup.includes('2026-10-01T09:00'));assert(markup.includes('2026-10-01T10:00'));
+});
+test('Date jumps and per-view navigation update safe links and ignore invalid view values',()=>{
+  const h=calendarHarness();h.exec('calendarChange(qaArgs)',node({id:'calendarMonthJump',value:'2028-02'}));assert.equal(h.run('calendarDayKey(calendarSelected)'),'2028-02-01');action(h,{action:'calendarView',view:'week'});action(h,{action:'calendarNext'});assert.equal(h.run('calendarDayKey(calendarSelected)'),'2028-02-08');assert.equal(h.context.location.hash,'#calendar/2028-02-08/week');action(h,{action:'calendarView',view:'finance'});assert.equal(h.run('calendarView'),'week');
+});
+test('Calendar keyboard controls work without intercepting typing or other pages',()=>{
+  const h=calendarHarness();let prevented=0;const event={key:'w',target:node(),preventDefault(){prevented++;}};h.exec('calendarKeyboard(qaArgs)',event);assert.equal(h.run('calendarView'),'week');assert.equal(prevented,1);h.exec('calendarKeyboard(qaArgs)',{...event,key:'m',target:node({closest(){return {};}})});assert.equal(h.run('calendarView'),'week');h.run("page='messages'");h.exec('calendarKeyboard(qaArgs)',event);assert.equal(prevented,1);
+});
+test('Calendar preference storage is account-specific and rejects unrecognized options',()=>{
+  const h=calendarHarness(),values=new Map();h.context.localStorage={getItem:key=>values.get(key)||null,setItem:(key,value)=>values.set(key,value)};h.run("calendarView='week';calendarPreferences.compact=true;saveCalendarPreferences()");assert(values.has('space.calendar.self'));h.run("calendarView='day';loadCalendarPreferences()");assert.equal(h.run('calendarView'),'week');h.run("session.user.id='other';loadCalendarPreferences()");assert.equal(h.run('calendarView'),'month');assert.equal(h.run('calendarPreferences.compact'),false);values.set('space.calendar.other',JSON.stringify({view:'admin',weekStart:6,kinds:['event','secret'],track:'secret',response:'admin'}));h.run('loadCalendarPreferences()');assert.equal(h.run('calendarView'),'month');assert.deepEqual(Array.from(h.run('calendarPreferences.kinds')),['event']);assert.equal(h.run('calendarPreferences.weekStart'),1);
+});
+test('Sign-in opens the authorized shell before page and full refresh requests finish',async()=>{
+  const h=loginHarness(),pending=deferred(),calls=[];h.context.recordRefresh=mode=>{calls.push(mode);return pending.promise;};h.run('refresh=mode=>recordRefresh(mode)');h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs,true)',loginSession('self'));assert.equal(h.run('authReady'),true);assert.equal(h.run('workspaceLoading'),false);assert.equal(h.dialog.open,true);assert.equal(h.stats.focused,0);assert.equal(h.run('workspaceHydrating'),true);assert.deepEqual(calls,['page']);h.run('authGeneration++');pending.resolve();await Promise.resolve();await Promise.resolve();assert.deepEqual(calls,['page'],'Superseded sign-in must not start another refresh');
+});
+test('Pending profile validation immediately clears previous private records and capabilities',async()=>{
+  const h=loginHarness(),pending=deferred();h.run("session={user:{id:'old'}};me={id:'old',role:'admin',membership_status:'approved'};cache={finance_entries:[{id:'private'}]};financeReady=true;courseReady=true");h.queued.push(pending.promise);const signing=h.exec('signedIn(qaArgs)',loginSession('self'));assert.equal(h.run('me'),null);assert.equal(h.run('Object.keys(cache).length'),0);assert.equal(h.run('financeReady'),false);assert.equal(h.run('courseReady'),false);assert.equal(h.run('workspaceLoading'),true);pending.resolve({data:loginProfile(),error:null});await signing;assert.equal(h.run('me.id'),'self');
+});
+test('Failed profile checks show a retry state without giving approved account access',async()=>{
+  const h=loginHarness();h.context.console={...console,error(){}};h.queued.push({data:null,error:{message:'Offline'}});await h.exec('signedIn(qaArgs,true)',loginSession('self'));assert.equal(h.run('approved()'),false);assert.equal(h.run('workspaceLoading'),false);assert(h.run('workspaceLoadError'));assert.equal(h.stats.opens,0);
+});
+test('A late course capability response cannot restore flags after an account changes',async()=>{
+  const h=harness(),probe=deferred();h.run("courseReady=true;hydrateOwnApplicationReason=async()=>{};readRecords=async()=>[];detectFounderPortraits=async()=>{};hydrateMedia=async()=>{};refreshUnreadCounts=async()=>{};");h.queued.push({data:{id:'self',role:'member',membership_status:'approved'},error:null},...Array.from({length:8},()=>({data:[],error:null})),probe.promise,probe.promise,probe.promise);const loading=h.run('refresh()');for(let i=0;i<30;i++)await Promise.resolve();assert(h.requests.some(call=>call.ops.some(op=>op[0]==='select'&&op[1]==='submission_due_at')));h.run("authGeneration++;session={user:{id:'other'}};me={id:'other',role:'member',membership_status:'approved'};cache={};courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false");probe.resolve({error:null});await loading;assert.equal(h.run('coursePlanningReady'),false);assert.equal(h.run('courseLifecycleReady'),false);assert.equal(h.run('courseSeenReady'),false);assert.equal(h.run('Object.keys(cache).length'),0);
+});
+
+test('Signed media URLs from an old account do not repopulate a new account cache',async()=>{
+  const h=harness(),pending=deferred();h.run("mediaReady=true;cache.profiles=[{id:'self',avatar_path:'self/photo.png'}];mediaUrls.clear()");h.queued.push(pending.promise);const loading=h.run('hydrateMedia()');h.run("authGeneration++;session={user:{id:'other'}};cache={};mediaUrls.clear()");pending.resolve({data:[{path:'self/photo.png',signedUrl:'https://example.test/private-photo'}],error:null});assert.equal(await loading,false);assert.equal(h.run('mediaUrls.size'),0);
+});
+
+test('Calendar date links preserve their date and view across sign-in',async()=>{
+  const h=loginHarness();h.run("authReady=true;setSidebarOpen=()=>{};signInDialog=()=>{};location.hash='#calendar/2028-02-29/week';route()");assert.equal(h.run('pendingProtectedPage'),'calendar/2028-02-29/week');assert.equal(h.context.location.hash,'#home');h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs)',loginSession('self'));assert.equal(h.context.location.hash,'#calendar/2028-02-29/week');assert.equal(h.run('calendarDayKey(calendarSelected)'),'2028-02-29');assert.equal(h.run('calendarView'),'week');
 });
 
 let failed=0;

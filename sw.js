@@ -1,5 +1,5 @@
 /* SPACE public offline shell. Member data and API responses never enter Cache Storage. */
-const PUBLIC_CACHE = 'innovatex-public-v8';
+const PUBLIC_CACHE = 'innovatex-public-v9';
 const CACHE_PREFIX = 'innovatex-public-';
 const scope = new URL(self.registration.scope);
 const urlFor = path => new URL(path, scope).href;
@@ -8,8 +8,8 @@ const publicFiles = [
   'offline.html',
   'about/index.html',
   'founders/index.html',
-  'styles.css?v=space-organized-20261001',
-  'public-pages.css?v=space-organized-20261001',
+  'styles.css?v=space-calendar-20261001',
+  'public-pages.css?v=space-calendar-20261001',
   'assets/club-about-lab.webp',
   'assets/space-wordmark.png',
   'assets/space-monogram.png',

@@ -37,9 +37,52 @@ Home, Notifications, Direct messages and Calendar are the daily shortcuts. The s
 
 Use **My learning** for workshops you have joined, their materials, your submissions and teacher feedback. Approved teachers manage classes and upload slides in **Teaching studio**. **Direct messages** are private conversations; **Team chat** contains group channels and threads; **Discussion forum** holds longer questions and decisions. **Notifications** are personal updates, while **Announcements** are official club notices. **Shared files** is the club document library; course-specific slides stay in the workshop classroom. Search also recognizes familiar names such as Inbox, Channels, Courses and Document library.
 
+## Calendar workspace and faster sign-in
+
+Open **Calendar** from the daily shortcuts. Today, the previous/next period buttons, the date picker and the five view buttons stay visible. Open **Filters**, **Date & export tools** or **Keyboard shortcuts** for the extra controls. All event times are shown in the device’s local timezone, displayed beside the period title. Press Search or Enter to apply a calendar search.
+
+The calendar has these 30 new or expanded capabilities, alongside the existing month view and Today shortcut:
+
+| # | Capability | How it works |
+|---|---|---|
+| 1 | Week view | Seven dated sections with session details and day shortcuts. |
+| 2 | Day view | A chronological list for the selected date. |
+| 3 | Agenda view | A rolling 30-day schedule grouped by date. |
+| 4 | Year overview | Twelve month summaries that open the chosen month. |
+| 5 | Jump to a date | Select a date directly rather than paging month by month. |
+| 6 | Jump to a month | Use the month picker under Date & export tools. |
+| 7 | Jump to a year | Enter a year between 1900 and 2100. |
+| 8 | View-aware previous/next | Move one day, week, month, year or 30-day agenda period. |
+| 9 | Adjacent-month navigation | Dates before and after the month are selectable. |
+| 10 | Week-start preference | Choose Monday or Sunday. |
+| 11 | Calendar search | Search titles, descriptions, locations and learning tracks. |
+| 12 | Source filters | Show or hide club events, workshops, course deadlines, tasks and permitted founder meetings. |
+| 13 | My schedule | Show enrolled/assigned workshops, own tasks and attendance commitments. |
+| 14 | Track filter | Focus on one of the four learning tracks. |
+| 15 | Attendance filter | Going, Maybe, Can’t go or Not answered. |
+| 16 | Online-session filter | Find sessions with a meeting link or online location. |
+| 17 | Upcoming and ongoing filter | Hide items that have ended, keeping in-progress sessions. |
+| 18 | Compact month layout | Reduce desktop calendar row height. Phone dates use large date controls and item counts. |
+| 19 | Multi-day events | Show an event on every day it occupies; a midnight end is exclusive. |
+| 20 | Overlap indicators | Flag overlapping personal sessions; deadlines and unrelated events do not cause warnings. |
+| 21 | Next scheduled item | Jump to the next matching upcoming or ongoing item. |
+| 22 | Date links | Copy a link containing the date and view. Other accounts see only their permitted records. |
+| 23 | Saved preferences | Remember the view and filters per account on that device. |
+| 24 | Keyboard navigation | T, M/W/D/A/Y, [ / ], search with /; arrow keys and Home/End navigate date controls. |
+| 25 | Export the selected view | Download all matching period items as one ICS file. |
+| 26 | Export individual work | Add workshops and task/course deadlines to Google Calendar or download ICS, as with events and meetings. |
+| 27 | Complete printed schedule | Print the visible view plus its full matching item list, including all agenda pages. |
+| 28 | Agenda pagination | Display 30 records at a time; exports and printing include the complete period. |
+| 29 | Schedule on selected date | Administrators get event forms prefilled for the selected local date. |
+| 30 | Completed-work cleanup | Finished tasks and a learner’s completed course deadlines stop appearing. Teachers/admins retain class deadline history. |
+
+Calendar exports use UTC event instants, valid end-time fallbacks, escaped text and UTF-8 line folding. Founder meetings are excluded from member, teacher and investor views and exports. Existing RSVP and Google Meet tools remain available in event details. No database migration is required for this upgrade.
+
+After email-code verification, sign-in awaits the profile/access check, opens the permitted workspace, loads the visible page first, then hydrates the remaining tools in the background. The logo welcome is compact and nonmodal. The shell shows a loading state while records arrive; private records and capability flags are cleared before a new account is checked. Delayed responses from older accounts cannot restore their capability flags or signed media URLs. Applicants load their private answer before their form opens. Network authentication and access verification still require a response from Supabase; the app does not bypass either.
+
 ## SPACE branding
 
-The segmented monochrome logo uses source frames from the club’s supplied recording. The matching animated reveal appears briefly after successful interactive email-code verification, with a Continue button and Escape support. Restoring a saved session and routine role/access refreshes do not replay it. Reduced motion, unsupported video playback and media errors use a still image, so branding never blocks account access.
+The segmented monochrome logo uses source frames from the club’s supplied recording. The matching animation appears in a small, nonmodal welcome after successful interactive email-code verification. It can be dismissed and does not cover or lock the workspace. Restoring a saved session and routine role/access refreshes do not replay it. Reduced motion, unsupported video playback and media errors use a still image.
 
 The platform now displays **SPACE** on the website, public pages, installation prompt, offline screen, notifications and app icons. Its GitHub address and existing account/PWA identity stay the same. Existing installed apps may update their launcher name/icon after opening online; if yours keeps the old branding, remove that shortcut and install again.
 

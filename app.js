@@ -40,6 +40,8 @@ const dmEmojis=['👍','❤️','😂','🎉','👀','🙌','✅','💡','🔧',
 const dmDrafts = new Map(), dmLatestMessages = new Map(), dmThreadCoveredNotices = new Map(), dmReadInFlight = new Set(), dmSendingPeers = new Set();
 let unreadCounts = {channels:{},direct_messages:{},direct_peers:[],direct_total:0}, unreadCountsReady = false;
 let calendarMonth = new Date(new Date().getFullYear(),new Date().getMonth(),1), calendarSelected = new Date();
+let calendarView='month',calendarSearch='',calendarAgendaPage=0,calendarPreferences={weekStart:1,compact:false,kinds:['event','course','course_due','task','meeting'],mine:false,track:'all',response:'all',online:false,hidePast:false};
+let workspaceLoading=false,workspaceHydrating=false,workspaceLoadError='';
 let courseTrack = 'all', courseView = 'mine', activeCourseId = null, courseDetailView = 'overview';
 const courseTracks = [
   {name:'Controls and Automation',example:'Build a sensor-driven controller, PLC sequence or motor control system.'},
@@ -58,10 +60,12 @@ const mediaUrls = new Map();
 const mediaUrl = path => path && mediaUrls.get(path)?.url || '';
 async function hydrateMedia(extraPaths=[]) {
   if(!mediaReady)return false;
+  const owner=session?.user.id,generation=authGeneration;
   const paths=[...(cache.profiles||[]).slice(0,150).map(p=>p.avatar_path),...extraPaths,...[...(cache.activity_posts||[]).slice(0,80),...(cache.channel_messages||[]).slice(0,180),...(cache.direct_messages||[]).slice(0,160),...channelHistoryRows,...dmThreadRows].map(x=>x.image_path)].filter(Boolean);
   const missing=[...new Set(paths)].filter(p=>!mediaUrls.has(p)||mediaUrls.get(p).expires<Date.now()+60000);
   if(!missing.length)return false;
   const {data,error}=await db.storage.from('club-media').createSignedUrls(missing,900);
+  if(session?.user.id!==owner||generation!==authGeneration)return false;
   if(error){console.error(error);return false;}
   for(const [i,item] of (data||[]).entries())if(item.signedUrl)mediaUrls.set(item.path||missing[i],{url:item.signedUrl,expires:Date.now()+900000});
   return true;
@@ -536,13 +540,13 @@ async function loadAdminApplicationPages(){
 }
 async function hydrateOwnApplicationReason(){
   if(!me||!session)return;
-  const userId=session.user.id;
+  const userId=session.user.id,generation=authGeneration;
   applicationAnswersReady=!Object.hasOwn(me,'application_reason');
   if(!applicationAnswersReady)return;
   // Approved accounts cannot edit an application; only applicants need to load it.
   if(me.membership_status==='pending'||me.membership_status==='rejected'){
     const {data,error}=await db.from('application_answers').select('reason').eq('user_id',userId).maybeSingle();
-    if(session?.user.id!==userId||me?.id!==userId)return;
+    if(session?.user.id!==userId||me?.id!==userId||generation!==authGeneration)return;
     if(error){console.error('application_answers',error);me.application_reason='';return;}
     me.application_reason=data?.reason||'';
   }
@@ -736,8 +740,8 @@ async function refreshUnreadCounts(){
   }
 }
 
-// Keep the complete load for sign-in and mutations. Background checks only revisit
-// data used by the visible page, while the separate chat and approval loops stay focused.
+// Open the authorized shell first, hydrate its page, then load the remaining tools.
+// Background checks revisit the visible page; chat and approval loops stay focused.
 const pageRefreshDependencies={
   home:['project_tasks','courses','course_enrollments','course_submissions','course_completions','events','activity_posts','profiles'],
   about:[],founders:['founders'],investors:['founders','investor_updates'],
@@ -755,12 +759,12 @@ const pageRefreshDependencies={
   discussions:['topics','replies','projects','profiles'],
   courses:['courses','learning_materials','course_enrollments','course_submissions','course_completions','profiles'],
   teaching:['courses','learning_materials','course_enrollments','course_submissions','course_completions','profiles'],
-  events:['events','event_rsvps'],calendar:['events','founder_meetings','project_tasks','courses','course_enrollments'],
+  events:['events','event_rsvps'],calendar:['events','event_rsvps','founder_meetings','founder_meeting_rsvps','project_tasks','projects','courses','course_enrollments','course_submissions','course_completions'],
   announcements:['announcements'],'founder-room':['founder_meetings','founder_meeting_rsvps','founder_invites','profiles']
 };
 let backgroundRefreshBusy=false, lastProfileRefreshAt=0;
 async function refreshVisiblePage(){
-  if(backgroundRefreshBusy||document.hidden||!session)return;
+  if(backgroundRefreshBusy||workspaceHydrating||document.hidden||!session)return;
   backgroundRefreshBusy=true;
   try{await refresh('page');}catch(error){console.error('Page refresh',error);}
   finally{backgroundRefreshBusy=false;}
@@ -783,13 +787,15 @@ async function refresh(mode='full') {
     if(session?.user.id!==owner||generation!==authGeneration)return;
     cache={profiles:me?[me]:[],founders:publicFounders};
     if(!scoped||page==='founders')await detectFounderPortraits();
-    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();route();return;
+    if(session?.user.id!==owner||generation!==authGeneration)return;
+    communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();if(!document.activeElement?.closest('form[data-kind="application"]'))route();return;
   }
   if(investor()){
     const results=await Promise.allSettled(['investor_updates','investor_inquiries','privacy_requests','founders'].map(readRecords));
     if(session?.user.id!==owner||generation!==authGeneration)return;
     cache={profiles:[me],investor_updates:results[0].status==='fulfilled'?results[0].value:[],investor_inquiries:results[1].status==='fulfilled'?results[1].value:[],privacy_requests:results[2].status==='fulfilled'?results[2].value:[],founders:results[3].status==='fulfilled'?results[3].value:[]};
     await detectFounderPortraits();
+    if(session?.user.id!==owner||generation!==authGeneration)return;
     communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=results[2].status==='fulfilled';inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
     if(previous!==accessSignature(me)||!['home','about','founders','investors','investor-portal','privacy'].includes(page)) {route();return;}
     render();return;
@@ -825,8 +831,10 @@ async function refresh(mode='full') {
   results.forEach((r,i)=>{ if(r.status==='fulfilled') cache[names[i]]=r.value; else {cache[names[i]]=[];console.error(names[i],r.reason);} });
   if(names.includes('profiles')&&results[names.indexOf('profiles')].status==='fulfilled')lastProfileRefreshAt=Date.now();
   if(names.includes('founders'))await detectFounderPortraits();
+  if(session?.user.id!==owner||generation!==authGeneration)return;
   if(admin()&&(!scoped||page==='admin')){
     const pending=await db.from('profiles').select('id',{count:'exact',head:true}).eq('membership_status','pending');
+    if(session?.user.id!==owner||generation!==authGeneration)return;
     if(pending.error)console.error('Pending application count',pending.error);
     else adminPendingCount=pending.count||0;
   }
@@ -847,11 +855,14 @@ async function refresh(mode='full') {
   if(names.includes('learning_materials'))learningReady=succeeded('learning_materials');
   if(!scoped||['course_enrollments','course_submissions','course_completions'].every(n=>names.includes(n)))courseReady=['course_enrollments','course_submissions','course_completions'].every(succeeded);
   if(!scoped||names.includes('courses')){
-    const planningProbe=courseReady?await db.from('courses').select('submission_due_at').limit(1):{error:true};
+    const [planningProbe,lifecycleProbe,seenProbe]=courseReady?await Promise.all([
+      db.from('courses').select('submission_due_at').limit(1),
+      db.from('courses').select('status').limit(1),
+      db.from('course_submissions').select('seen_at').limit(1)
+    ]):[{error:true},{error:true},{error:true}];
+    if(session?.user.id!==owner||generation!==authGeneration)return;
     coursePlanningReady=!planningProbe.error;
-    const lifecycleProbe=courseReady?await db.from('courses').select('status').limit(1):{error:true};
     courseLifecycleReady=!lifecycleProbe.error;
-    const seenProbe=courseReady?await db.from('course_submissions').select('seen_at').limit(1):{error:true};
     courseSeenReady=!seenProbe.error;
   }
   if(!scoped||page==='teaching')cache.course_roster=[];
@@ -859,32 +870,40 @@ async function refresh(mode='full') {
     try{
       for(let offset=0;;offset+=500){
         const roster=await db.rpc('teacher_course_roster').order('course_id').order('learner_id').range(offset,offset+499);
+        if(session?.user.id!==owner||generation!==authGeneration)return;
         if(roster.error)throw roster.error;
         cache.course_roster.push(...(roster.data||[]));
         if((roster.data||[]).length<500)break;
       }
-    }catch(error){console.error('teacher_course_roster',error);coursePlanningReady=false;cache.course_roster=[];}
+    }catch(error){if(session?.user.id!==owner||generation!==authGeneration)return;console.error('teacher_course_roster',error);coursePlanningReady=false;cache.course_roster=[];}
   }
+  if(session?.user.id!==owner||generation!==authGeneration)return;
   if(names.includes('privacy_requests'))privacyReady=succeeded('privacy_requests');
   if(names.includes('inventory_items')){
     inventoryReady=succeeded('inventory_items')&&(!founder()||succeeded('inventory_movements'));
     const {error:catalogError}=inventoryReady?await db.from('inventory_items').select('item_type').limit(1):{error:true};
+    if(session?.user.id!==owner||generation!==authGeneration)return;
     inventoryCatalogReady=!catalogError;
   }
   if(names.includes('finance_entries'))financeReady=founder()&&succeeded('finance_entries');
   if(names.includes('finance_reviews'))financeApprovalsReady=financeReady&&succeeded('finance_reviews');
   await refreshUnreadCounts();
+  if(session?.user.id!==owner||generation!==authGeneration)return;
   if(page==='feed'&&feedReady)await loadFeedPage(false);
   if(page==='channels'&&communityReady&&activeChannelId)await loadChannelHistory(false);
   if(dmReady&&!dmUpgradeChecked)await loadDmCapabilities();
   if(page==='messages'&&dmReady){if(dmInboxReady)await loadDmInbox();if(activePeerId)await loadDmThread(false);}
+  if(session?.user.id!==owner||generation!==authGeneration)return;
   if(!scoped){
     const {error:mediaError}=feedReady?await db.from('activity_posts').select('image_path').limit(1):{error:true};
+    if(session?.user.id!==owner||generation!==authGeneration)return;
     mediaReady=!mediaError;
     const {error:avatarError}=mediaReady?await db.from('profiles').select('avatar_path').eq('id',owner).limit(1):{error:true};
+    if(session?.user.id!==owner||generation!==authGeneration)return;
     avatarReady=!avatarError;
   }
   await hydrateMedia();
+  if(session?.user.id!==owner||generation!==authGeneration)return;
   if(page==='applications'&&admin())void loadAdminApplicationPages();
   if(previous!==accessSignature(me)){route();return;}
   if(page==='notifications' && document.activeElement?.closest('#content')) { render(); return; }
@@ -920,7 +939,7 @@ function dismissLoginWelcome(){
   clearTimeout(loginWelcomeTimer);loginWelcomeTimer=null;loginWelcomeOwner=null;
   const video=$('#loginWelcomeVideo'),dialog=$('#loginWelcome');
   if(video){video.onended=null;video.onerror=null;video.pause();try{video.currentTime=0;}catch{}}
-  if(dialog?.open){dialog.close();const content=$('#content');content?.setAttribute('tabindex','-1');content?.focus({preventScroll:true});}
+  if(dialog?.open)dialog.close();
 }
 function showLoginWelcome(){
   const owner=session?.user.id,dialog=$('#loginWelcome'),video=$('#loginWelcomeVideo'),still=$('#loginWelcomeStill');
@@ -928,7 +947,7 @@ function showLoginWelcome(){
   dismissLoginWelcome();loginWelcomeOwner=owner;
   const request=loginWelcomeRequest;
   still.hidden=true;if(video)video.hidden=false;
-  try{dialog.showModal();}catch{loginWelcomeOwner=null;return;}
+  try{dialog.show();}catch{loginWelcomeOwner=null;return;}
   const active=()=>request===loginWelcomeRequest&&session?.user.id===owner&&loginWelcomeOwner===owner&&dialog.open;
   const showStill=(duration=1100)=>{
     if(!active())return;
@@ -937,7 +956,6 @@ function showLoginWelcome(){
     clearTimeout(loginWelcomeTimer);
     loginWelcomeTimer=setTimeout(()=>{if(active())dismissLoginWelcome();},duration);
   };
-  $('#loginWelcomeSkip')?.focus();
   if(!video||window.matchMedia?.('(prefers-reduced-motion: reduce)').matches){showStill();return;}
   video.onended=()=>showStill(400);
   video.onerror=()=>showStill();
@@ -962,39 +980,73 @@ async function signedIn(newSession,showWelcome=false) {
   closeImageViewer(false);
   if($('#workspaceSearchInput'))close();
   session=newSession;
+  me=null;cache={};applicationAnswersReady=false;workspaceLoading=!!session;workspaceHydrating=!!session;workspaceLoadError='';
+  communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;roleReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
   inboxUnreadCount=null;inboxCountRequest++;dismissMemberAlert();memberDeferredNotification=null;memberNotificationPrimed=false;
   unreadCounts={channels:{},direct_messages:{},direct_peers:[],direct_total:0};unreadCountsReady=false;
   for(const draft of dmDrafts.values())clearDmDraftFile(draft);
   dmDrafts.clear();dmLatestMessages.clear();dmThreadCoveredNotices.clear();dmReplyRows.clear();dmPeerReceipts.clear();dmReactionRows=[];dmUpgradeChecked=false;dmRepliesReady=false;dmReactionsReady=false;dmInboxReady=false;dmReceiptsReady=false;dmReceiptsChecked=false;dmInboxOffset=0;dmInboxMore=false;dmInboxLoading=false;dmHasMore=false;dmEarlierLoading=false;dmReactionInFlight.clear();dmSearchTerm='';dmSearchBusy=false;dmSearchError='';dmListView='chats';dmEmojiOpen=false;dmSearchOpen=false;dmSearchRows=[];dmSearchRequest++;dmReadInFlight.clear();dmSendingPeers.clear();dmFilterTerm='';dmListScrollTop=0;activePeerId=null;dmRequest++;
   applicationVerification=new Map();applicationsOwner=null;feedOwner=null;channelHistoryId=null;dmThreadPeer=null;
   applicationRows=[];approvedAccountRows=[];channelHistoryRows=[];dmThreadRows=[];
-  authReady=true;
+  authReady=!session;
   clearInterval(pollTimer); clearInterval(presenceTimer);
   clearInterval(chatTimer);clearInterval(adminAlertTimer);dismissAdminAlert();
   adminPendingCount=0;adminAlertsInitialized=false;adminSeenApplicationIds=new Set();adminAlertPolling=false;
-  if(chatRealtime) { await db.removeChannel(chatRealtime); chatRealtime=null; }
-  if(memberNoticeRealtime) { await db.removeChannel(memberNoticeRealtime); memberNoticeRealtime=null; }
+  if(chatRealtime) { void db.removeChannel(chatRealtime).catch(console.error); chatRealtime=null; }
+  if(memberNoticeRealtime) { void db.removeChannel(memberNoticeRealtime).catch(console.error); memberNoticeRealtime=null; }
   if(generation!==authGeneration)return;
   void window.InnovateXPush?.authChanged(session?.user.id||null,db).then(()=>{if(page==='notifications')render();}).catch(error=>{console.error('Push state',error);if(!session)show(error.message);});
   if(session) {
+    render();
     pendingEmail=''; sessionStorage.removeItem('innovatex.pendingEmail');sessionStorage.removeItem('innovatex.pendingAuthMode');
     const {data,error}=await db.from('profiles').select('*').eq('id',session.user.id).single();
     if(generation!==authGeneration)return;
-    if(error) { loginWelcomePendingOwner=null;fail(error); return; }
+    if(error||!data) { loginWelcomePendingOwner=null;workspaceLoading=false;workspaceHydrating=false;workspaceLoadError='We could not check your account access. Please retry.';authReady=true;render();fail(error||Error(workspaceLoadError)); return; }
     me=data;
-    await hydrateOwnApplicationReason();
+    loadCalendarPreferences();
+    if(!approved())await hydrateOwnApplicationReason();
     if(generation!==authGeneration)return;
     roleReady='application_type' in me;
     if(roleReady){
       if(!approved()&&['pending','rejected'].includes(me.membership_status)&&sessionStorage.getItem('innovatex.pendingType')){
         const {error:typeError}=await db.rpc('set_application_type',{p_type:pendingType});
+        if(generation!==authGeneration)return;
         if(typeError)fail(typeError);else me.application_type=pendingType;
       }
       sessionStorage.removeItem('innovatex.pendingType');pendingType='member';
     }
-    if(approved())await touchPresence();
-    await refresh();
+    workspaceLoading=false;authReady=true;
+    if(approved())void touchPresence().catch(console.error);
+  } else { me=null;applicationAnswersReady=false;roleReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); await loadPublic(); }
+  if(session&&!approved()&&!['about','founders','investors','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
+  if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
+  if(page==='founder-room'&&!founder()) {page='founders';history.replaceState(null,'','#founders');}
+  if(page==='finance'&&!admin()){page=founderOnly()?'finance-review':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
+  if(page==='finance-review'&&!founderOnly()){page=admin()?'finance':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
+  if(pendingProtectedPage&&clubAccess()){
+    history.replaceState(null,'','#'+pendingProtectedPage);
+    pendingProtectedPage='';
+  }
+  if(generation!==authGeneration)return;
+  route();completeLoginWelcome(generation);
+  if(session)void finishWorkspaceSignIn(generation).catch(error=>{
     if(generation!==authGeneration)return;
+    workspaceHydrating=false;render();fail(error);
+  });
+}
+async function finishWorkspaceSignIn(generation){
+    if(generation!==authGeneration)return;
+    if(!approved()){
+      workspaceHydrating=false;render();pollTimer=setInterval(refreshVisiblePage,45000);return;
+    }
+    await hydrateOwnApplicationReason();
+    if(generation!==authGeneration)return;
+    await refresh('page');
+    if(generation!==authGeneration)return;
+    render();
+    if(!investor())await refresh();
+    if(generation!==authGeneration)return;
+    workspaceHydrating=false;render();
     pollTimer=setInterval(refreshVisiblePage,45000);
     if(approved()){
       presenceTimer=setInterval(()=>{if(!document.hidden)void touchPresence();},20000);
@@ -1013,19 +1065,6 @@ async function signedIn(newSession,showWelcome=false) {
         }).subscribe();
     }
     if(admin())adminAlertTimer=setInterval(()=>{if(!document.hidden)void refreshAdminAlerts();},10000);
-  } else { me=null;applicationAnswersReady=false;roleReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); await loadPublic(); }
-  if(session&&!approved()&&!['about','founders','investors','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
-  if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
-  if(page==='founder-room'&&!founder()) {page='founders';history.replaceState(null,'','#founders');}
-  if(page==='finance'&&!admin()){page=founderOnly()?'finance-review':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
-  if(page==='finance-review'&&!founderOnly()){page=admin()?'finance':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
-  if(pendingProtectedPage&&clubAccess()){
-    history.replaceState(null,'','#'+pendingProtectedPage);
-    pendingProtectedPage='';
-  }
-  if(generation!==authGeneration)return;
-  route();
-  completeLoginWelcome(generation);
 }
 async function init() {
   document.querySelectorAll('#nav a[data-page]').forEach(a=>{const slot=a.querySelector('span');if(slot)slot.innerHTML=iconSvg(a.dataset.page);});
@@ -1057,6 +1096,8 @@ async function init() {
   updateDmViewport();
   window.visualViewport?.addEventListener('resize',updateDmViewport);
   window.visualViewport?.addEventListener('scroll',updateDmViewport);
+  window.addEventListener('beforeprint',prepareCalendarPrint);
+  window.addEventListener('afterprint',()=>{const list=$('#calendarPrintList');if(list)list.innerHTML='';});
   window.addEventListener('hashchange',route);
   window.addEventListener('hashchange',()=>{
     if(session&&authReady&&!document.hidden&&!['feed','channels','messages','applications'].includes(page))void refreshVisiblePage();
@@ -1068,6 +1109,7 @@ async function init() {
   document.addEventListener('click',actions);
   document.addEventListener('keydown',e=>{
     if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openWorkspaceSearch();return;}
+    if(calendarKeyboard(e))return;
     if(e.target.id==='workspaceSearchInput'||e.target.closest?.('.workspace-search-results')){
       const input=$('#workspaceSearchInput'),rows=[...document.querySelectorAll('.workspace-search-result')],current=rows.indexOf(document.activeElement);
       if(e.key==='ArrowDown'){e.preventDefault();rows[Math.min(current+1,rows.length-1)]?.focus();return;}
@@ -1094,6 +1136,7 @@ async function init() {
     if(e.target.id==='inventorySearch'){inventorySearchTerm=e.target.value;applyInventorySearch();}
   });
   document.addEventListener('change',e=>{
+    if(e.target.id?.startsWith('calendar')&&(e.target.dataset.calendarSetting||['calendarJump','calendarMonthJump','calendarYearJump'].includes(e.target.id))){calendarChange(e.target);return;}
     if(e.target.name==='dm_image'&&activePeerId&&e.target.form?.dataset.peer===activePeerId){
       const file=e.target.files?.[0];
       if(file){
@@ -1161,11 +1204,17 @@ function setSidebarOpen(open){
 }
 function route() {
   const requested=location.hash.slice(1).split('/')[0] || 'home';page=pages.includes(requested)?requested:'home';
+  if(page==='calendar'){
+    const [,date,view]=location.hash.slice(1).split('/'),parsed=calendarParseDay(date);
+    if(parsed){calendarSelected=parsed;calendarMonth=new Date(parsed.getFullYear(),parsed.getMonth(),1);calendarAgendaPage=0;}
+    if(calendarViews.includes(view))calendarView=view;
+  }
   const protectedGuestPage=!session&&!['home','about','founders','investors','privacy'].includes(page);
   if(protectedGuestPage){
     page='home';
     if(authReady||!configured){
-      pendingProtectedPage=requested;
+      const [,date,view]=location.hash.slice(1).split('/');
+      pendingProtectedPage=requested==='calendar'&&calendarParseDay(date)?`calendar/${date}/${calendarViews.includes(view)?view:'month'}`:requested;
       history.replaceState(null,'','#home');
     }
   }else if(!session&&authReady)pendingProtectedPage='';
@@ -1207,6 +1256,11 @@ function render() {
   const financeBadge=$('#financeReviewBadge');if(financeBadge){financeBadge.textContent=pendingFinance;financeBadge.hidden=!pendingFinance;}
   const unreadDm=unreadCountsReady?unreadCounts.direct_total:(cache.direct_messages||[]).filter(m=>m.recipient_id===session?.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;
   $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
+  if(workspaceLoadError||workspaceLoading||workspaceHydrating&&!(pageRefreshDependencies[page]||[]).every(name=>Object.hasOwn(cache,name))){
+    $('#content').classList.remove('dm-view');
+    $('#content').innerHTML=workspaceLoadError?`<section class="workspace-start"><h1>Let’s open your workspace</h1><p>${esc(workspaceLoadError)}</p><button class="button" data-action="retryWorkspace">Retry account check</button></section>`:`<section class="workspace-start" aria-busy="true"><span class="eyebrow">${workspaceLoading?'SIGNING IN':'YOUR WORKSPACE'}</span><h1>${workspaceLoading?'Opening SPACE…':page==='home'?`Welcome, ${esc((me?.full_name||'member').split(/\s+/)[0])}.`:esc(workspacePageInfo[page]?.title||'SPACE')}</h1><p role="status">${workspaceLoading?'Checking your account access…':'Your workspace is open. Loading your latest records…'}</p><div class="workspace-skeleton" aria-hidden="true"><span></span><span></span><span></span></div></section>`;
+    return;
+  }
   const views={home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
   $('#content').innerHTML=views[page]();
@@ -1924,56 +1978,213 @@ function events() {
   return `${head('CLUB ACTIVITIES','Events','Browse scheduled workshops, meetings and demo days.',admin()?button('+ Schedule event','eventForm'):'')}
   <div class="grid grid-2">${list.length?list.map(e=>`<div class="card"><div class="row"><span class="tag ${new Date(e.starts_at)<new Date()?'gold':''}">${new Date(e.starts_at)<new Date()?'Past event':'Upcoming'}</span><span class="subtle">${dateTime(e.starts_at)}</span></div><h3 style="margin-top:18px">${esc(e.title)}</h3><p>${esc(e.description||'')}</p><div class="meta"><span>◷ ${dateTime(e.starts_at)}</span><span>⌁ ${esc(e.location||'Online')}</span></div>${rsvpControls("event",e.id)}<div class="card-footer"><div>${e.meet_url?`<a class="link" href="${esc(cleanUrl(e.meet_url))}" target="_blank" rel="noopener noreferrer">Join Google Meet ↗</a>`:''}</div><div>${admin()&&!e.meet_url?`<button class="text-button" data-action="createMeet" data-kind="event" data-id="${esc(e.id)}">Create Meet</button> · `:''}<button class="text-button" data-action="calendar" data-id="${esc(e.id)}">Add to calendar</button> · <button class="text-button" data-action="ics" data-id="${esc(e.id)}">ICS</button></div></div></div>`).join(''):empty('No events yet','Events will appear here when the team sets the schedule.')}</div>`;
 }
-const calendarDayKey = value => {const d=new Date(value);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
-function calendarEntries() {
+const calendarDayKey=value=>{const d=new Date(value);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
+const calendarViews=['month','week','day','agenda','year'];
+const calendarKinds={event:'Club events',course:'Workshops',course_due:'Course deadlines',task:'Project tasks',meeting:'Founder meetings'};
+const calendarKey=item=>`${item.kind}:${item.id}`;
+function calendarParseDay(value){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(value||''))return null;
+  const [year,month,day]=value.split('-').map(Number),d=new Date(year,month-1,day,12);
+  return year>=1900&&year<=2100&&calendarDayKey(d)===value?d:null;
+}
+function calendarStartDay(value){const d=new Date(value);d.setHours(0,0,0,0);return d;}
+function calendarAddDays(value,days){const d=new Date(value);d.setDate(d.getDate()+days);return d;}
+function calendarShiftMonth(value,amount){
+  const d=new Date(value),target=new Date(d.getFullYear(),d.getMonth()+amount,1,12);
+  target.setDate(Math.min(d.getDate(),new Date(target.getFullYear(),target.getMonth()+1,0).getDate()));return target;
+}
+function calendarEnd(item){
+  const start=new Date(item.starts_at),end=item.ends_at?new Date(item.ends_at):null;
+  return end&&Number.isFinite(end.getTime())&&end>start?end:new Date(start.getTime()+(['task','course_due'].includes(item.kind)?60000:3600000));
+}
+function calendarRange(){
+  const date=calendarStartDay(calendarSelected),year=date.getFullYear(),month=date.getMonth();
+  if(calendarView==='year')return {start:new Date(year,0,1),end:new Date(year+1,0,1)};
+  if(calendarView==='month')return {start:new Date(year,month,1),end:new Date(year,month+1,1)};
+  if(calendarView==='week'){const start=calendarAddDays(date,-((date.getDay()-calendarPreferences.weekStart+7)%7));return {start,end:calendarAddDays(start,7)};}
+  return {start:date,end:calendarAddDays(date,calendarView==='agenda'?30:1)};
+}
+function calendarBetween(items,start,end){return items.filter(item=>new Date(item.starts_at)<end&&calendarEnd(item)>start);}
+function calendarResponse(item){
+  if(!['event','meeting'].includes(item.kind))return '';
+  const key=item.kind==='meeting'?'meeting_id':'event_id',rows=cache[item.kind==='meeting'?'founder_meeting_rsvps':'event_rsvps']||[];
+  return rows.find(row=>row[key]===item.id&&row.user_id===session?.user.id)?.response||'unanswered';
+}
+function calendarPersonal(item){
+  const userId=session?.user.id;
+  if(item.kind==='task')return item.assignee_id===userId;
+  if(['course','course_due'].includes(item.kind))return item.instructor_id===userId&&teacher()||(cache.course_enrollments||[]).some(e=>e.course_id===item.id&&e.learner_id===userId);
+  if(item.kind==='meeting')return founder()&&calendarResponse(item)!=='not_going';
+  return ['going','maybe'].includes(calendarResponse(item));
+}
+function calendarEntries(){
+  if(!clubAccess())return [];
   const items=(cache.events||[]).map(e=>({...e,kind:'event'}));
-  if(founder())items.push(...(cache.founder_meetings||[]).map(m=>({...m,kind:'meeting'})));
-  items.push(...(cache.project_tasks||[]).filter(t=>t.due_at&&t.status!=='done').map(t=>({...t,kind:'task',starts_at:t.due_at})));
-  if(clubAccess()){
-    const joined=new Set((cache.course_enrollments||[]).filter(e=>e.learner_id===session?.user.id).map(e=>e.course_id));
-    for(const course of cache.courses||[]){
-      if(!admin()&&!(teacher()&&course.instructor_id===session?.user.id)&&!joined.has(course.id))continue;
-      if(course.starts_at)items.push({id:course.id,kind:'course',title:course.title,starts_at:course.starts_at});
-      if(coursePlanningReady&&course.submission_due_at)items.push({id:course.id,kind:'course_due',title:course.title,starts_at:course.submission_due_at});
-    }
+  if(founder())items.push(...(cache.founder_meetings||[]).map(m=>({...m,description:m.agenda,location:'Founder meeting',kind:'meeting'})));
+  items.push(...(cache.project_tasks||[]).filter(t=>t.due_at&&t.status!=='done').map(t=>({...t,kind:'task',starts_at:t.due_at,description:t.description||'Open the project plan for this task.'})));
+  const joined=new Set((cache.course_enrollments||[]).filter(e=>e.learner_id===session?.user.id).map(e=>e.course_id));
+  for(const course of cache.courses||[]){
+    if(!admin()&&!(teacher()&&course.instructor_id===session?.user.id)&&!joined.has(course.id))continue;
+    if(course.starts_at)items.push({...course,kind:'course'});
+    const complete=(cache.course_enrollments||[]).some(e=>e.course_id===course.id&&e.learner_id===session?.user.id&&e.status==='completed')||(cache.course_completions||[]).some(record=>record.course_id===course.id&&record.learner_id===session?.user.id);
+    if(coursePlanningReady&&course.submission_due_at&&(!complete||admin()||teacher()&&course.instructor_id===session?.user.id))items.push({...course,kind:'course_due',starts_at:course.submission_due_at,ends_at:null});
   }
-  return items.filter(x=>x.starts_at&&!Number.isNaN(new Date(x.starts_at).getTime())).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at));
+  return items.filter(item=>item.starts_at&&Number.isFinite(new Date(item.starts_at).getTime())).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at)||calendarKey(a).localeCompare(calendarKey(b)));
 }
-function calendarPage() {
-  const year=calendarMonth.getFullYear(),month=calendarMonth.getMonth(),today=calendarDayKey(new Date()),selected=calendarDayKey(calendarSelected);
-  const entries=calendarEntries(),byDay=new Map();
-  entries.forEach(item=>{const key=calendarDayKey(item.starts_at);if(!byDay.has(key))byDay.set(key,[]);byDay.get(key).push(item);});
-  const offset=new Date(year,month,1).getDay(),days=new Date(year,month+1,0).getDate();
-  const calendarLabel=item=>item.kind==='task'?'Task deadline':item.kind==='meeting'?'Founder meeting':item.kind==='course'?'Workshop starts':item.kind==='course_due'?'Project deadline':'Club event';
-  const cells=Array.from({length:Math.ceil((offset+days)/7)*7},(_,index)=>{
-    const day=index-offset+1;if(day<1||day>days)return '<div class="cal-cell outside" aria-hidden="true"></div>';
-    const key=calendarDayKey(new Date(year,month,day)),items=byDay.get(key)||[];
-    return `<div class="cal-cell ${key===today?'today':''} ${key===selected?'selected':''}"><button class="cal-date" data-action="calendarDay" data-date="${key}" aria-label="${esc(new Date(year,month,day).toLocaleDateString(undefined,{dateStyle:'full'}))}, ${items.length} calendar items" aria-pressed="${key===selected}">${day}</button><div class="cal-items">${items.slice(0,3).map(item=>`<button class="cal-chip ${item.kind}" data-action="calendarItem" data-kind="${item.kind}" data-id="${esc(item.id)}" title="${esc(calendarLabel(item)+': '+item.title)}" aria-label="${esc(calendarLabel(item)+': '+item.title+', '+dateTime(item.starts_at))}">${esc(item.title)}</button>`).join('')}${items.length>3?`<button class="cal-more" data-action="calendarDay" data-date="${key}">+${items.length-3} more</button>`:''}</div></div>`;
+function calendarFilteredEntries(){
+  const term=calendarSearch.trim().toLocaleLowerCase(),prefs=calendarPreferences;
+  return calendarEntries().filter(item=>prefs.kinds.includes(item.kind)
+    &&(!prefs.mine||calendarPersonal(item))
+    &&(!prefs.online||!!item.meet_url||/online|virtual/i.test(item.location||''))
+    &&(!prefs.hidePast||calendarEnd(item)>new Date())
+    &&(prefs.track==='all'||['course','course_due'].includes(item.kind)&&courseTrackFor(item)===prefs.track)
+    &&(prefs.response==='all'||calendarResponse(item)===prefs.response)
+    &&(!term||[item.title,item.description,item.location,courseTrackFor(item)].filter(Boolean).join(' ').toLocaleLowerCase().includes(term)));
+}
+function calendarConflicts(items){
+  const conflicts=new Set(),active=[];
+  for(const item of items.filter(i=>calendarPersonal(i)&&!['task','course_due'].includes(i.kind)).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at))){
+    const start=new Date(item.starts_at);for(let i=active.length-1;i>=0;i--)if(calendarEnd(active[i])<=start)active.splice(i,1);
+    for(const other of active){conflicts.add(calendarKey(item));conflicts.add(calendarKey(other));}active.push(item);
+  }
+  return conflicts;
+}
+function calendarLabel(item){return {event:'Club event',course:'Workshop',course_due:'Course deadline',task:'Task deadline',meeting:'Founder meeting'}[item.kind]||'Calendar item';}
+function calendarItemTime(item){
+  const start=new Date(item.starts_at),end=calendarEnd(item),time=d=>d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+  if(['task','course_due'].includes(item.kind))return `Due ${time(start)}`;
+  return calendarDayKey(start)===calendarDayKey(end)?`${time(start)}–${time(end)}`:`${start.toLocaleDateString(undefined,{month:'short',day:'numeric'})}, ${time(start)} – ${end.toLocaleDateString(undefined,{month:'short',day:'numeric'})}, ${time(end)}`;
+}
+function loadCalendarPreferences(){
+  calendarSearch='';calendarAgendaPage=0;calendarView='month';
+  calendarPreferences={weekStart:1,compact:false,kinds:Object.keys(calendarKinds),mine:false,track:'all',response:'all',online:false,hidePast:false};
+  try{
+    const saved=JSON.parse(localStorage.getItem(`space.calendar.${session?.user.id||'guest'}`)||'null');if(!saved)return;
+    if(calendarViews.includes(saved.view))calendarView=saved.view;
+    if([0,1].includes(saved.weekStart))calendarPreferences.weekStart=saved.weekStart;
+    for(const key of ['compact','mine','online','hidePast'])if(typeof saved[key]==='boolean')calendarPreferences[key]=saved[key];
+    if(Array.isArray(saved.kinds))calendarPreferences.kinds=saved.kinds.filter(kind=>Object.hasOwn(calendarKinds,kind));
+    if(saved.track==='all'||courseTracks.some(t=>t.name===saved.track))calendarPreferences.track=saved.track;
+    if(['all','going','maybe','not_going','unanswered'].includes(saved.response))calendarPreferences.response=saved.response;
+  }catch{}
+}
+function saveCalendarPreferences(){try{localStorage.setItem(`space.calendar.${session?.user.id||'guest'}`,JSON.stringify({...calendarPreferences,view:calendarView}));}catch{}}
+function calendarNavigate(date,view=calendarView){
+  const valid=calendarParseDay(calendarDayKey(date));if(!valid)return;
+  calendarSelected=valid;calendarMonth=new Date(valid.getFullYear(),valid.getMonth(),1);if(calendarViews.includes(view))calendarView=view;calendarAgendaPage=0;
+  if(page==='calendar')history.replaceState(null,'',`#calendar/${calendarDayKey(valid)}/${calendarView}`);
+  saveCalendarPreferences();render();
+}
+function calendarMove(amount){
+  if(['month','year'].includes(calendarView))return calendarNavigate(calendarShiftMonth(calendarSelected,amount*(calendarView==='year'?12:1)));
+  calendarNavigate(calendarAddDays(calendarSelected,amount*(calendarView==='week'?7:calendarView==='agenda'?30:1)));
+}
+function calendarChange(control){
+  if(!clubAccess())return;
+  if(control.id==='calendarJump'){const date=calendarParseDay(control.value);if(date)calendarNavigate(date);return;}
+  if(control.id==='calendarMonthJump'){const date=calendarParseDay(control.value+'-01');if(date)calendarNavigate(date,'month');return;}
+  if(control.id==='calendarYearJump'){const year=Number(control.value);if(Number.isInteger(year)&&year>=1900&&year<=2100)calendarNavigate(calendarShiftMonth(calendarSelected,(year-calendarSelected.getFullYear())*12));return;}
+  const key=control.dataset.calendarSetting;
+  if(key==='kinds'){
+    if(!Object.hasOwn(calendarKinds,control.value)||control.value==='meeting'&&!founder())return;
+    calendarPreferences.kinds=control.checked?[...new Set([...calendarPreferences.kinds,control.value])]:calendarPreferences.kinds.filter(kind=>kind!==control.value);
+  }else if(['mine','online','hidePast','compact'].includes(key))calendarPreferences[key]=!!control.checked;
+  else if(key==='weekStart'&&['0','1'].includes(control.value))calendarPreferences.weekStart=Number(control.value);
+  else if(key==='track'&&(control.value==='all'||courseTracks.some(t=>t.name===control.value)))calendarPreferences.track=control.value;
+  else if(key==='response'&&['all','going','maybe','not_going','unanswered'].includes(control.value))calendarPreferences.response=control.value;
+  else return;
+  calendarAgendaPage=0;saveCalendarPreferences();render();
+  const replacement=control.id?document.getElementById(control.id):null;replacement?.closest('details')?.setAttribute('open','');replacement?.focus({preventScroll:true});
+}
+function calendarKeyboard(event){
+  if(page!=='calendar'||!clubAccess()||event.ctrlKey||event.metaKey||event.altKey||event.target.closest?.('input,textarea,select,[contenteditable=true]')||$('#modal').open)return false;
+  const date=event.target.closest?.('.cal-date[data-date]');
+  if(date&&['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'].includes(event.key)){
+    const current=calendarParseDay(date.dataset.date);if(!current)return false;
+    const offset=(current.getDay()-calendarPreferences.weekStart+7)%7;
+    const amount={ArrowLeft:-1,ArrowRight:1,ArrowUp:-7,ArrowDown:7,Home:-offset,End:6-offset}[event.key];
+    event.preventDefault();calendarNavigate(calendarAddDays(current,amount));document.querySelector(`.cal-date[data-date="${calendarDayKey(calendarSelected)}"]`)?.focus();return true;
+  }
+  const key=event.key.toLowerCase(),view={m:'month',w:'week',d:'day',a:'agenda',y:'year'}[key];
+  if(!view&&!['t','[',']','/'].includes(key))return false;
+  event.preventDefault();if(view)calendarNavigate(calendarSelected,view);else if(key==='t')calendarNavigate(new Date());else if(key==='/')$('#calendarSearch')?.focus();else calendarMove(key==='['?-1:1);return true;
+}
+function calendarEntryCard(item,conflicts=new Set()){
+  const response=calendarResponse(item),isPast=calendarEnd(item)<new Date(),pastLabel=['task','course_due'].includes(item.kind)?'Past deadline':'Past';
+  return `<button class="cal-agenda-item cal-entry ${isPast?'is-past':''}" data-action="calendarItem" data-kind="${item.kind}" data-id="${esc(item.id)}"><span class="cal-dot ${item.kind}" aria-hidden="true"></span><span><strong>${esc(item.title)}</strong><small>${esc(calendarLabel(item))} · ${esc(calendarItemTime(item))}</small><span class="cal-entry-meta">${item.meet_url?'Online · ':''}${esc(item.location||'')}${response&&response!=='unanswered'?` · ${esc({going:'Going',maybe:'Maybe',not_going:'Can’t go'}[response]||response)}`:''}${isPast?' · '+pastLabel:''}${conflicts.has(calendarKey(item))?' · Overlaps another item':''}</span></span><span aria-hidden="true">↗</span></button>`;
+}
+function calendarMonthMarkup(entries,conflicts){
+  const year=calendarSelected.getFullYear(),month=calendarSelected.getMonth(),first=new Date(year,month,1),offset=(first.getDay()-calendarPreferences.weekStart+7)%7,gridStart=calendarAddDays(first,-offset),selected=calendarDayKey(calendarSelected),today=calendarDayKey(new Date());
+  const cells=Array.from({length:42},(_,index)=>{
+    const date=calendarAddDays(gridStart,index),key=calendarDayKey(date),items=calendarBetween(entries,calendarStartDay(date),calendarAddDays(calendarStartDay(date),1)),outside=date.getMonth()!==month;
+    return `<div class="cal-cell ${outside?'outside':''} ${key===today?'today':''} ${key===selected?'selected':''}"><div class="cal-cell-top"><button class="cal-date" data-action="calendarDay" data-date="${key}" aria-label="${esc(date.toLocaleDateString(undefined,{dateStyle:'full'}))}, ${items.length} items" aria-pressed="${key===selected}" ${key===today?'aria-current="date"':''}>${date.getDate()}</button>${items.length?`<span class="cal-day-count" aria-hidden="true">${items.length}</span>`:''}</div><div class="cal-items">${items.slice(0,calendarPreferences.compact?2:3).map(item=>`<button class="cal-chip ${item.kind} ${conflicts.has(calendarKey(item))?'has-conflict':''}" data-action="calendarItem" data-kind="${item.kind}" data-id="${esc(item.id)}" title="${esc(calendarLabel(item)+': '+item.title+' · '+calendarItemTime(item))}" aria-label="${esc(calendarLabel(item)+': '+item.title+' · '+calendarItemTime(item))}">${esc(item.title)}</button>`).join('')}${items.length>(calendarPreferences.compact?2:3)?`<button class="cal-more" data-action="calendarDay" data-date="${key}">+${items.length-(calendarPreferences.compact?2:3)} more</button>`:''}</div></div>`;
   }).join('');
-  const selectedItems=byDay.get(selected)||[];
-  const card=item=>`<button class="cal-agenda-item" data-action="calendarItem" data-kind="${item.kind}" data-id="${esc(item.id)}"><span class="cal-dot ${item.kind}"></span><span><strong>${esc(item.title)}</strong><small>${calendarLabel(item)} · ${dateTime(item.starts_at)}</small></span><span aria-hidden="true">↗</span></button>`;
-  const upcoming=entries.filter(item=>new Date(item.starts_at)>=new Date()).slice(0,5);
-  return `${head('YOUR WORKSPACE','Calendar','Plan around club events, your workshops and project deadlines. Leadership meetings appear to authorized accounts.',admin()?button('+ Schedule event','eventForm'):'')}
-  <div class="cal-toolbar"><div><h2>${esc(calendarMonth.toLocaleDateString(undefined,{month:'long',year:'numeric'}))}</h2><p class="subtle">${entries.filter(item=>{const d=new Date(item.starts_at);return d.getMonth()===month&&d.getFullYear()===year;}).length} items this month</p></div><div class="cal-nav"><button data-action="calendarToday" class="button button-outline button-sm">Today</button><button data-action="calendarPrev" aria-label="Previous month" class="cal-arrow">‹</button><button data-action="calendarNext" aria-label="Next month" class="cal-arrow">›</button></div></div>
-  <div class="cal-layout"><div class="cal-board"><div class="cal-weekdays">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<span>${d}</span>`).join('')}</div><div class="cal-grid">${cells}</div></div><aside class="cal-agenda"><h3>${esc(calendarSelected.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}))}</h3>${selectedItems.length?selectedItems.map(card).join(''):empty('Nothing scheduled','Choose a date with an item to view its details.')}<h3 class="cal-upcoming-title">Coming up</h3>${upcoming.length?upcoming.map(card).join(''):empty('No upcoming items','New events will show here when scheduled.')}<a href="#events" class="link cal-events-link">All club events →</a><a href="#courses" class="link cal-events-link">My courses →</a>${teacher()?'<a href="#teaching" class="link cal-events-link">Teaching studio →</a>':''}</aside></div><div class="cal-legend"><span><i class="cal-dot event"></i> Club event</span><span><i class="cal-dot course"></i> Workshop starts</span>${coursePlanningReady?'<span><i class="cal-dot course_due"></i> Course project deadline</span>':''}<span><i class="cal-dot task"></i> Task deadline</span>${founder()?'<span><i class="cal-dot meeting"></i> Founder meeting</span>':''}</div>`;
+  return `<div class="cal-board"><div class="cal-weekdays">${Array.from({length:7},(_,i)=>new Date(2026,0,4+(i+calendarPreferences.weekStart)%7).toLocaleDateString(undefined,{weekday:'short'})).map(day=>`<span>${esc(day)}</span>`).join('')}</div><div class="cal-grid">${cells}</div></div>`;
 }
-function calendarItem(kind,id) {
-  if((kind==='course'||kind==='course_due')&&clubAccess()){
-    const course=(cache.courses||[]).find(c=>c.id===id);
+function calendarListMarkup(items,conflicts,start){
+  const size=30,pages=Math.max(1,Math.ceil(items.length/size));calendarAgendaPage=Math.min(calendarAgendaPage,pages-1);
+  const visible=items.slice(calendarAgendaPage*size,(calendarAgendaPage+1)*size),groups=new Map();
+  for(const item of visible){const key=calendarDayKey(new Date(item.starts_at)<start?start:item.starts_at);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(item);}
+  return `<div class="cal-list-board">${visible.length?[...groups].map(([key,rows])=>`<section class="cal-list-day"><h3>${esc(calendarParseDay(key).toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}))}</h3>${rows.map(item=>calendarEntryCard(item,conflicts)).join('')}</section>`).join(''):empty('No matching items in this period','Try another date or clear a filter.')}<div class="cal-list-pager"><small>${items.length} matching ${items.length===1?'item':'items'}</small>${pages>1?`<div><button class="button button-outline button-sm" data-action="calendarPage" data-offset="-1" ${calendarAgendaPage===0?'disabled':''}>Previous</button><span>${calendarAgendaPage+1} / ${pages}</span><button class="button button-outline button-sm" data-action="calendarPage" data-offset="1" ${calendarAgendaPage===pages-1?'disabled':''}>Next</button></div>`:''}</div></div>`;
+}
+function calendarBoardMarkup(entries,visible,conflicts,range){
+  if(calendarView==='month')return calendarMonthMarkup(entries,conflicts);
+  if(calendarView==='week')return `<div class="cal-week-board">${Array.from({length:7},(_,i)=>{const day=calendarAddDays(range.start,i),key=calendarDayKey(day),rows=calendarBetween(entries,day,calendarAddDays(day,1));return `<section class="cal-week-day ${key===calendarDayKey(new Date())?'is-today':''}"><button class="cal-week-heading" data-action="calendarDay" data-date="${key}" data-view="day"><span>${esc(day.toLocaleDateString(undefined,{weekday:'short'}))}</span><strong>${day.getDate()}</strong><small>${rows.length} items</small></button>${rows.slice(0,6).map(item=>calendarEntryCard(item,conflicts)).join('')}${rows.length>6?`<button class="text-button" data-action="calendarDay" data-date="${key}" data-view="day">View all ${rows.length} →</button>`:!rows.length?'<p class="cal-quiet">No plans</p>':''}</section>`;}).join('')}</div>`;
+  if(calendarView==='year')return `<div class="cal-year-board">${Array.from({length:12},(_,month)=>{const start=new Date(calendarSelected.getFullYear(),month,1),end=new Date(calendarSelected.getFullYear(),month+1,1),rows=calendarBetween(entries,start,end);return `<button class="cal-year-month ${month===new Date().getMonth()&&start.getFullYear()===new Date().getFullYear()?'is-today':''}" data-action="calendarDay" data-date="${calendarDayKey(start)}" data-view="month"><span>${esc(start.toLocaleDateString(undefined,{month:'long'}))}</span><strong>${rows.length}</strong><small>${rows.length===1?'scheduled item':'scheduled items'}</small><p>${esc(rows[0]?.title||'Room for your next plan')}${rows.length>1?` +${rows.length-1} more`:''}</p></button>`;}).join('')}</div>`;
+  return calendarListMarkup(visible,conflicts,range.start);
+}
+function calendarPage(){
+  const entries=calendarFilteredEntries(),range=calendarRange(),visible=calendarBetween(entries,range.start,range.end),conflicts=calendarConflicts(visible),dayStart=calendarStartDay(calendarSelected),selectedItems=calendarBetween(entries,dayStart,calendarAddDays(dayStart,1)),upcoming=entries.filter(item=>calendarEnd(item)>=new Date()).slice(0,4),prefs=calendarPreferences;
+  const availableKinds=Object.entries(calendarKinds).filter(([kind])=>kind!=='meeting'||founder()),kindOptions=availableKinds.map(([value,label])=>`<label class="cal-check"><input id="calendarKind-${value}" type="checkbox" data-calendar-setting="kinds" value="${value}" ${prefs.kinds.includes(value)?'checked':''}><span><i class="cal-dot ${value}" aria-hidden="true"></i>${label}</span></label>`).join('');
+  const toggle=(key,label)=>`<label class="cal-check"><input id="calendarSetting-${key}" type="checkbox" data-calendar-setting="${key}" ${prefs[key]?'checked':''}><span>${label}</span></label>`;
+  const selectSetting=(key,label,options)=>`<label class="cal-select"><span>${label}</span><select id="calendarSetting-${key}" data-calendar-setting="${key}">${options.map(([value,text])=>`<option value="${esc(value)}" ${String(prefs[key])===String(value)?'selected':''}>${esc(text)}</option>`).join('')}</select></label>`;
+  const activeFilters=availableKinds.filter(([kind])=>!prefs.kinds.includes(kind)).length+[prefs.mine,prefs.online,prefs.hidePast,prefs.track!=='all',prefs.response!=='all',!!calendarSearch.trim()].filter(Boolean).length;
+  const title=calendarView==='year'?String(calendarSelected.getFullYear()):calendarView==='month'?calendarSelected.toLocaleDateString(undefined,{month:'long',year:'numeric'}):calendarView==='day'?calendarSelected.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'}):`${range.start.toLocaleDateString(undefined,{month:'short',day:'numeric'})} – ${calendarAddDays(range.end,-1).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`;
+  const timezone=Intl.DateTimeFormat().resolvedOptions().timeZone||'Your local time';
+  return `${head('YOUR WORKSPACE','Calendar','Move through your dates, see your commitments and keep practical work on track.',admin()?'<button class="button" data-action="calendarCreate">+ Schedule event</button>':'')}
+  <section class="calendar-workspace ${prefs.compact?'is-compact':''}" aria-label="SPACE calendar">
+  <div class="cal-toolbar"><div><h2 id="calendarPeriodTitle" aria-live="polite">${esc(title)}</h2><p class="subtle">${visible.length} matching ${visible.length===1?'item':'items'} · ${esc(timezone)}</p></div><div class="cal-nav"><button class="button button-outline button-sm" data-action="calendarToday">Today</button><button class="cal-arrow" data-action="calendarPrev" aria-label="Previous ${calendarView==='agenda'?'30 days':calendarView}">‹</button><button class="cal-arrow" data-action="calendarNext" aria-label="Next ${calendarView==='agenda'?'30 days':calendarView}">›</button><label class="cal-date-jump"><span class="sr-only">Go to date</span><input id="calendarJump" type="date" min="1900-01-01" max="2100-12-31" value="${calendarDayKey(calendarSelected)}" title="Go to date"></label></div></div>
+  <div class="cal-control-row"><div class="cal-view-switch" role="group" aria-label="Calendar view">${calendarViews.map(view=>`<button class="${view===calendarView?'selected':''}" data-action="calendarView" data-view="${view}" aria-pressed="${view===calendarView}">${view[0].toUpperCase()+view.slice(1)}</button>`).join('')}</div><form id="calendarSearchForm" class="cal-search" role="search"><label class="sr-only" for="calendarSearch">Search calendar titles, details and locations</label><input id="calendarSearch" name="search" type="search" placeholder="Search plans…" value="${esc(calendarSearch)}"><button class="button button-outline button-sm" type="submit">Search</button></form></div>
+  <div class="cal-utilities"><details class="cal-filter-panel"><summary>Filters${activeFilters?` <span>${activeFilters} active</span>`:''}</summary><div class="cal-filter-body"><fieldset><legend>Show on the calendar</legend>${kindOptions}</fieldset><fieldset><legend>Your commitments</legend>${toggle('mine','My schedule only')}${toggle('online','Online sessions only')}${toggle('hidePast','Upcoming & ongoing only')}${selectSetting('track','Learning track',[['all','All tracks'],...courseTracks.map(t=>[t.name,t.name])])}${selectSetting('response','Attendance',[['all','All responses'],['going','Going'],['maybe','Maybe'],['not_going','Can’t go'],['unanswered','Not answered']])}</fieldset><fieldset><legend>Display</legend>${selectSetting('weekStart','Week starts on',[[1,'Monday'],[0,'Sunday']])}${toggle('compact','Compact month layout')}<small>Your choices are saved on this device.</small></fieldset><button class="text-button" data-action="calendarReset">Clear search & filters</button></div></details>
+  <details class="cal-tool-panel"><summary>Date & export tools</summary><div class="cal-tools-body"><label class="cal-select"><span>Jump to month</span><input id="calendarMonthJump" type="month" min="1900-01" max="2100-12" value="${calendarDayKey(calendarSelected).slice(0,7)}"></label><label class="cal-select"><span>Jump to year</span><input id="calendarYearJump" type="number" min="1900" max="2100" step="1" value="${calendarSelected.getFullYear()}"></label><button class="button button-outline button-sm" data-action="calendarNextItem">Next scheduled item</button><button class="button button-outline button-sm" data-action="calendarExport" ${visible.length?'':'disabled'}>Export this view (.ics)</button><button class="button button-outline button-sm" data-action="calendarPrint">Print this view</button><button class="button button-outline button-sm" data-action="calendarCopyDate">Copy date link</button></div></details>
+  <details class="cal-help-panel"><summary>Keyboard shortcuts</summary><p><kbd>T</kbd> Today · <kbd>[</kbd> Previous period · <kbd>]</kbd> Next period · <kbd>M</kbd> Month · <kbd>W</kbd> Week · <kbd>D</kbd> Day · <kbd>A</kbd> Agenda · <kbd>Y</kbd> Year · <kbd>/</kbd> Search. On a date, use arrow keys to move and Home / End to reach either end of the week.</p></details></div>
+  ${activeFilters?`<div class="cal-filter-status" role="status">${visible.length} results in this period with ${activeFilters} active ${activeFilters===1?'filter':'filters'}. <button class="text-button" data-action="calendarReset">Clear filters</button></div>`:''}
+  ${conflicts.size?`<div class="cal-conflict-notice" role="status">${conflicts.size} of your sessions overlap in this period. Open their details to check the times.</div>`:''}
+  <div class="cal-layout">${calendarBoardMarkup(entries,visible,conflicts,range)}<aside class="cal-agenda"><div class="cal-agenda-header"><span class="eyebrow">SELECTED DATE</span><h3>${esc(calendarSelected.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}))}</h3>${admin()?'<button class="text-button" data-action="calendarCreate">+ Add event on this date</button>':''}</div>${selectedItems.length?selectedItems.slice(0,12).map(item=>calendarEntryCard(item,conflicts)).join(''):empty('Nothing scheduled','Choose another date or clear a filter.')}${selectedItems.length>12?`<button class="text-button" data-action="calendarView" data-view="day">View all ${selectedItems.length} items →</button>`:''}<h3 class="cal-upcoming-title">Next on your calendar</h3>${upcoming.length?upcoming.map(item=>`<div class="cal-upcoming-row"><small>${esc(date(item.starts_at))}</small>${calendarEntryCard(item,conflicts)}</div>`).join(''):empty('No upcoming matches','New plans will appear here when scheduled.')}<div class="cal-page-links"><a class="link" href="#events">Club events →</a><a class="link" href="#courses">My learning →</a>${teacher()?'<a class="link" href="#teaching">Teaching studio →</a>':''}</div></aside></div>
+  <div class="cal-print-list" id="calendarPrintList"></div><div class="cal-legend">${availableKinds.map(([kind,label])=>`<span><i class="cal-dot ${kind}"></i>${label}</span>`).join('')}<span>Completed task and learner course deadlines are removed automatically.</span></div></section>`;
+}
+function prepareCalendarPrint(){
+  const list=$('#calendarPrintList');if(!list||page!=='calendar'||!clubAccess())return;
+  const range=calendarRange(),items=calendarBetween(calendarFilteredEntries(),range.start,range.end);
+  list.innerHTML=`<h3>Items in this view</h3>${items.map(item=>`<article><strong>${esc(item.title)}</strong><small>${esc(calendarLabel(item))} · ${esc(dateTime(item.starts_at))} · ${esc(calendarItemTime(item))}</small><small>${esc(item.location||'')}${item.meet_url?' · '+esc(item.meet_url):''}</small></article>`).join('')}`;
+}
+function calendarDetailTools(item){return `<div class="cal-detail-actions"><button class="button button-outline button-sm" data-action="calendarGoogleItem" data-kind="${item.kind}" data-id="${esc(item.id)}">Add to Google Calendar</button><button class="button button-outline button-sm" data-action="calendarIcsItem" data-kind="${item.kind}" data-id="${esc(item.id)}">Download ICS</button></div>`;}
+function calendarItem(kind,id){
+  const item=calendarEntries().find(row=>row.kind===kind&&row.id===id);if(!item)return;
+  const timing=`<p class="cal-detail-time">${esc(dateTime(item.starts_at))} · ${esc(calendarItemTime(item))}</p>`;
+  if(['course','course_due'].includes(kind)){
     const enrolled=(cache.course_enrollments||[]).some(e=>e.course_id===id&&e.learner_id===session?.user.id);
-    if(!course||!admin()&&!(teacher()&&course.instructor_id===session?.user.id)&&!enrolled)return;
-    if(kind==='course_due'&&(!coursePlanningReady||!course.submission_due_at))return;
-    if(kind==='course'&&!course.starts_at)return;
-    const deadline=kind==='course_due';
-    return modal(`<span class="eyebrow">${deadline?'PROJECT DEADLINE':'PRACTICAL WORKSHOP'}</span><h2>${esc(course.title)}</h2><p>${esc(course.description||'Build and test a practical project with your teacher.')}</p><div class="meta"><span>${esc(courseTrackFor(course))}</span>${course.instructor_id?`<span>Teacher: ${esc(memberName(course.instructor_id))}</span>`:''}</div>${courseTimeline(course,enrolled)}${deadline?'<p class="subtle">This date helps you plan. Project submissions remain open after the deadline.</p>':''}<div class="cal-detail-actions"><button class="button" data-action="focusCourse" data-id="${esc(course.id)}">View workshop →</button></div>`);
+    return modal(`<span class="eyebrow">${kind==='course_due'?'COURSE DEADLINE':'PRACTICAL WORKSHOP'}</span><h2>${esc(item.title)}</h2>${timing}<p>${esc(item.description||'Build and test a practical project with your teacher.')}</p><div class="meta"><span>${esc(courseTrackFor(item))}</span>${item.instructor_id?`<span>Teacher: ${esc(memberName(item.instructor_id))}</span>`:''}</div>${courseTimeline((cache.courses||[]).find(course=>course.id===id),enrolled)}${kind==='course_due'?'<p class="subtle">Project submissions remain open after the deadline.</p>':''}<div class="cal-detail-actions"><button class="button" data-action="focusCourse" data-id="${esc(id)}">${enrolled?'Open my classroom':'View workshop'} →</button>${item.instructor_id===session?.user.id&&teacher()?'<a class="button button-outline" href="#teaching" data-action="calendarTeaching">Teaching studio →</a>':''}${item.meet_url?`<a class="button" href="${esc(cleanUrl(item.meet_url))}" target="_blank" rel="noopener noreferrer">Join session ↗</a>`:''}</div>${calendarDetailTools(item)}`);
   }
-  const table={event:'events',meeting:'founder_meetings',task:'project_tasks'}[kind];
-  if(!clubAccess()||!table||kind==='meeting'&&!founder())return;
-  const item=(cache[table]||[]).find(x=>x.id===id);if(!item)return;
-  if(kind==='task')return modal(`<span class="eyebrow">PROJECT DEADLINE</span><h2>${esc(item.title)}</h2><p>Due ${dateTime(item.due_at)}</p><p>${esc(item.description||'Check the project plan for more details.')}</p><button class="button" data-action="calendarProject" data-id="${esc(item.project_id)}">View project →</button>`);
-  const meeting=kind==='meeting';
-  modal(`<span class="eyebrow">${meeting?'FOUNDER MEETING':'CLUB EVENT'}</span><h2>${esc(item.title)}</h2><p>${esc(meeting?item.agenda||'Agenda to follow.':item.description||'Details to follow.')}</p><div class="meta"><span>◷ ${dateTime(item.starts_at)}${item.ends_at?' – '+dateTime(item.ends_at):''}</span><span>⌁ ${esc(meeting?'Private founder meeting':item.location||'Online')}</span></div>${rsvpControls(meeting?'meeting':'event',id)}<div class="cal-detail-actions">${item.meet_url?`<a class="button" href="${esc(cleanUrl(item.meet_url))}" target="_blank" rel="noopener noreferrer">Join Google Meet ↗</a>`:''}<button class="button button-outline" data-action="${meeting?'founderCalendar':'calendar'}" data-id="${esc(id)}">Add to Google Calendar</button><button class="button button-outline" data-action="${meeting?'founderIcs':'ics'}" data-id="${esc(id)}">Download ICS</button></div>`);
+  if(kind==='task')return modal(`<span class="eyebrow">PROJECT TASK DEADLINE</span><h2>${esc(item.title)}</h2>${timing}<p>${esc(item.description||'Check the project plan for more details.')}</p><button class="button" data-action="calendarProject" data-id="${esc(item.project_id)}">View project →</button>${calendarDetailTools(item)}`);
+  modal(`<span class="eyebrow">${kind==='meeting'?'FOUNDER MEETING':'CLUB EVENT'}</span><h2>${esc(item.title)}</h2>${timing}<p>${esc(item.description||'Details to follow.')}</p><div class="meta"><span>${esc(item.location||'Location to follow')}</span></div>${rsvpControls(kind==='meeting'?'meeting':'event',id)}<div class="cal-detail-actions">${item.meet_url?`<a class="button" href="${esc(cleanUrl(item.meet_url))}" target="_blank" rel="noopener noreferrer">Join Google Meet ↗</a>`:''}</div>${calendarDetailTools(item)}`);
 }
+function calendarIcs(items){
+  const encode=value=>String(value||'').replace(/\\/g,'\\\\').replace(/\r\n|\r|\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;');
+  const utc=value=>new Date(value).toISOString().replace(/[-:]/g,'').replace(/\.\d{3}/,'');
+  const fold=line=>{let result='',current='',bytes=0;for(const char of line){const point=char.codePointAt(0),length=point<128?1:point<2048?2:point<65536?3:4;if(bytes+length>75){result+=current+'\r\n';current=' ';bytes=1;}current+=char;bytes+=length;}return result+current;};
+  const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//SPACE//Club Calendar//EN','CALSCALE:GREGORIAN'];
+  for(const item of items){
+    if(!item.starts_at||!Number.isFinite(new Date(item.starts_at).getTime()))continue;
+    lines.push('BEGIN:VEVENT',`UID:${encode(calendarKey(item))}@space.club`,`DTSTAMP:${utc(new Date())}`,`DTSTART:${utc(item.starts_at)}`,`DTEND:${utc(calendarEnd(item))}`,`SUMMARY:${encode(item.title)}`,`DESCRIPTION:${encode([item.description,item.meet_url].filter(Boolean).join('\n'))}`,`LOCATION:${encode(item.location||item.meet_url)}`,'END:VEVENT');
+  }
+  lines.push('END:VCALENDAR');return lines.map(fold).join('\r\n')+'\r\n';
+}
+function calendarDownload(items,filename='space-calendar.ics'){
+  if(!items.length)return show('There are no matching items to export.');
+  const url=URL.createObjectURL(new Blob([calendarIcs(items)],{type:'text/calendar;charset=utf-8'})),anchor=document.createElement('a');anchor.href=url;anchor.download=filename;anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
 function announcements() {
   const list=cache.announcements||[];
   return `${head('CLUB ACTIVITIES','Announcements','Read important club updates, deadlines and opportunities.',admin()?button('+ Post announcement','announcementForm'):'')}
@@ -2392,11 +2603,29 @@ function actions(e) {
     return form('Record movement',`${esc(item.name)} · ${item.quantity_available} of ${item.quantity_total} ${esc(item.unit)} in stock.`,'inventoryMovement',`<input type="hidden" name="item_id" value="${esc(item.id)}">`+select('Movement','movement_kind',kinds)+`<div class="field"><label for="movement_quantity">Quantity (${esc(item.unit)})</label><input id="movement_quantity" name="quantity" type="number" min="1" max="2147483647" step="1" value="1" required></div><div class="field" id="movementMember"><label for="member_id">Member receiving or returning it</label><select id="member_id" name="member_id" required>${movementMemberOptions(item.id,first)}</select></div><div class="field"><label for="movement_note">Purpose / project / reason</label><textarea id="movement_note" name="note" maxlength="2000" required></textarea></div>`);
   }
   if(action==='financeEntryForm'&&admin()&&financeApprovalsReady)return form('Submit transaction','Enter income or spending in GHS. An approved founder must review it before it changes the balance.','financeEntry',select('Type','entry_type',['income','expense'])+select('Category','category',['Opening balance','Membership dues','Donation','Sponsorship','Event','Equipment','Transport','Training','Operations','Other'])+`<div class="field"><label for="amount">Amount (GHS)</label><input id="amount" name="amount" type="number" min="0.01" max="9999999999.99" step="0.01" required></div>`+field('Transaction date','occurred_on','date',new Date().toISOString().slice(0,10))+area('Purpose / explanation','description')+field('From / paid to (optional)','counterparty','text','',false)+field('Receipt or transfer reference (optional)','reference','text','',false));
-  if(action==='calendarPrev'||action==='calendarNext'){calendarMonth=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth()+(action==='calendarNext'?1:-1),1);calendarSelected=new Date(calendarMonth);render();return;}
-  if(action==='calendarToday'){calendarSelected=new Date();calendarMonth=new Date(calendarSelected.getFullYear(),calendarSelected.getMonth(),1);render();return;}
-  if(action==='calendarDay'){const [y,m,d]=(el.dataset.date||'').split('-').map(Number);if(!y||m<1||m>12||d<1||d>31)return;calendarSelected=new Date(y,m-1,d);render();return;}
+  if(action==='retryWorkspace'){if(session)return signedIn(session);return signInDialog('signin');}
+  if(action.startsWith('calendar')&&['calendarPrev','calendarNext','calendarToday','calendarDay','calendarView','calendarPage','calendarReset','calendarNextItem','calendarExport','calendarPrint','calendarCopyDate','calendarCreate','calendarGoogleItem','calendarIcsItem','calendarTeaching','calendarProject'].includes(action)){
+    if(!clubAccess())return;
+    if(action==='calendarPrev'||action==='calendarNext')return calendarMove(action==='calendarNext'?1:-1);
+    if(action==='calendarToday')return calendarNavigate(new Date());
+    if(action==='calendarDay'){const date=calendarParseDay(el.dataset.date);if(date)return calendarNavigate(date,calendarViews.includes(el.dataset.view)?el.dataset.view:calendarView);return;}
+    if(action==='calendarView'){if(calendarViews.includes(el.dataset.view))calendarNavigate(calendarSelected,el.dataset.view);return;}
+    if(action==='calendarPage'){const offset=Number(el.dataset.offset);if(![-1,1].includes(offset))return;const range=calendarRange(),count=calendarBetween(calendarFilteredEntries(),range.start,range.end).length;calendarAgendaPage=Math.max(0,Math.min(Math.max(0,Math.ceil(count/30)-1),calendarAgendaPage+offset));render();return;}
+    if(action==='calendarReset'){calendarSearch='';Object.assign(calendarPreferences,{kinds:Object.keys(calendarKinds),mine:false,track:'all',response:'all',online:false,hidePast:false});calendarAgendaPage=0;saveCalendarPreferences();render();return;}
+    if(action==='calendarNextItem'){const next=calendarFilteredEntries().find(item=>calendarEnd(item)>new Date());if(next)return calendarNavigate(new Date(next.starts_at),'day');return show('No upcoming items match your filters.');}
+    if(action==='calendarExport'){const range=calendarRange();return calendarDownload(calendarBetween(calendarFilteredEntries(),range.start,range.end),`space-${calendarView}-${calendarDayKey(range.start)}.ics`);}
+    if(action==='calendarPrint'){prepareCalendarPrint();return window.print();}
+    if(action==='calendarCopyDate'){
+      const url=new URL(location.href);url.hash=`calendar/${calendarDayKey(calendarSelected)}/${calendarView}`;
+      if(navigator.clipboard?.writeText)return navigator.clipboard.writeText(url.href).then(()=>show('Date link copied. Others see only the items their account permits.')).catch(()=>modal(`<h2>Copy this date link</h2><p>Each person sees only their permitted calendar items.</p><input class="workspace-search-input" aria-label="Calendar date link" readonly value="${esc(url.href)}">`));
+      return modal(`<h2>Copy this date link</h2><input class="workspace-search-input" aria-label="Calendar date link" readonly value="${esc(url.href)}">`);
+    }
+    if(action==='calendarCreate')return admin()?calendarEventForm(calendarSelected):undefined;
+    if(action==='calendarGoogleItem'||action==='calendarIcsItem'){const item=calendarEntries().find(item=>item.kind===el.dataset.kind&&item.id===id);if(item)return calendar(item,action==='calendarIcsItem');return;}
+    if(action==='calendarTeaching'){e.preventDefault();if(!teacher())return;close();location.hash='#teaching';return;}
+    if(action==='calendarProject'){if(!(cache.projects||[]).some(project=>project.id===id))return;close();location.hash='#projects';projectDetail(id);return;}
+  }
   if(action==='calendarItem')return calendarItem(el.dataset.kind,id);
-  if(action==='calendarProject'){close();location.hash='#projects';projectDetail(id);return;}
   if(action==='teachingTab'){
     if(!teacher())return;
     const target=el.dataset.tab;
@@ -2678,7 +2907,7 @@ function actions(e) {
   }
   if(action==='topicDetail'){activeProject=id;return topicDetail(id);}
   if(action==='courseForm'&&teacher())return form('Practical workshop','Choose one of the four tracks and describe the project learners will complete.','course',field('Workshop title','title')+select('Learning track','category',courseTracks.map(t=>t.name))+select('Level','level',['Beginner','Intermediate','Advanced'])+area('What will learners build?','build_goal')+area('Hands-on activities and tests','practice_steps')+field('Tools and materials','tools')+field('Start date and time','starts_at',coursePlanningReady?'datetime-local':'date','',false)+(coursePlanningReady?field('Project deadline (optional)','submission_due_at','datetime-local','',false):'')+field('Resource URL (optional)','resource_url','url','',false));
-  if(action==='eventForm')return form('Event','The calendar and meeting link stay together.','event',field('Title','title')+area('Description','description')+field('Start','starts_at','datetime-local')+field('End','ends_at','datetime-local')+field('Location','location','text','',false)+field('Google Meet URL','meet_url','url','',false));
+  if(action==='eventForm'&&admin())return calendarEventForm();
   if(action==='announcementForm')return form('Alert','Important updates appear on the home page.','announcement',field('Title','title')+select('Priority','priority',['normal','urgent'])+area('Message','body'));
   if(action==='founderForm'&&admin())return form('Founder','Publish only details and photos this person has agreed to share.','founder',field('Name','name')+field('Role','role')+area('Bio','bio')+field('Profile URL','link_url','url','',false)+field('Order','sort_order','number','1')+(founderPortraitReady?'<div class="field"><label for="portrait_file">Public portrait (optional, JPG, PNG or WebP, max 5 MB)</label><input id="portrait_file" name="portrait_file" type="file" accept="image/jpeg,image/png,image/webp"><p class="hint">This photograph is visible to everyone on the Founders page.</p></div>':'<p class="hint">Portrait upload will be available after the founder portrait setup.</p>'));
   if(action==='editFounderForm'&&admin()&&founderPortraitReady){
@@ -2966,6 +3195,7 @@ function uploadRevisionDialog(id) {
 }
 async function submit(e) {
   if(e.target.id==='dmSearchForm'){e.preventDefault();return searchDmConversation(e.target);}
+  if(e.target.id==='calendarSearchForm'){e.preventDefault();if(!clubAccess())return;calendarSearch=String(e.target.elements.search.value||'').slice(0,200);calendarAgendaPage=0;render();$('#calendarSearch')?.focus();return;}
   if(e.target.id==='dmComposer'){
     e.preventDefault();
     const form=e.target,peer=form.dataset.peer,input=form.elements.body,body=input.value.trim(),draft=dmDraftFor(peer);
@@ -3522,10 +3752,16 @@ async function createMeetFor(kind,id) {
     await refresh();show('Google Meet created and added to the club calendar.');
   }catch(e){fail(e);}
 }
-function calendar(e,download=false){
-  const start=new Date(e.starts_at),end=new Date(e.ends_at);
-  const fmt=d=>d.toISOString().replace(/[-:]/g,'').replace(/\.\d{3}/,'');
-  if(download){const encode=s=>String(s||'').replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;');const content=`BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//SPACE//Club Calendar//EN\r\nBEGIN:VEVENT\r\nUID:${e.id}@innovatex.club\r\nDTSTAMP:${fmt(new Date())}\r\nDTSTART:${fmt(start)}\r\nDTEND:${fmt(end)}\r\nSUMMARY:${encode(e.title)}\r\nDESCRIPTION:${encode(e.description)}\r\nLOCATION:${encode(e.meet_url||e.location)}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n`;const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([content],{type:'text/calendar'}));a.download='space-event.ics';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);return;}
-  const url=new URL('https://calendar.google.com/calendar/render');url.searchParams.set('action','TEMPLATE');url.searchParams.set('text',e.title);url.searchParams.set('dates',`${fmt(start)}/${fmt(end)}`);url.searchParams.set('details',[e.description,e.meet_url].filter(Boolean).join('\n'));url.searchParams.set('location',e.location||e.meet_url||'');window.open(url.href,'_blank','noopener,noreferrer');
+function calendarEventForm(date=null){
+  if(!admin())return;
+  const day=date?calendarDayKey(date):'',start=day?day+'T09:00':'',end=day?day+'T10:00':'';
+  return form('Schedule club event','Choose the date, time, location and meeting link.','event',field('Title','title')+area('Description','description')+field('Start','starts_at','datetime-local',start)+field('End','ends_at','datetime-local',end)+field('Location','location','text','',false)+field('Google Meet URL','meet_url','url','',false));
 }
+function calendar(e,download=false){
+  if(!e?.starts_at||!Number.isFinite(new Date(e.starts_at).getTime()))return show('This item needs a valid start time.');
+  const item={kind:'event',...e};if(download)return calendarDownload([item],'space-event.ics');
+  const fmt=d=>new Date(d).toISOString().replace(/[-:]/g,'').replace(/\.\d{3}/,'');
+  const url=new URL('https://calendar.google.com/calendar/render');url.searchParams.set('action','TEMPLATE');url.searchParams.set('text',item.title);url.searchParams.set('dates',`${fmt(item.starts_at)}/${fmt(calendarEnd(item))}`);url.searchParams.set('details',[item.description,item.meet_url].filter(Boolean).join('\n'));url.searchParams.set('location',item.location||item.meet_url||'');window.open(url.href,'_blank','noopener,noreferrer');
+}
+
 init();
