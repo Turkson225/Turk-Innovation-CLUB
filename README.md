@@ -1,5 +1,8 @@
 # SPACE platform
 
+**Platform name:** SPACE  
+**Official club URL:** [https://turkson225.github.io/Turk-Innovation-CLUB/](https://turkson225.github.io/Turk-Innovation-CLUB/)
+
 A responsive workspace for a practical engineering and technology club. The site is static and can be hosted on GitHub Pages. Supabase provides email sign-in and a database protected by row level security.
 
 ## What is included
