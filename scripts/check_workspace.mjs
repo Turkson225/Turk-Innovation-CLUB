@@ -495,6 +495,85 @@ test('Sessions without an end time do not invent a displayed duration or an over
   const h=calendarHarness();h.exec('cache.events=qaArgs',[calEvent('unknown','2026-10-01T23:30:00',null),calEvent('other','2026-10-01T23:45:00','2026-10-02T00:15:00')]);h.run("cache.event_rsvps=['unknown','other'].map(event_id=>({event_id,user_id:'self',response:'going'}))");assert(h.run('calendarItemTime(calendarEntries()[0])').includes('duration not set'));assert.equal(h.run('calendarConflicts(calendarEntries()).size'),0);assert.equal(h.run("calendarBetween(calendarEntries().filter(i=>i.id==='unknown'),new Date(2026,9,2),new Date(2026,9,3)).length"),0);
 });
 
+function directoryHarness(){
+  const h=harness(),now=Date.now();h.run("page='members';avatarReady=true;enhancedReady=true;me.skills='Python, Robotics';me.profile_visibility='club'");
+  h.exec('cache.profiles=qaArgs',[h.run('me'),{id:'a',full_name:'Álice Build',handle:'alice',headline:'Build useful robots',programme:'Engineering',skills:'python, CAD, Robotics',availability:'available',role:'member',membership_status:'approved',profile_visibility:'club',created_at:new Date(now-86400000).toISOString(),last_seen_at:new Date(now-1000).toISOString(),email:'PRIVATE_EMAIL_MARKER',join_reason:'PRIVATE_APPLICATION_MARKER'},{id:'b',full_name:'Bob Mentor',skills:'Electronics, CAD',availability:'busy',role:'teacher',membership_status:'approved',created_at:'2025-01-01T12:00:00Z'},{id:'lead',full_name:'Founder Lead',skills:'Automation',role:'founder',founder_teaching_enabled:true,membership_status:'approved'},{id:'private',full_name:'PRIVATE_PROFILE_MARKER',skills:'HIDDEN_SKILL_MARKER',role:'member',profile_visibility:'private',membership_status:'approved'},{id:'pending',full_name:'PENDING_PROFILE_MARKER',role:'member',membership_status:'pending'},{id:'suspended',full_name:'SUSPENDED_PROFILE_MARKER',role:'member',membership_status:'suspended'},{id:'investor',full_name:'INVESTOR_PROFILE_MARKER',role:'investor',membership_status:'approved'}]);
+  return h;
+}
+test('Directory cards show approved visible peers without private application or contact fields',()=>{
+  const h=directoryHarness(),markup=h.run('members()');for(const secret of ['PRIVATE_EMAIL_MARKER','PRIVATE_APPLICATION_MARKER','PRIVATE_PROFILE_MARKER','HIDDEN_SKILL_MARKER','PENDING_PROFILE_MARKER','SUSPENDED_PROFILE_MARKER','INVESTOR_PROFILE_MARKER'])assert(!markup.includes(secret),secret);
+  assert.equal((markup.match(/data-member-id=/g)||[]).length,4);assert(markup.includes('member-card'));assert(markup.includes('data-action="openDm"'));assert(markup.includes('data-action="memberSave"'));assert(!markup.includes('class="card person"'));
+});
+test('Private profiles are visible to their owner and admin, but hidden from teachers and profile search',()=>{
+  const h=directoryHarness();h.run("me.role='teacher'");assert(!h.run('directoryPeople().some(p=>p.id===\'private\')'));assert(!h.run('workspaceSearchItems().some(p=>p.id===\'private\')'));h.run("me.profile_visibility='private'");assert(h.run('directoryPeople().some(p=>p.id===\'self\')'));h.run("me.role='admin'");assert(h.run('directoryPeople().some(p=>p.id===\'private\')'));assert(!h.run('directoryPeople().some(p=>p.id===\'investor\')'));
+});
+for(const role of ['guest','pending','investor'])test(`Directory interactions and profiles require approved club access: ${role}`,()=>{
+  const h=directoryHarness();if(role==='guest')h.run('session=null;me=null');else if(role==='pending')h.run("me.membership_status='pending'");else h.run("me.role='investor'");
+  assert.equal(h.run('directoryResults().length'),0);assert(h.run('members()').includes('Member access required'));action(h,{action:'memberDiscover'});action(h,{action:'memberSave',id:'a'});action(h,{action:'memberProfile',id:'a'});action(h,{action:'memberCompletion'});assert.equal(h.elements.get('#modal').open,false);assert.equal(h.run('memberSavedIds.size'),0);
+});
+test('Search matches normalized names, handles, background and multiple interest terms',()=>{
+  const h=directoryHarness();for(const query of ['alice','@alice','engineering']){h.exec('ensureMemberDirectory();memberDirectory.search=qaArgs',query);assert.deepEqual(Array.from(h.run('directoryResults().map(p=>p.id)')),['a']);}h.run("memberDirectory.search='robot python'");assert.deepEqual(Array.from(h.run('directoryResults().map(p=>p.id)')),['a','self']);h.run("memberDirectory.search='no-match'");assert.equal(h.run('directoryResults().length'),0);
+});
+test('Teaching lead, availability and skill filters combine and reject unknown filter values',()=>{
+  const h=directoryHarness();h.exec('memberDirectoryChange(qaArgs)',node({value:'leads',dataset:{memberSetting:'role'}}));assert.deepEqual(Array.from(h.run('directoryResults().map(p=>p.id)')).sort(),['b','lead']);h.exec('memberDirectoryChange(qaArgs)',node({value:'admin-secret',dataset:{memberSetting:'role'}}));assert.equal(h.run('memberDirectory.role'),'leads');h.run("memberDirectory.role='all'");h.exec('memberDirectoryChange(qaArgs)',node({value:'available',dataset:{memberSetting:'presence'}}));h.exec('memberDirectoryChange(qaArgs)',node({value:'python',dataset:{memberSetting:'skill'}}));assert.deepEqual(Array.from(h.run('directoryResults().map(p=>p.id)')),['a']);
+});
+test('Online first, name, newest and shared-interest sorting use real profile data',()=>{
+  const h=directoryHarness();h.run('ensureMemberDirectory()');assert.equal(h.run('directoryResults()[0].id'),'a');h.run("memberDirectory.sort='name'");assert.deepEqual(Array.from(h.run('directoryResults().map(p=>p.id)')),['a','b','lead','self']);h.run("memberDirectory.sort='newest'");assert.equal(h.run('directoryResults()[0].id'),'a');h.run("memberDirectory.sort='shared'");assert.equal(h.run('directoryResults()[0].id'),'a');
+});
+test('Skill parsing deduplicates delimiters and caps values, while shared interests exclude self',()=>{
+  const h=directoryHarness();assert.deepEqual(Array.from(h.exec('memberSkills(qaArgs)',{skills:' Python,python; Robotics\nCAD , , '})),['Python','Robotics','CAD']);assert.equal(h.exec('memberSkills(qaArgs)',{skills:Array.from({length:30},(_,i)=>'Skill'+i).join(',')}).length,16);assert.equal(h.run('memberSharedSkills(me).length'),0);assert.equal(h.run('memberSharedSkills(cache.profiles[1]).length'),2);assert(!h.run('directorySkillCounts(directoryPeople()).some(s=>s.label===\'HIDDEN_SKILL_MARKER\')'));
+});
+test('Fresh presence and new-member labels ignore invalid, old and future timestamps',()=>{
+  const h=directoryHarness();for(const last_seen_at of [undefined,'bad',new Date(Date.now()+120000).toISOString(),new Date(Date.now()-66000).toISOString()])assert.equal(h.exec('memberOnline(qaArgs)',{last_seen_at}),false);assert.equal(h.exec('memberNew(qaArgs)',{created_at:new Date(Date.now()+86400000).toISOString()}),false);assert.equal(h.run('memberNew(cache.profiles[1])'),true);assert.equal(h.run('memberNew(cache.profiles[2])'),false);
+});
+test('Saved members and display preferences persist per account without storing profile fields',()=>{
+  const h=directoryHarness(),values=new Map();h.context.localStorage={getItem:key=>values.get(key)||null,setItem:(key,value)=>values.set(key,value)};
+  action(h,{action:'memberSave',id:'a'});action(h,{action:'memberView',view:'list'});action(h,{action:'memberDensity'});const saved=JSON.parse(values.get('space.members.self'));assert.deepEqual(saved,{view:'list',compact:true,saved:['a']});h.run('resetMemberDirectory();ensureMemberDirectory()');assert.equal(h.run('memberSavedIds.has(\'a\')'),true);assert.equal(h.run('memberDirectory.view'),'list');h.run("session.user.id='other';ensureMemberDirectory()");assert.equal(h.run('memberSavedIds.size'),0);assert.equal(h.run('memberDirectory.view'),'grid');assert.equal(h.run('memberDirectory.compact'),false);
+});
+test('Bookmarks never expose newly private or removed profiles and cannot save hidden members or self',()=>{
+  const h=directoryHarness();action(h,{action:'memberSave',id:'a'});action(h,{action:'memberSave',id:'private'});action(h,{action:'memberSave',id:'self'});assert.equal(h.run('memberSavedIds.size'),1);action(h,{action:'memberGroup',group:'saved'});assert.equal(h.run('directoryResults().length'),1);h.run("cache.profiles.find(p=>p.id==='a').profile_visibility='private'");assert.equal(h.run('directoryResults().length'),0);assert(!h.run('members()').includes('Álice Build'));
+});
+test('Malformed device preferences are ignored and storage failure preserves session choices',()=>{
+  const h=directoryHarness();h.context.localStorage={getItem:()=>'{broken',setItem(){throw Error('blocked');}};h.run('ensureMemberDirectory()');assert.equal(h.run('memberDirectory.view'),'grid');action(h,{action:'memberSave',id:'a'});assert.equal(h.run('memberSavedIds.has(\'a\')'),true);assert(h.elements.get('#toast').textContent.includes('Device storage'));
+});
+test('Shared interests and newcomer groups match actual dates and listed skills',()=>{
+  const h=directoryHarness();action(h,{action:'memberGroup',group:'shared'});assert.deepEqual(Array.from(h.run('directoryResults().map(p=>p.id)')),['a']);action(h,{action:'memberGroup',group:'new'});assert.deepEqual(Array.from(h.run('directoryResults().map(p=>p.id)')),['a']);action(h,{action:'memberGroup',group:'private'});assert.equal(h.run('memberDirectory.group'),'new');
+});
+test('Random member discovery respects filters, excludes self and sends no messages',()=>{
+  const h=directoryHarness();h.run("ensureMemberDirectory();memberDirectory.skill='python'");action(h,{action:'memberDiscover'});assert(h.elements.get('#modalContent').innerHTML.includes('Álice Build'));assert.equal(h.requests.length,0);assert.equal(h.context.location.hash,'#messages');h.run("memberDirectory.search='Tester'");h.elements.get('#modal').open=false;action(h,{action:'memberDiscover'});assert.equal(h.elements.get('#modal').open,false);
+});
+test('Numbered directory pagination renders 24 cards, uses filtered totals and bounds page requests',()=>{
+  const h=directoryHarness();h.exec('cache.profiles=qaArgs',Array.from({length:55},(_,i)=>({id:'m'+i,full_name:'Member '+String(i).padStart(2,'0'),role:'member',membership_status:'approved',skills:i<2?'Python':'CAD'})));
+  assert.equal((h.run('members()').match(/data-member-id=/g)||[]).length,24);action(h,{action:'memberPage',page:'2'});assert.equal(h.run('memberDirectoryPage'),2);assert.equal((h.run('members()').match(/data-member-id=/g)||[]).length,7);action(h,{action:'memberPage',page:'3'});assert.equal(h.run('memberDirectoryPage'),2);action(h,{action:'memberSkill',skill:'Python'});assert.equal(h.run('memberDirectoryPage'),0);assert.equal(h.run('directoryResults().length'),2);assert(!h.run('members()').includes('class="member-pager"'));
+});
+test('Individual filters can be cleared and reset retains device display preferences',()=>{
+  const h=directoryHarness();h.run("ensureMemberDirectory();memberDirectory.search='alice';memberDirectory.presence='online';memberDirectory.view='list';memberDirectory.compact=true");action(h,{action:'memberClearFilter',filter:'search'});assert.equal(h.run('memberDirectory.search'),'');assert.equal(h.run('memberDirectory.presence'),'online');action(h,{action:'memberReset'});assert.equal(h.run('memberDirectory.presence'),'all');assert.equal(h.run('memberDirectory.view'),'list');assert.equal(h.run('memberDirectory.compact'),true);
+});
+test('Search debounce does not render after navigating away or changing account',()=>{
+  const h=directoryHarness();let renders=0;h.context.qaRender=()=>renders++;h.run('render=qaRender');h.exec('memberDirectorySearch(qaArgs)',node({value:'Alice'}));h.run("page='calendar'");h.fireTimers(180);assert.equal(renders,0);h.run("page='members'");h.exec('memberDirectorySearch(qaArgs)',node({value:'Bob'}));h.run("session.user.id='other'");h.fireTimers(180);assert.equal(renders,0);
+});
+test('Directory keyboard shortcuts avoid typing, dialogs and other pages',()=>{
+  const h=directoryHarness();let focused=0,prevented=0;h.elements.set('#memberSearch',node({focus(){focused++;}}));const event={key:'/',target:node(),preventDefault(){prevented++;}};assert.equal(h.exec('memberDirectoryKeyboard(qaArgs)',event),true);assert.equal(focused,1);assert.equal(h.exec('memberDirectoryKeyboard(qaArgs)',{...event,target:node({closest(){return {};}})}),false);h.run('ensureMemberDirectory();memberDirectory.search="Alice"');h.exec('memberDirectoryKeyboard(qaArgs)',{...event,key:'Escape',target:node({id:'memberSearch'})});assert.equal(h.run('memberDirectory.search'),'');h.elements.get('#modal').open=true;assert.equal(h.exec('memberDirectoryKeyboard(qaArgs)',event),false);assert.equal(prevented,2);
+});
+test('Profile completion counts available fields and only opens the signed-in account checklist',()=>{
+  const h=directoryHarness();action(h,{action:'memberCompletion'});let markup=h.elements.get('#modalContent').innerHTML;assert(markup.includes('1 of 5'));assert(markup.includes('Update photo'));h.run("avatarReady=false;dmReady=false;enhancedReady=false");assert.equal(h.run('memberProfileCompletion().percent'),100);
+});
+test('Profile details escape member-supplied text and never reveal hidden profile content',()=>{
+  const h=directoryHarness();h.run("cache.profiles[1].full_name='<img src=x onerror=bad>';cache.profiles[1].skills='Python, <script>bad</script>';cache.profiles[1].bio='<svg onload=bad>'");action(h,{action:'memberProfile',id:'a'});const markup=h.elements.get('#modalContent').innerHTML;assert(!markup.includes('<img src=x'));assert(!markup.includes('<script>bad'));assert(!markup.includes('<svg onload'));assert(markup.includes('&lt;svg onload=bad&gt;'));assert(markup.includes('member-profile-skills'));h.elements.get('#modal').open=false;action(h,{action:'memberProfile',id:'private'});assert.equal(h.elements.get('#modal').open,false);
+});
+test('Profile photo actions reject cached private, pending and investor profiles',()=>{
+  const h=directoryHarness(),opened=[];h.context.qaOpen=id=>opened.push(id);h.run("openImageViewer=qaOpen;cache.profiles.forEach(p=>p.avatar_path=p.id+'/photo.png')");for(const id of ['private','pending','investor'])action(h,{action:'viewProfilePhoto',id});assert.equal(opened.length,0);action(h,{action:'viewProfilePhoto',id:'a'});assert.deepEqual(opened,['a/photo.png']);
+});
+test('Profile links require approved access, valid IDs and public-to-club visibility',async()=>{
+  const h=directoryHarness(),id='12345678-1234-1234-1234-123456789abc',copied=[];h.context.location.origin='https://example.test';h.context.location.pathname='/club/';h.context.navigator.clipboard={writeText:async value=>{copied.push(value);}};h.exec("cache.profiles[1].id=qaArgs",id);action(h,{action:'memberCopyLink',id});await Promise.resolve();assert.deepEqual(copied,['https://example.test/club/#members/'+id]);h.run("cache.profiles[1].profile_visibility='private';me.role='admin'");action(h,{action:'memberCopyLink',id});assert.equal(copied.length,1);
+});
+test('Linked profiles open once after loading and private links reveal no details',()=>{
+  const h=directoryHarness(),id='12345678-1234-1234-1234-123456789abc';h.exec('cache.profiles[1].id=qaArgs;location.hash="#members/"+qaArgs',id);h.run('openLinkedMemberProfile()');assert(h.elements.get('#modal').open);h.elements.get('#modal').open=false;h.run('openLinkedMemberProfile()');assert.equal(h.elements.get('#modal').open,false);h.run('memberLinkedProfile=null;cache.profiles[1].profile_visibility="private";openLinkedMemberProfile()');assert.equal(h.elements.get('#modal').open,false);assert(h.elements.get('#toast').textContent.includes('unavailable or private'));
+});
+test('Member profile links preserve the protected destination across email sign-in',async()=>{
+  const h=loginHarness(),id='12345678-1234-1234-1234-123456789abc';h.exec("authReady=true;setSidebarOpen=()=>{};signInDialog=()=>{};location.hash='#members/'+qaArgs;route()",id);assert.equal(h.run('pendingProtectedPage'),'members/'+id);h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs)',loginSession('self'));assert.equal(h.context.location.hash,'#members/'+id);
+});
+
 let failed=0;
 for(const t of tests){try{await t.fn();console.log('PASS',t.name);}catch(e){failed++;console.log('FAIL',t.name,'\n',e.stack);}}
 console.log(`${tests.length-failed}/${tests.length} checks passed`);

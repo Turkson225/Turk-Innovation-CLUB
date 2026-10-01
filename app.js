@@ -21,6 +21,10 @@ let authGeneration = 0, authStateRequest = 0;
 let loginWelcomePendingOwner = null, loginWelcomeOwner = null, loginWelcomeTimer = null, loginWelcomeRequest = 0;
 let inventoryFilter = 'all', inventorySearchTerm = '', financeFilter = 'all', inventoryLogPage = 0, financePage = 0, financeReviewPage = 0;
 let memberDirectoryPage = 0, projectListPage = 0;
+const memberPageSize=24;
+let memberDirectoryOwner=null,memberSearchTimer=null,memberLinkedProfile=null;
+let memberDirectory={search:'',role:'all',presence:'all',skill:'',group:'all',sort:'online',view:'grid',compact:false};
+let memberSavedIds=new Set();
 let applicationsPage = 0, approvedAccountsPage = 0, applicationsOwner = null, applicationsLoading = false, applicationsError = '';
 let applicationRows = [], approvedAccountRows = [], applicationTotal = 0, approvedAccountTotal = 0, applicationsRequest = 0;
 let applicationVerification = new Map(), applicationVerificationError = '';
@@ -980,6 +984,7 @@ async function signedIn(newSession,showWelcome=false) {
   closeImageViewer(false);
   if($('#workspaceSearchInput'))close();
   session=newSession;
+  resetMemberDirectory();
   me=null;cache={};applicationAnswersReady=false;workspaceLoading=!!session;workspaceHydrating=!!session;workspaceLoadError='';
   communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;roleReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
   inboxUnreadCount=null;inboxCountRequest++;dismissMemberAlert();memberDeferredNotification=null;memberNotificationPrimed=false;
@@ -1110,6 +1115,7 @@ async function init() {
   document.addEventListener('keydown',e=>{
     if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openWorkspaceSearch();return;}
     if(calendarKeyboard(e))return;
+    if(memberDirectoryKeyboard(e))return;
     if(e.target.id==='workspaceSearchInput'||e.target.closest?.('.workspace-search-results')){
       const input=$('#workspaceSearchInput'),rows=[...document.querySelectorAll('.workspace-search-result')],current=rows.indexOf(document.activeElement);
       if(e.key==='ArrowDown'){e.preventDefault();rows[Math.min(current+1,rows.length-1)]?.focus();return;}
@@ -1131,11 +1137,13 @@ async function init() {
     if(e.target.id==='dmStream'&&page==='messages'&&activePeerId&&dmPage===0)void markDmRead(activePeerId);
   },true);
   document.addEventListener('input',e=>{if(e.target.id==='workspaceSearchInput')updateWorkspaceSearch(e.target.value);
+    if(e.target.id==='memberSearch')memberDirectorySearch(e.target);
     if(e.target.id==='dmFilter'){dmFilterTerm=e.target.value;const term=dmFilterTerm.toLowerCase();document.querySelectorAll('.dm-peer').forEach(b=>b.hidden=!b.querySelector('strong')?.textContent.toLowerCase().includes(term));}
     if(e.target.id==='dmBody'&&activePeerId){dmDraftFor(activePeerId).text=e.target.value;resizeDmTextarea(e.target);}
     if(e.target.id==='inventorySearch'){inventorySearchTerm=e.target.value;applyInventorySearch();}
   });
   document.addEventListener('change',e=>{
+    if(e.target.dataset.memberSetting){memberDirectoryChange(e.target);return;}
     if(e.target.id?.startsWith('calendar')&&(e.target.dataset.calendarSetting||['calendarJump','calendarMonthJump','calendarYearJump'].includes(e.target.id))){calendarChange(e.target);return;}
     if(e.target.name==='dm_image'&&activePeerId&&e.target.form?.dataset.peer===activePeerId){
       const file=e.target.files?.[0];
@@ -1214,7 +1222,7 @@ function route() {
     page='home';
     if(authReady||!configured){
       const [,date,view]=location.hash.slice(1).split('/');
-      pendingProtectedPage=requested==='calendar'&&calendarParseDay(date)?`calendar/${date}/${calendarViews.includes(view)?view:'month'}`:requested;
+      pendingProtectedPage=requested==='calendar'&&calendarParseDay(date)?`calendar/${date}/${calendarViews.includes(view)?view:'month'}`:requested==='members'&&memberProfileId(date)?`members/${date}`:requested;
       history.replaceState(null,'','#home');
     }
   }else if(!session&&authReady)pendingProtectedPage='';
@@ -1235,6 +1243,7 @@ function route() {
   if(page==='messages'&&dmReady){if(dmInboxReady)void loadDmInbox().then(()=>{if(page==='messages'&&!activePeerId)render();});if(activePeerId)void loadDmThread();}
 }
 function render() {
+  const memberFocus=page==='members'&&document.activeElement?.id==='memberSearch'?{start:document.activeElement.selectionStart,end:document.activeElement.selectionEnd}:null;
   const previousDmStream=page==='messages'?$('#dmStream'):null;
   const previousDmList=page==='messages'?$('.dm-list'):null;
   if(previousDmList&&!$('#content .dm-layout.thread-open'))dmListScrollTop=previousDmList.scrollTop;
@@ -1264,6 +1273,8 @@ function render() {
   const views={home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
   $('#content').innerHTML=views[page]();
+  if(page==='members'){hydrateDirectoryPhotos();openLinkedMemberProfile();}
+  if(memberFocus&&page==='members'&&!$('#modal')?.open){const search=$('#memberSearch');search?.focus({preventScroll:true});search?.setSelectionRange?.(memberFocus.start,memberFocus.end);}
   if(page==='inventory')applyInventorySearch();
   $('#content').classList.toggle('view-enter',page!==lastRenderedPage);lastRenderedPage=page;
   if(page==='channels'){const stream=$('#messageStream');if(stream)stream.scrollTop=channelPage>0?0:stream.scrollHeight;if(channelPage===0&&activeChannelId&&enhancedReady)markChannelRead(activeChannelId);}
@@ -1291,7 +1302,7 @@ function workspaceSearchItems(){
   if(!clubAccess())return result;
   for(const c of cache.courses||[])add('course:'+c.id,c.title,'Workshop · '+courseTrackFor(c),'courses','focusCourse',c.id,c.description||'');
   for(const p of cache.projects||[])add('project:'+p.id,p.title,'Project · '+(p.status||'planning'),'projects','projectDetail',p.id,p.summary||'');
-  for(const p of cache.profiles||[])if(p.membership_status==='approved'&&p.role!=='investor')add('member:'+p.id,p.full_name,'Member · '+(p.headline||p.role),'members','memberProfile',p.id);
+  for(const p of directoryPeople())add('member:'+p.id,memberDisplayName(p),'Member · '+(p.headline||p.role),'members','memberProfile',p.id);
   for(const e of cache.events||[])add('event:'+e.id,e.title,'Event · '+dateTime(e.starts_at),'events','event',e.id,e.description||'');
   for(const d of cache.documents||[])add('document:'+d.id,d.title,'Document · Open file','library','document',d.id,d.description||'');
   for(const n of cache.news_posts||[])if(n.status==='published')add('news:'+n.id,n.title,'Technology news · Open news page','news','',n.id,n.summary||'');
@@ -1471,19 +1482,226 @@ function investorPortal(){
   <div class="section-heading"><h2>Updates</h2><p>${updates.length} curated ${updates.length===1?'update':'updates'}</p></div><div class="grid grid-2">${updates.length?updates.map(u=>`<article class="card investor-update"><div class="row"><span class="tag blue">${esc(u.category)}</span><small class="subtle">${date(u.published_at)}</small></div><h3>${esc(u.title)}</h3><p>${esc(u.summary)}</p>${admin()?`<div class="card-footer"><span>${u.published?'Published':'Draft'}</span><button class="text-button" data-action="toggleInvestorUpdate" data-id="${esc(u.id)}">${u.published?'Unpublish':'Publish'}</button></div>`:''}</article>`).join(''):empty('Updates coming soon','Administrators will publish reviewed project milestones here.')}</div>
   <div class="section-heading"><h2>${admin()?'Investor inquiries':'My inquiries'}</h2></div><div class="grid">${inquiries.length?inquiries.map(q=>`<div class="card"><div class="row"><span class="tag ${q.status==='new'?'gold':''}">${esc(q.status)}</span><small class="subtle">${dateTime(q.created_at)}</small></div><h3>${esc(q.subject)}</h3><p class="profile-bio">${esc(q.message)}</p><div class="card-footer"><span>${admin()?esc(memberName(q.investor_id)):'Sent to the club administrators'}</span>${admin()&&q.status==='new'?`<button class="text-button" data-action="reviewInquiry" data-id="${esc(q.id)}">Mark reviewed</button>`:''}</div></div>`).join(''):empty('No inquiries yet','Investor questions will appear here.')}</div>`;
 }
-function members() {
-  const people=(cache.profiles||[]).filter(p=>(!('membership_status' in p)||p.membership_status==='approved')&&p.role!=='investor'); const online=p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000;
-  memberDirectoryPage=Math.min(memberDirectoryPage,Math.max(0,Math.ceil(people.length/50)-1));
-  const pageMembers=people.sort((a,b)=>Number(online(b))-Number(online(a))||a.full_name.localeCompare(b.full_name)).slice(memberDirectoryPage*50,memberDirectoryPage*50+50);
-  const invite=(cache.founder_invites||[]).find(i=>i.email===session?.user.email?.toLowerCase()&&!i.accepted_at);
-  return `${head('COMMUNITY','Members','See who is around and connect with the people building SPACE.',`<div class="profile-buttons">${avatarReady?button('Change photo','avatarForm','button-outline'):''}${button('Edit my profile','profileForm')}<a class="button button-outline" href="#privacy">Privacy settings</a></div>`)}
-  ${invite?`<div class="founder-invite-banner"><div><span class="eyebrow">FOUNDER INVITATION</span><h3>You’ve been invited to join the founding team.</h3><p>Accept with your verified account to open founder meetings and planning.</p></div>${button('Accept invitation','acceptFounder')}</div>`:''}
-  <div class="grid grid-4"><div class="stat"><small>Visible members</small><b>${people.length}</b><span>In your directory</span></div><div class="stat"><small>Visible online</small><b>${people.filter(online).length}</b><span>Seen within 65 seconds</span></div></div><div class="section-heading"><h2>Member directory</h2><p>Presence updates while the workspace is open. Private profiles appear only to their owner and administrators.</p></div><div class="profile-grid">${people.length?pageMembers.map(p=>`<div class="card person">${p.avatar_path?`<button type="button" class="person-photo-trigger" data-action="viewProfilePhoto" data-id="${esc(p.id)}" aria-label="View ${esc(p.full_name)}'s profile photo full screen">${memberAvatar(p.id)}</button>`:memberAvatar(p.id)}<div><h3>${esc(p.full_name||'New member')}</h3>${roleBadge(p)}<p class="subtle">${esc(p.headline||p.programme||'Member')}</p></div>${online(p)?'<span class="online-dot" title="Online"></span>':''}<button class="text-button" data-action="memberProfile" data-id="${esc(p.id)}">Profile</button></div>`).join(''):empty('No members yet','Member profiles will appear after signup.')}</div>${recordsPager('memberDirectory',memberDirectoryPage,people.length)}`;
+// Directory preferences and bookmarks stay on this device, scoped to the account.
+function resetMemberDirectory(){
+  clearTimeout(memberSearchTimer);memberSearchTimer=null;memberDirectoryPage=0;memberDirectoryOwner=null;memberLinkedProfile=null;memberSavedIds=new Set();
+  memberDirectory={search:'',role:'all',presence:'all',skill:'',group:'all',sort:'online',view:'grid',compact:false};
 }
-function memberProfile(id) {
-  const p=(cache.profiles||[]).find(x=>x.id===id&&x.membership_status==='approved'&&x.role!=='investor');if(!p)return;
-  const online=p.last_seen_at&&Date.now()-new Date(p.last_seen_at)<65000;
-  modal(`<div class="member-profile-hero">${p.avatar_path?`<button type="button" class="profile-photo-trigger" data-action="viewProfilePhoto" data-id="${esc(p.id)}" aria-label="View ${esc(p.full_name)}'s profile photo full screen">${memberAvatar(p.id,true)}<span class="profile-photo-hint">Tap to enlarge</span></button>`:memberAvatar(p.id,true)}<span class="tag ${online?'':'blue'}">${online?'Online':esc(p.availability||'Member')}</span></div><h2>${esc(p.full_name)}</h2>${roleBadge(p)}<p class="profile-headline">${esc(p.headline||p.programme||'Club member')}</p><p class="subtle">${p.handle?'@'+esc(p.handle)+' · ':''}${esc(p.programme||'SPACE Engineering Club')}</p><div class="profile-facts"><div><small>Role</small><strong>${esc(p.role)}</strong></div><div><small>Availability</small><strong>${esc(p.availability||'Available')}</strong></div><div><small>Joined</small><strong>${date(p.created_at)}</strong></div></div><h3>About</h3><p class="profile-bio">${esc(p.bio||'This member has not added a bio yet.')}</p><h3>Skills & interests</h3><p>${esc(p.skills||'Not listed yet.')}</p><div class="profile-buttons">${p.id===session?.user.id?`${avatarReady?button('Change photo','avatarForm','button-outline'):''}${button('Edit my profile','profileForm')}`:dmReady?`<button class="button" data-action="openDm" data-id="${esc(p.id)}">Message ${esc(p.full_name.split(' ')[0])} →</button>`:''}</div>`);
+function ensureMemberDirectory(){
+  const owner=session?.user.id||null;
+  if(memberDirectoryOwner===owner)return;
+  resetMemberDirectory();memberDirectoryOwner=owner;
+  if(!owner)return;
+  try{
+    const saved=JSON.parse(localStorage.getItem(`space.members.${owner}`)||'{}');
+    if(['grid','list'].includes(saved.view))memberDirectory.view=saved.view;
+    memberDirectory.compact=saved.compact===true;
+    if(Array.isArray(saved.saved))memberSavedIds=new Set(saved.saved.filter(id=>typeof id==='string'&&id.length<=64).slice(0,500));
+  }catch{}
+}
+function saveMemberDirectory(){
+  if(!session?.user.id)return;
+  try{localStorage.setItem(`space.members.${session.user.id}`,JSON.stringify({view:memberDirectory.view,compact:memberDirectory.compact,saved:[...memberSavedIds]}));}catch{show('Device storage is unavailable. Your choices will last for this session.');}
+}
+function memberProfileId(id){return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id||'');}
+function memberVisible(p){return clubAccess()&&p?.membership_status==='approved'&&p.role!=='investor'&&(p.profile_visibility!=='private'||p.id===session?.user.id||admin());}
+function directoryPeople(){return (cache.profiles||[]).filter(memberVisible);}
+function memberOnline(p){const seen=new Date(p?.last_seen_at).getTime(),age=Date.now()-seen;return Number.isFinite(seen)&&age>=0&&age<65000;}
+function memberNew(p){const joined=new Date(p?.created_at).getTime(),age=Date.now()-joined;return Number.isFinite(joined)&&age>=0&&age<30*86400000;}
+function memberDisplayName(p){return String(p?.full_name||'New member').trim()||'New member';}
+function memberText(value){return String(value||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();}
+function memberSkills(p){
+  const seen=new Set();
+  return String(p?.skills||'').slice(0,2000).split(/[,;\n]+/).map(s=>s.trim().slice(0,60)).filter(s=>{const key=memberText(s);if(!key||seen.has(key))return false;seen.add(key);return true;}).slice(0,16);
+}
+function memberSharedSkills(p){const mine=new Set(memberSkills(me).map(memberText));return p?.id===session?.user.id?[]:memberSkills(p).filter(s=>mine.has(memberText(s)));}
+function memberAvailability(p){return {available:'Available',busy:'Busy',away:'Away'}[p?.availability]||'Not set';}
+function directoryResults(){
+  ensureMemberDirectory();
+  const terms=memberText(memberDirectory.search).split(/\s+/).filter(Boolean);
+  const filtered=directoryPeople().filter(p=>{
+    const text=memberText([memberDisplayName(p),p.handle?`@${p.handle}`:'',p.headline,p.programme,p.skills].join(' '));
+    const role=memberDirectory.role==='leads'?p.role==='teacher'||p.role==='founder'&&p.founder_teaching_enabled===true:memberDirectory.role==='all'||p.role===memberDirectory.role;
+    const presence=memberDirectory.presence==='all'||(memberDirectory.presence==='online'?memberOnline(p):p.availability===memberDirectory.presence);
+    const group=memberDirectory.group==='all'||(memberDirectory.group==='saved'?memberSavedIds.has(p.id):memberDirectory.group==='new'?memberNew(p):memberSharedSkills(p).length>0);
+    return role&&presence&&group&&(!memberDirectory.skill||memberSkills(p).some(s=>memberText(s)===memberText(memberDirectory.skill)))&&terms.every(t=>text.includes(t));
+  });
+  return filtered.sort((a,b)=>{
+    const name=memberDisplayName(a).localeCompare(memberDisplayName(b),undefined,{sensitivity:'base'})||String(a.id).localeCompare(String(b.id));
+    if(memberDirectory.sort==='newest')return (new Date(b.created_at).getTime()||0)-(new Date(a.created_at).getTime()||0)||name;
+    if(memberDirectory.sort==='shared')return memberSharedSkills(b).length-memberSharedSkills(a).length||name;
+    return memberDirectory.sort==='name'?name:Number(memberOnline(b))-Number(memberOnline(a))||name;
+  });
+}
+function directorySkillCounts(people){
+  const skills=new Map();for(const p of people)for(const label of memberSkills(p)){const key=memberText(label),item=skills.get(key)||{label,count:0};item.count++;skills.set(key,item);}
+  return [...skills.values()].sort((a,b)=>b.count-a.count||a.label.localeCompare(b.label));
+}
+function memberDirectoryOptions(options,value){return options.map(([id,label])=>`<option value="${esc(id)}" ${id===value?'selected':''}>${esc(label)}</option>`).join('');}
+function memberDirectoryFilters(){
+  const filters=[];
+  if(memberDirectory.search)filters.push(['search',`Search: ${memberDirectory.search}`]);
+  if(memberDirectory.role!=='all')filters.push(['role',`Role: ${memberDirectory.role==='leads'?'Teaching leads':memberDirectory.role}`]);
+  if(memberDirectory.presence!=='all')filters.push(['presence',`Status: ${memberDirectory.presence}`]);
+  if(memberDirectory.skill)filters.push(['skill',memberDirectory.skill]);
+  if(memberDirectory.group!=='all')filters.push(['group',{saved:'Saved on this device',new:'Joined in the last 30 days',shared:'Shared interests'}[memberDirectory.group]]);
+  return filters.length?`<div class="member-active-filters">${filters.map(([key,label])=>`<button type="button" data-action="memberClearFilter" data-filter="${key}" aria-label="Remove ${esc(label)}">${esc(label)} <span aria-hidden="true">×</span></button>`).join('')}<button type="button" class="member-reset" data-action="memberReset">Clear filters</button></div>`:'';
+}
+function memberCard(p){
+  const name=memberDisplayName(p),own=p.id===session?.user.id,skills=memberSkills(p),shared=memberSharedSkills(p),saved=memberSavedIds.has(p.id),online=memberOnline(p);
+  return `<article class="member-card ${own?'is-self':''}" data-member-id="${esc(p.id)}">
+    <div class="member-card-top"><span class="member-status ${online?'is-online':''}"><i aria-hidden="true"></i>${online?'Online now':'Offline'}</span>${own?'<span class="member-you">You</span>':`<button type="button" class="member-icon-button ${saved?'is-saved':''}" data-action="memberSave" data-id="${esc(p.id)}" aria-pressed="${saved}" aria-label="${saved?'Unsave':'Save'} ${esc(name)} on this device">${memberDirectoryIcon('save')}</button>`}</div>
+    <div class="member-card-identity">${p.avatar_path?`<button type="button" class="person-photo-trigger member-card-photo" data-action="viewProfilePhoto" data-id="${esc(p.id)}" aria-label="Enlarge ${esc(name)}’s profile photo">${memberAvatar(p.id,true)}</button>`:`<button type="button" class="member-card-photo" data-action="memberProfile" data-id="${esc(p.id)}" aria-label="View ${esc(name)}’s profile">${memberAvatar(p.id,true)}</button>`}<div class="member-card-name"><h2><button type="button" data-action="memberProfile" data-id="${esc(p.id)}">${esc(name)}</button></h2><div class="member-card-badges">${roleBadge(p)}${memberNew(p)?'<span class="member-new">New here</span>':''}</div>${p.handle?`<p class="member-handle">@${esc(p.handle)}</p>`:''}</div></div>
+    <p class="member-card-headline">${esc(p.headline||p.programme||'SPACE club member')}</p>
+    <div class="member-card-skills">${skills.length?skills.slice(0,3).map(s=>`<button type="button" class="member-skill ${shared.some(x=>memberText(x)===memberText(s))?'is-shared':''}" data-action="memberSkill" data-skill="${esc(s)}" title="Find members interested in ${esc(s)}">${esc(s)}</button>`).join('')+(skills.length>3?`<button type="button" class="member-skill member-more-skills" data-action="memberProfile" data-id="${esc(p.id)}">+${skills.length-3} more</button>`:''):'<span class="member-no-skills">Skills to come</span>'}</div>
+    <div class="member-card-detail"><span class="member-availability availability-${['available','busy','away'].includes(p.availability)?p.availability:'unset'}">${memberAvailability(p)}</span>${shared.length?`<span class="member-shared-count" title="Based on interests listed in both profiles">${shared.length} shared ${shared.length===1?'interest':'interests'}</span>`:p.profile_visibility==='private'?'<span class="member-private">Private profile</span>':p.created_at?`<span>Joined ${esc(new Date(p.created_at).toLocaleDateString(undefined,{month:'short',year:'numeric'}))}</span>`:''}</div>
+    <div class="member-card-actions"><button type="button" class="member-profile-button" data-action="memberProfile" data-id="${esc(p.id)}">View profile ${memberDirectoryIcon('arrow')}</button>${own?`<button type="button" class="member-message-button" data-action="profileForm" aria-label="Edit your profile">${memberDirectoryIcon('edit')} Edit</button>`:dmReady?`<button type="button" class="member-message-button" data-action="openDm" data-id="${esc(p.id)}" aria-label="Message ${esc(name)}">${iconSvg('messages')} Message</button>`:''}</div>
+  </article>`;
+}
+function memberDirectoryIcon(name){
+  const paths={save:'<path d="M6 3h12v18l-6-4-6 4z"/>',grid:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',list:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',spark:'<path d="m12 3 2.7 6.3L21 12l-6.3 2.7L12 21l-2.7-6.3L3 12l6.3-2.7z"/>',arrow:'<path d="M5 12h14m-5-5 5 5-5 5"/>',edit:'<path d="m16 3 5 5L8 21H3v-5L16 3ZM13 6l5 5"/>',link:'<path d="m10 13 4-4M8 16l-2 2a4 4 0 0 1-6-6l5-5a4 4 0 0 1 6 0m2 1 2-2a4 4 0 0 1 6 6l-5 5a4 4 0 0 1-6 0"/>'};
+  return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]||paths.spark}</svg>`;
+}
+function memberDirectoryPager(total){
+  const pages=Math.ceil(total/memberPageSize);if(pages<=1)return '';
+  const numbers=[...new Set([0,memberDirectoryPage-1,memberDirectoryPage,memberDirectoryPage+1,pages-1])].filter(p=>p>=0&&p<pages).sort((a,b)=>a-b);
+  return `<nav class="member-pager" aria-label="Member directory pages"><span>Page ${memberDirectoryPage+1} of ${pages}</span><div><button type="button" data-action="memberPage" data-page="${memberDirectoryPage-1}" ${memberDirectoryPage===0?'disabled':''}>Previous</button>${numbers.map((p,i)=>`${i&&p-numbers[i-1]>1?'<span aria-hidden="true">…</span>':''}<button type="button" data-action="memberPage" data-page="${p}" aria-label="Page ${p+1}" ${p===memberDirectoryPage?'aria-current="page"':''}>${p+1}</button>`).join('')}<button type="button" data-action="memberPage" data-page="${memberDirectoryPage+1}" ${memberDirectoryPage===pages-1?'disabled':''}>Next</button></div></nav>`;
+}
+function memberProfileCompletion(){
+  const fields=[['Photo',!!me?.avatar_path],['Headline',!!me?.headline?.trim()],['About',!!me?.bio?.trim()],['Skills',memberSkills(me).length>0],['Handle',!!me?.handle?.trim()]].filter(([label])=>label!=='Photo'||avatarReady).filter(([label])=>!['Headline','About'].includes(label)||dmReady).filter(([label])=>label!=='Handle'||enhancedReady);
+  const done=fields.filter(([,ready])=>ready).length;
+  return {fields,done,percent:fields.length?Math.round(done/fields.length*100):100};
+}
+function members(){
+  if(!clubAccess())return empty('Member access required','Sign in with an approved club account to explore members.');
+  ensureMemberDirectory();
+  const people=directoryPeople(),results=directoryResults(),skills=directorySkillCounts(people),online=people.filter(memberOnline).length,newCount=people.filter(memberNew).length,saved=people.filter(p=>memberSavedIds.has(p.id)).length,shared=people.filter(p=>memberSharedSkills(p).length).length,completion=memberProfileCompletion();
+  memberDirectoryPage=Math.min(memberDirectoryPage,Math.max(0,Math.ceil(results.length/memberPageSize)-1));
+  const start=memberDirectoryPage*memberPageSize,visible=results.slice(start,start+memberPageSize),invite=(cache.founder_invites||[]).find(i=>i.email===session?.user.email?.toLowerCase()&&!i.accepted_at);
+  const tabs=[['all','Everyone',people.length],['shared','Shared interests',shared],['new','New here',newCount],['saved','Saved',saved]];
+  return `${head('COMMUNITY','People make SPACE.','Find a collaborator, meet a mentor, or start a good conversation.',`<div class="profile-buttons">${button('Edit my profile','profileForm','button-outline')}<a class="button button-outline" href="#privacy">Privacy</a></div>`)}
+  ${invite?`<div class="founder-invite-banner"><div><span class="eyebrow">FOUNDER INVITATION</span><h3>You’ve been invited to the founding team.</h3><p>Accept with your verified account to open founder meetings and planning.</p></div>${button('Accept invitation','acceptFounder')}</div>`:''}
+  <section class="member-directory" aria-label="Member directory">
+    <div class="member-directory-intro"><div><span class="eyebrow">YOUR COMMUNITY</span><h2>A little curiosity.<br>A great connection.</h2><p>Explore the people and interests behind the builds.</p><div class="member-intro-stats"><span><strong>${people.length}</strong> visible members</span><button type="button" data-action="memberPresence" data-presence="online"><i aria-hidden="true"></i><strong>${online}</strong> online now</button></div></div><div class="member-intro-actions"><span class="member-spark" aria-hidden="true">${memberDirectoryIcon('spark')}</span><strong>Make room for someone new.</strong><p>Discover a member from your current results.</p><button type="button" class="button" data-action="memberDiscover" ${results.some(p=>p.id!==session?.user.id)?'':'disabled'}>${memberDirectoryIcon('spark')} Meet a member</button></div></div>
+    ${completion.percent<100?`<aside class="member-completion"><div class="member-completion-ring" style="--completion:${completion.percent}%" aria-hidden="true"><span>${completion.percent}%</span></div><div><strong>Let your profile introduce you.</strong><p>Add ${completion.fields.filter(([,ready])=>!ready).map(([label])=>label.toLowerCase()).join(', ')} to help people find common ground.</p></div><button type="button" data-action="memberCompletion">Finish my profile ${memberDirectoryIcon('arrow')}</button></aside>`:''}
+    <div class="member-discovery-tabs" role="group" aria-label="Member groups">${tabs.map(([group,label,count])=>`<button type="button" data-action="memberGroup" data-group="${group}" aria-pressed="${memberDirectory.group===group}">${group==='saved'?memberDirectoryIcon('save'):''}${label}<span>${count}</span></button>`).join('')}</div>
+    <div class="member-directory-tools"><div class="member-search-wrap">${dmIcon('search')}<label class="sr-only" for="memberSearch">Search members by name, handle, background or skill</label><input id="memberSearch" type="search" maxlength="120" autocomplete="off" placeholder="Search people, @handles, skills…" value="${esc(memberDirectory.search)}"><kbd aria-hidden="true">/</kbd></div><div class="member-view-options" role="group" aria-label="Directory view"><button type="button" data-action="memberView" data-view="grid" aria-label="Grid view" aria-pressed="${memberDirectory.view==='grid'}">${memberDirectoryIcon('grid')}</button><button type="button" data-action="memberView" data-view="list" aria-label="List view" aria-pressed="${memberDirectory.view==='list'}">${memberDirectoryIcon('list')}</button><button type="button" class="member-density" data-action="memberDensity" aria-pressed="${memberDirectory.compact}">Compact</button></div></div>
+    <div class="member-filter-row"><label>Role<select data-member-setting="role">${memberDirectoryOptions([['all','All roles'],['member','Members'],['leads','Teaching leads'],['teacher','Teachers'],['founder','Founders'],['admin','Administrators']],memberDirectory.role)}</select></label><label>Status<select data-member-setting="presence">${memberDirectoryOptions([['all','Any status'],['online','Online now'],['available','Available'],['busy','Busy'],['away','Away']],memberDirectory.presence)}</select></label><label class="member-skill-select">Interest<select data-member-setting="skill">${memberDirectoryOptions([['','Any interest'],...skills.map(s=>[s.label,`${s.label} (${s.count})`])],memberDirectory.skill)}</select></label><label>Sort by<select data-member-setting="sort">${memberDirectoryOptions([['online','Online first'],['name','Name A–Z'],['newest','Newest members'],['shared','Shared interests']],memberDirectory.sort)}</select></label></div>
+    ${skills.length?`<div class="member-interest-strip"><span>Explore interests</span>${skills.slice(0,7).map(s=>`<button type="button" class="member-skill" data-action="memberSkill" data-skill="${esc(s.label)}" aria-pressed="${memberText(memberDirectory.skill)===memberText(s.label)}">${esc(s.label)} <span>${s.count}</span></button>`).join('')}</div>`:''}
+    ${memberDirectoryFilters()}
+    <div class="member-results-heading"><h2 id="memberResultsTitle" tabindex="-1">${{all:'The community',shared:'Common ground',new:'Welcome the new faces',saved:'Your saved members'}[memberDirectory.group]}</h2><span id="memberResultsCount" role="status" aria-live="polite">${results.length?`${start+1}–${Math.min(start+memberPageSize,results.length)} of ${results.length}`:'0'} ${results.length===1?'member':'members'}</span></div>
+    <div class="member-grid view-${memberDirectory.view} ${memberDirectory.compact?'is-compact':''}" aria-labelledby="memberResultsTitle">${visible.length?visible.map(memberCard).join(''):`<div class="member-directory-empty">${memberDirectoryIcon('members')}<h3>${memberDirectory.group==='saved'?'Your people, a tap away':memberDirectory.group==='shared'&&!memberSkills(me).length?'Start with your interests':'No members match yet'}</h3><p>${memberDirectory.group==='saved'?'Tap a bookmark on a profile card to save a member here. Saved members are private to this account on this device.':memberDirectory.group==='shared'&&!memberSkills(me).length?'Add comma-separated skills or interests to your profile to discover common ground.':'Try another name, interest or status, or clear your filters.'}</p><button type="button" class="button button-outline" data-action="${memberDirectory.group==='shared'&&!memberSkills(me).length?'profileForm':'memberReset'}">${memberDirectory.group==='shared'&&!memberSkills(me).length?'Add my interests':'Show everyone'}</button></div>`}</div>
+    ${memberDirectoryPager(results.length)}<p class="member-directory-note">Online status is approximate. Only approved, visible club profiles appear. Bookmarks and display choices are saved for your account on this device.</p>
+  </section>`;
+}
+function rerenderMemberDirectory(focusId='',selection=null){
+  render();
+  const input=focusId?document.getElementById(focusId):null;
+  if(input){input.focus({preventScroll:true});if(selection)input.setSelectionRange?.(...selection);}
+}
+function memberDirectorySearch(input){
+  if(page!=='members'||!clubAccess())return;
+  ensureMemberDirectory();memberDirectory.search=String(input.value||'').slice(0,120);memberDirectoryPage=0;
+  clearTimeout(memberSearchTimer);const owner=session.user.id;
+  memberSearchTimer=setTimeout(()=>{if(page!=='members'||!clubAccess()||session.user.id!==owner)return;const focused=document.activeElement?.id==='memberSearch',current=$('#memberSearch'),selection=current?[current.selectionStart,current.selectionEnd]:null;rerenderMemberDirectory(focused?'memberSearch':'',selection);},180);
+}
+function memberDirectoryChange(input){
+  if(page!=='members'||!clubAccess())return;
+  ensureMemberDirectory();
+  const key=input.dataset.memberSetting,value=input.value,allowed={role:['all','member','leads','teacher','founder','admin'],presence:['all','online','available','busy','away'],sort:['online','name','newest','shared']};
+  if(key==='skill'){if(value&&!directorySkillCounts(directoryPeople()).some(s=>s.label===value))return;}
+  else if(!allowed[key]?.includes(value))return;
+  memberDirectory[key]=value;memberDirectoryPage=0;render();
+  document.querySelector(`[data-member-setting="${key}"]`)?.focus({preventScroll:true});
+}
+function memberDirectoryKeyboard(e){
+  if(page!=='members'||!clubAccess()||e.ctrlKey||e.metaKey||e.altKey||e.isComposing||$('#modal')?.open||$('#imageViewer')?.open)return false;
+  if(e.key==='Escape'&&e.target.id==='memberSearch'){clearTimeout(memberSearchTimer);memberDirectory.search='';memberDirectoryPage=0;e.preventDefault();rerenderMemberDirectory('memberSearch');return true;}
+  if(e.key==='/'&&!e.target.closest?.('input,textarea,select,[contenteditable]')){e.preventDefault();$('#memberSearch')?.focus({preventScroll:true});return true;}
+  return false;
+}
+function hydrateDirectoryPhotos(){
+  if(!clubAccess()||!mediaReady||page!=='members')return;
+  const owner=session.user.id,paths=directoryResults().slice(memberDirectoryPage*memberPageSize,(memberDirectoryPage+1)*memberPageSize).map(p=>p.avatar_path).filter(Boolean);
+  void hydrateMedia(paths).then(changed=>{
+    if(!changed||page!=='members'||session?.user.id!==owner)return;
+    // Update photos in place without moving focus or replacing search controls.
+    for(const photo of document.querySelectorAll('.member-card-photo[data-id]')){const profile=directoryPeople().find(p=>p.id===photo.dataset.id),current=photo.querySelector('.avatar');if(profile&&current)current.outerHTML=memberAvatar(profile.id,true);}
+  }).catch(console.error);
+}
+function openLinkedMemberProfile(){
+  if(!clubAccess())return;
+  ensureMemberDirectory();
+  const [route,id]=location.hash.slice(1).split('/');if(route!=='members'||!memberProfileId(id)){memberLinkedProfile=null;return;}
+  const token=`${authGeneration}:${location.hash}`;if(memberLinkedProfile===token)return;
+  if(directoryPeople().some(p=>p.id===id)){memberLinkedProfile=token;memberProfile(id);}
+  else if(!workspaceHydrating){memberLinkedProfile=token;show('This profile is unavailable or private.');}
+}
+function memberCompletionDialog(){
+  if(!clubAccess())return;
+  const {fields,done}=memberProfileCompletion();
+  modal(`<span class="eyebrow">YOUR INTRODUCTION</span><h2>Make yourself easy to meet.</h2><p class="subtle">${done} of ${fields.length} profile details complete. You choose what to share; privacy settings stay in your control.</p><ul class="member-completion-list">${fields.map(([label,ready])=>`<li><span>${ready?'✓':'○'} ${label}</span><strong>${ready?'Added':'To add'}</strong></li>`).join('')}</ul><p class="subtle">Separate skills and interests with commas, for example: Python, robotics, automation.</p><div class="profile-buttons">${avatarReady?button('Update photo','avatarForm','button-outline'):''}${button('Edit profile','profileForm')}</div>`);
+}
+function memberDirectoryAction(action,el,id){
+  const supported=['memberSave','memberSkill','memberGroup','memberPresence','memberView','memberDensity','memberReset','memberClearFilter','memberDiscover','memberPage','memberCompletion','memberCopyLink'];
+  if(!supported.includes(action))return false;
+  if(!clubAccess())return true;
+  ensureMemberDirectory();clearTimeout(memberSearchTimer);
+  if(action==='memberSave'){
+    const profile=directoryPeople().find(p=>p.id===id);if(!profile||id===session.user.id)return true;
+    if(memberSavedIds.has(id))memberSavedIds.delete(id);
+    else if(memberSavedIds.size<500)memberSavedIds.add(id);
+    else{show('You have saved 500 members. Remove a bookmark before adding another.');return true;}
+    saveMemberDirectory();
+    if(el.dataset.modal==='true'){el.setAttribute('aria-pressed',String(memberSavedIds.has(id)));el.innerHTML=`${memberDirectoryIcon('save')} ${memberSavedIds.has(id)?'Saved':'Save member'}`;if(page==='members')render();}
+    else{render();[...document.querySelectorAll('.member-card')].find(card=>card.dataset.memberId===id)?.querySelector('[data-action="memberSave"]')?.focus({preventScroll:true});}
+    return true;
+  }
+  if(action==='memberCopyLink'){
+    const profile=directoryPeople().find(p=>p.id===id);if(!profile||profile.profile_visibility==='private'||!memberProfileId(id))return true;
+    const link=`${location.origin}${location.pathname}#members/${id}`,owner=session.user.id;
+    if(navigator.clipboard?.writeText)void navigator.clipboard.writeText(link).then(()=>{if(session?.user.id===owner)show('Profile link copied. Approved club members can open it.');}).catch(()=>{if(session?.user.id===owner)show('Copy is unavailable. Open this profile from the Members page.');});
+    else modal(`<h2>Share this profile</h2><p class="subtle">The recipient needs an approved club account.</p><label for="memberShareLink">Select and copy the link</label><input id="memberShareLink" class="member-share-link" type="text" readonly value="${esc(link)}">`);
+    return true;
+  }
+  if(action==='memberCompletion'){memberCompletionDialog();return true;}
+  if(action==='memberDiscover'){
+    const choices=directoryResults().filter(p=>p.id!==session.user.id);
+    if(choices.length)memberProfile(choices[Math.floor(Math.random()*choices.length)].id);
+    else show('Try clearing the filters to meet another member.');return true;
+  }
+  if(action==='memberPage'){
+    const next=Number(el.dataset.page),total=directoryResults().length;
+    if(!Number.isInteger(next)||next<0||next*memberPageSize>=total)return true;
+    memberDirectoryPage=next;render();$('#memberResultsTitle')?.focus({preventScroll:true});$('#memberResultsTitle')?.scrollIntoView({block:'start',behavior:'auto'});return true;
+  }
+  if(action==='memberSkill'){
+    const skill=directorySkillCounts(directoryPeople()).find(s=>memberText(s.label)===memberText(el.dataset.skill));if(!skill)return true;
+    memberDirectory.skill=memberText(memberDirectory.skill)===memberText(skill.label)?'':skill.label;
+    if($('#modal')?.open)close();
+    memberDirectory.group='all';
+  }
+  if(action==='memberGroup'){if(!['all','shared','new','saved'].includes(el.dataset.group))return true;memberDirectory.group=el.dataset.group;}
+  if(action==='memberPresence'){if(el.dataset.presence!=='online')return true;memberDirectory.presence=memberDirectory.presence==='online'?'all':'online';}
+  if(action==='memberView'){if(!['grid','list'].includes(el.dataset.view))return true;memberDirectory.view=el.dataset.view;saveMemberDirectory();}
+  if(action==='memberDensity'){memberDirectory.compact=!memberDirectory.compact;saveMemberDirectory();}
+  if(action==='memberReset')memberDirectory={...memberDirectory,search:'',role:'all',presence:'all',skill:'',group:'all',sort:'online'};
+  if(action==='memberClearFilter'){
+    const key=el.dataset.filter;if(!['search','role','presence','skill','group'].includes(key))return true;memberDirectory[key]=['search','skill'].includes(key)?'':'all';
+  }
+  memberDirectoryPage=0;
+  if(page!=='members'){location.hash='#members';return true;}
+  render();
+  // Keep keyboard focus on the selected control after replacing the directory.
+  if(action==='memberClearFilter'||action==='memberReset')$('#memberSearch')?.focus({preventScroll:true});
+  else document.querySelector(`[data-action="${action}"]${action==='memberView'?`[data-view="${el.dataset.view}"]`:action==='memberGroup'?`[data-group="${el.dataset.group}"]`:''}`)?.focus({preventScroll:true});
+  return true;
+}
+function memberProfile(id){
+  const p=directoryPeople().find(x=>x.id===id);if(!p)return;
+  ensureMemberDirectory();
+  const online=memberOnline(p),name=memberDisplayName(p),skills=memberSkills(p),shared=memberSharedSkills(p),own=p.id===session?.user.id;
+  modal(`<div class="member-profile-hero">${p.avatar_path?`<button type="button" class="profile-photo-trigger" data-action="viewProfilePhoto" data-id="${esc(p.id)}" aria-label="View ${esc(name)}’s profile photo full screen">${memberAvatar(p.id,true)}<span class="profile-photo-hint">Tap to enlarge</span></button>`:memberAvatar(p.id,true)}<span class="tag ${online?'':'blue'}">${online?'Online now':memberAvailability(p)}</span></div><h2>${esc(name)}</h2>${roleBadge(p)}${memberNew(p)?'<span class="member-new">New here</span>':''}<p class="profile-headline">${esc(p.headline||p.programme||'Club member')}</p><p class="subtle">${p.handle?'@'+esc(p.handle)+' · ':''}${esc(p.programme||'SPACE Engineering Club')}</p><div class="profile-facts"><div><small>Role</small><strong>${esc(p.role||'member')}</strong></div><div><small>Availability</small><strong>${memberAvailability(p)}</strong></div><div><small>Joined</small><strong>${date(p.created_at)}</strong></div></div><h3>About</h3><p class="profile-bio">${esc(p.bio||'This member has not added a bio yet.')}</p><h3>Skills & interests</h3><div class="member-profile-skills">${skills.length?skills.map(s=>`<button type="button" class="member-skill ${shared.some(x=>memberText(x)===memberText(s))?'is-shared':''}" data-action="memberSkill" data-skill="${esc(s)}">${esc(s)}</button>`).join(''):'<span class="subtle">Not listed yet.</span>'}</div>${shared.length?`<p class="member-shared-note">${memberDirectoryIcon('spark')} You share ${shared.length} ${shared.length===1?'interest':'interests'}: ${esc(shared.join(', '))}.</p>`:''}<div class="profile-buttons member-profile-tools">${own?`${avatarReady?button('Change photo','avatarForm','button-outline'):''}${button('Edit my profile','profileForm')}`:dmReady?`<button class="button" data-action="openDm" data-id="${esc(p.id)}">${iconSvg('messages')} Message ${esc(name.split(/\s+/)[0])}</button>`:''}${!own?`<button type="button" class="button button-outline" data-action="memberSave" data-id="${esc(p.id)}" data-modal="true" aria-pressed="${memberSavedIds.has(p.id)}">${memberDirectoryIcon('save')} ${memberSavedIds.has(p.id)?'Saved':'Save member'}</button>`:''}${memberProfileId(p.id)&&p.profile_visibility!=='private'?`<button type="button" class="button button-outline" data-action="memberCopyLink" data-id="${esc(p.id)}">${memberDirectoryIcon('link')} Copy profile link</button>`:''}</div><p class="subtle member-profile-note">${p.profile_visibility==='private'?'This profile is private.':'Profile links require an approved club account.'} Saved members stay on this device.</p>`);
   if(p.avatar_path&&!mediaUrl(p.avatar_path))void hydrateMedia([p.avatar_path]).then(changed=>{
     const trigger=$('#modal .profile-photo-trigger');
     if(changed&&trigger?.dataset.id===id&&trigger.querySelector('.avatar'))trigger.querySelector('.avatar').outerHTML=memberAvatar(id,true);
@@ -2513,7 +2731,7 @@ function actions(e) {
   if(action==='dmReact')return void setDmReaction(id,el.dataset.emoji);
   if(action==='viewProfilePhoto'){
     e.preventDefault();
-    const profile=(cache.profiles||[]).find(p=>p.id===id&&p.membership_status==='approved'&&p.role!=='investor');
+    const profile=directoryPeople().find(p=>p.id===id);
     if(profile?.avatar_path&&clubAccess())void openImageViewer(profile.avatar_path,`${profile.full_name} profile photo`,el);
     return;
   }
@@ -2726,6 +2944,7 @@ function actions(e) {
   if(action==='login'||action==='signup')return signInDialog('signup');
   if(action==='signin')return signInDialog('signin');
   if(action==='memberProfile')return memberProfile(id);
+  if(memberDirectoryAction(action,el,id))return;
   if(action==='openDm'){
     if(!clubAccess()||!dmReady||!id||id===session.user.id)return;
     if(activePeerId!==id){dmSearchRequest++;dmSearchOpen=false;dmSearchTerm='';dmSearchRows=[];dmSearchBusy=false;dmReactionTarget=null;dmEmojiOpen=false;}
@@ -2777,9 +2996,9 @@ function actions(e) {
     if(!clubAccess())return;
     const memberList=action.startsWith('memberDirectory');
     const current=memberList?memberDirectoryPage:projectListPage;
-    const total=memberList?(cache.profiles||[]).filter(p=>p.membership_status==='approved'&&p.role!=='investor').length:(cache.projects||[]).length;
+    const total=memberList?directoryResults().length:(cache.projects||[]).length;
     const next=current+(action.endsWith('Next')?1:-1);
-    if(next<0||next*50>=total)return;
+    if(next<0||next*(memberList?memberPageSize:50)>=total)return;
     if(memberList)memberDirectoryPage=next;else projectListPage=next;
     render();
     if(memberList){

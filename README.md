@@ -277,6 +277,33 @@ Run the database migration, configure the VAPID and worker secrets, deploy the E
 | Investor | Curated investor updates and own private inquiries, separate from the member workspace |
 | Administrator | Member and teaching abilities plus account reviews, role changes, moderation, CSV and JSON export, investor updates and inquiries, publishing, channel creation and founder invitations |
 
+## Members directory
+
+The Members page uses compact profile cards and adapts to phones, tablets and desktops. It adds:
+
+1. Search across names, `@handles`, backgrounds, headlines and skills, with accent-insensitive matching.
+2. Grid and list views.
+3. A compact density option.
+4. Role filters, including teachers and founder teaching leads.
+5. Online and self-declared availability filters.
+6. Clickable skill chips and an interest selector with member counts.
+7. Shared-interest discovery, based on the comma-separated skills in both profiles.
+8. A “New here” group and badge for members who joined within the last 30 days.
+9. Private member bookmarks and a Saved group.
+10. Online-first, alphabetical, newest and shared-interest sorting.
+11. “Meet a member” discovery within the current filters; it opens a real profile without sending a message.
+12. A personal profile-completion checklist.
+13. Protected, copyable profile links that preserve the destination through sign-in.
+14. Individual removable filters and one-click reset.
+15. Numbered pagination with 24 cards per page and filtered result counts.
+16. Keyboard shortcuts: `/` focuses directory search and Escape clears it while search is focused.
+
+Cards include quick profile and messaging actions, clearer presence and availability, and direct access to the existing full-screen photo viewer. Skill chips in the profile dialog also open directory filters. Photos load in place; search focus and cursor position are preserved during directory refreshes.
+
+Bookmarks, grid/list view and density are stored in localStorage under `space.members.<account-id>` on the current device. They do not sync between devices or create follow relationships, and bookmarking does not notify another member. Search and filters reset when the signed-in account changes. Device storage failures retain choices for the current session.
+
+Only approved club profiles visible to the current account appear in directory results, skill counts, discovery, profile dialogs and member results in workspace search. Private profiles remain visible to their owner and administrators; investor and unapproved profiles are excluded. Application answers and email addresses are never rendered in directory cards or profiles. Profile links require an approved club account and respect current visibility; private profiles have no copy-link action. Supabase RLS remains the database access boundary. These additions use existing profile fields and require no new SQL migration.
+
 ## References
 
 - [Supabase passwordless email OTP](https://supabase.com/docs/guides/auth/auth-email-passwordless)
