@@ -17,7 +17,8 @@ let inboxUnreadCount = null, inboxCountRequest = 0, pushBusy = false;
 let adminPendingCount = 0, adminAlertsInitialized = false, adminSoundEnabled = false;
 let adminSeenApplicationIds = new Set();
 let adminAlertPolling = false;
-let authGeneration = 0;
+let authGeneration = 0, authStateRequest = 0;
+let loginWelcomePendingOwner = null, loginWelcomeOwner = null, loginWelcomeTimer = null, loginWelcomeRequest = 0;
 let inventoryFilter = 'all', inventorySearchTerm = '', financeFilter = 'all', inventoryLogPage = 0, financePage = 0, financeReviewPage = 0;
 let memberDirectoryPage = 0, projectListPage = 0;
 let applicationsPage = 0, approvedAccountsPage = 0, applicationsOwner = null, applicationsLoading = false, applicationsError = '';
@@ -831,8 +832,50 @@ async function touchPresence(online=true) {
   const {error}=await db.from('profiles').update({last_seen_at:online?new Date().toISOString():null}).eq('id',session.user.id);
   if(error) console.error(error);
 }
-async function signedIn(newSession) {
+function dismissLoginWelcome(){
+  loginWelcomeRequest++;
+  clearTimeout(loginWelcomeTimer);loginWelcomeTimer=null;loginWelcomeOwner=null;
+  const video=$('#loginWelcomeVideo'),dialog=$('#loginWelcome');
+  if(video){video.onended=null;video.onerror=null;video.pause();try{video.currentTime=0;}catch{}}
+  if(dialog?.open){dialog.close();const content=$('#content');content?.setAttribute('tabindex','-1');content?.focus({preventScroll:true});}
+}
+function showLoginWelcome(){
+  const owner=session?.user.id,dialog=$('#loginWelcome'),video=$('#loginWelcomeVideo'),still=$('#loginWelcomeStill');
+  if(!owner||!dialog||!still)return;
+  dismissLoginWelcome();loginWelcomeOwner=owner;
+  const request=loginWelcomeRequest;
+  still.hidden=true;if(video)video.hidden=false;
+  try{dialog.showModal();}catch{loginWelcomeOwner=null;return;}
+  const active=()=>request===loginWelcomeRequest&&session?.user.id===owner&&loginWelcomeOwner===owner&&dialog.open;
+  const showStill=(duration=1100)=>{
+    if(!active())return;
+    if(video){video.pause();video.hidden=true;}
+    still.hidden=false;
+    clearTimeout(loginWelcomeTimer);
+    loginWelcomeTimer=setTimeout(()=>{if(active())dismissLoginWelcome();},duration);
+  };
+  $('#loginWelcomeSkip')?.focus();
+  if(!video||window.matchMedia?.('(prefers-reduced-motion: reduce)').matches){showStill();return;}
+  video.onended=()=>showStill(400);
+  video.onerror=()=>showStill();
+  loginWelcomeTimer=setTimeout(()=>{if(active())showStill(400);},4200);
+  try{video.play()?.catch(()=>showStill());}catch{showStill();}
+}
+function completeLoginWelcome(generation){
+  if(generation!==authGeneration||!session||loginWelcomePendingOwner!==session.user.id)return;
+  loginWelcomePendingOwner=null;showLoginWelcome();
+}
+function handleAuthStateChange(_event,newSession){
+  const request=++authStateRequest;
+  if(newSession?.user.id!==session?.user.id)setTimeout(()=>{
+    if(request===authStateRequest&&newSession?.user.id!==session?.user.id)void signedIn(newSession);
+  },0);
+}
+async function signedIn(newSession,showWelcome=false) {
   const generation=++authGeneration;
+  if(!newSession||loginWelcomePendingOwner&&loginWelcomePendingOwner!==newSession.user.id)loginWelcomePendingOwner=null;
+  if(!newSession||loginWelcomeOwner&&loginWelcomeOwner!==newSession.user.id)dismissLoginWelcome();
+  if(showWelcome&&newSession?.user.id)loginWelcomePendingOwner=newSession.user.id;
   closeImageViewer(false);
   if($('#workspaceSearchInput'))close();
   session=newSession;
@@ -854,7 +897,7 @@ async function signedIn(newSession) {
     pendingEmail=''; sessionStorage.removeItem('innovatex.pendingEmail');sessionStorage.removeItem('innovatex.pendingAuthMode');
     const {data,error}=await db.from('profiles').select('*').eq('id',session.user.id).single();
     if(generation!==authGeneration)return;
-    if(error) { fail(error); return; }
+    if(error) { loginWelcomePendingOwner=null;fail(error); return; }
     me=data;
     await hydrateOwnApplicationReason();
     if(generation!==authGeneration)return;
@@ -897,7 +940,9 @@ async function signedIn(newSession) {
     history.replaceState(null,'','#'+pendingProtectedPage);
     pendingProtectedPage='';
   }
+  if(generation!==authGeneration)return;
   route();
+  completeLoginWelcome(generation);
 }
 async function init() {
   document.querySelectorAll('#nav a[data-page]').forEach(a=>{const slot=a.querySelector('span');if(slot)slot.innerHTML=iconSvg(a.dataset.page);});
@@ -934,6 +979,9 @@ async function init() {
     if(session&&authReady&&!document.hidden&&!['feed','channels','messages','applications'].includes(page))void refreshVisiblePage();
   });
   $('#authButton').onclick=()=>session ? signOut() : signInDialog();
+  $('#loginWelcomeSkip')?.addEventListener('click',dismissLoginWelcome);
+  $('#loginWelcome')?.addEventListener('cancel',event=>{event.preventDefault();dismissLoginWelcome();});
+  $('#loginWelcome')?.addEventListener('close',dismissLoginWelcome);
   document.addEventListener('click',actions);
   document.addEventListener('keydown',e=>{
     if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openWorkspaceSearch();return;}
@@ -978,7 +1026,7 @@ async function init() {
   });
   route();
   if(!db) return;
-  db.auth.onAuthStateChange((_event,s)=>{ if(s?.user.id !== session?.user.id) setTimeout(()=>signedIn(s),0); });
+  db.auth.onAuthStateChange(handleAuthStateChange);
   const {data,error}=await db.auth.getSession();
   if(error) fail(error); else await signedIn(data.session);
   document.addEventListener('visibilitychange',()=>{
@@ -2118,7 +2166,7 @@ function projectDetail(id) {
     <div class="row" style="margin-top:22px"><h3>Project discussions</h3><button class="text-button" data-action="projectTopic" data-id="${esc(id)}">Start discussion +</button></div>${threads.length?threads.map(t=>`<div class="list-item"><div><strong>${esc(t.title)}</strong><small>${date(t.created_at)}</small></div><button class="text-button" data-action="topicDetail" data-id="${esc(t.id)}">Open →</button></div>`).join(''):'<p class="muted">No project discussions yet.</p>'}${can?`<div class="profile-action">${button('Update project','projectEdit','button-outline button-sm')}</div>`:''}`);
 }
 function topicDetail(id) {const t=(cache.topics||[]).find(x=>x.id===id);if(!t)return;const list=(cache.replies||[]).filter(x=>x.topic_id===id).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));modal(`<span class="tag">${esc(t.category)}</span><h2 style="margin-top:15px">${esc(t.title)}</h2><p>${esc(t.body)}</p><h3>Replies (${list.length})</h3><div style="max-height:300px;overflow:auto">${list.map(r=>`<div class="reply"><strong>${esc((cache.profiles||[]).find(p=>p.id===r.author_id)?.full_name||'Member')}</strong><span class="subtle"> · ${dateTime(r.created_at)}</span><p>${esc(r.body)}</p></div>`).join('')||'<p class="muted">Be the first to reply.</p>'}</div><form id="editor" data-kind="reply" class="form-stack">${area('Your reply','body')}<button class="button" type="submit">Post reply</button></form>`);}
-async function signOut() {try{if(session&&window.InnovateXPush)await window.InnovateXPush.unsubscribe(session.user.id,db);await touchPresence(false);const {error}=await db.auth.signOut();if(error)throw error;pendingProtectedPage='';history.replaceState(null,'','#home');await signedIn(null);show('Signed out. See you soon.');}catch(e){fail(e);}}
+async function signOut() {authStateRequest++;loginWelcomePendingOwner=null;dismissLoginWelcome();try{if(session&&window.InnovateXPush)await window.InnovateXPush.unsubscribe(session.user.id,db);await touchPresence(false);const {error}=await db.auth.signOut();if(error)throw error;pendingProtectedPage='';history.replaceState(null,'','#home');await signedIn(null);show('Signed out. See you soon.');}catch(e){fail(e);}}
 
 async function deleteAnnouncement(id){
   if(!admin())return;
@@ -2926,7 +2974,7 @@ async function submit(e) {
       const {data,error}=await db.auth.verifyOtp({email:pendingEmail,token,type:'email'});
       if(error)throw error;
       if(!data.session)throw Error('Verification succeeded, but no session was returned. Please try signing in again.');
-      close();await signedIn(data.session);show('Email verified. Welcome to SPACE!');return;
+      close();await signedIn(data.session,true);show('Email verified. Welcome to SPACE!');return;
     }
     const payload={...values};
     for(const key of ['starts_at','ends_at','due_at']) if(key in payload) payload[key]=payload[key]?new Date(payload[key]).toISOString():null;

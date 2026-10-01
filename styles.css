@@ -1181,3 +1181,27 @@ dialog::backdrop{background:rgba(17,24,39,.56);backdrop-filter:blur(3px)}
   .notification-actions{gap:4px 12px}
   .card.push-settings{padding:14px}
 }
+
+/* Original SPACE artwork and the welcome shown after sign-in. */
+.brand-lockup{display:block}
+.brand-logo{display:block;width:155px;height:auto;mix-blend-mode:screen}
+.brand .brand-lockup small{margin-top:7px}
+.brand:focus-visible{outline:2px solid #fff;outline-offset:5px;border-radius:2px}
+.mobile-wordmark{align-items:center;flex:none}
+.mobile-wordmark img{height:auto;object-fit:contain;filter:invert(1);mix-blend-mode:multiply}
+.mobile-wordmark-long{width:78px}
+.mobile-wordmark-short{width:20px}
+[data-theme=dark] .mobile-wordmark img{filter:none;mix-blend-mode:screen}
+.mobile-wordmark:focus-visible{outline:2px solid currentColor;outline-offset:5px;border-radius:2px}
+.login-welcome{inset:0;width:100vw;max-width:none;height:100vh;height:100dvh;max-height:none;margin:0;border:0;border-radius:0;padding:24px;padding: max(24px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left));background:#000;color:#fff;box-shadow:none;overflow:auto}
+.login-welcome[open]{display:grid;place-items:center}
+.login-welcome::backdrop{background:#000}
+.login-welcome-content{display:flex;flex-direction:column;align-items:center;gap:24px;width:min(100%,720px);margin:auto;text-align:center}
+.login-welcome-media{width:min(100%,562px)}
+.login-welcome-media video,.login-welcome-media img{display:block;width:100%;height:auto;max-height:55dvh;object-fit:contain}
+.login-welcome-media [hidden]{display:none}
+.login-welcome-title{margin:0;font-size:clamp(22px,4vw,30px);line-height:1.25;letter-spacing:-.025em;color:#fff}
+.login-welcome-continue{min-height:44px;padding:11px 20px;border:1px solid #ffffff70;border-radius:8px;background:#fff;color:#111;font-weight:700;font-size:13px;line-height:1.5}
+.login-welcome-continue:hover{background:#e8e8e8}
+.login-welcome-continue:focus-visible{outline:3px solid #fff;outline-offset:5px}
+@media(max-width:520px){.login-welcome-content{gap:20px}.login-welcome-media{width:100%}}

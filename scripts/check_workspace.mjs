@@ -8,7 +8,7 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 function deferred(){let resolve; const promise=new Promise(r=>resolve=r); return {promise,resolve};}
 function node(overrides={}){return {id:'',dataset:{},style:{},isConnected:true,hidden:false,textContent:'',innerHTML:'',value:'',scrollHeight:400,scrollTop:400,clientHeight:300,classList:{add(){},remove(){},toggle(){},contains(){return false;}},querySelector(){return null;},querySelectorAll(){return [];},closest(){return null;},setAttribute(){},getAttribute(){return null;},focus(){},remove(){},close(){this.open=false;},showModal(){this.open=true;},setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;},...overrides};}
 function harness(){
-  const requests=[],queued=[],elements=new Map();
+  const requests=[],queued=[],elements=new Map(),timers=new Map();let timerId=0;
   function from(table){
     const call={table,ops:[]}; requests.push(call);
     const builder=new Proxy({}, {get(_,method){
@@ -20,20 +20,128 @@ function harness(){
   const rpcQueued=[],rpcCalls=[];
   const db={from,storage:{from},rpc(name,args){rpcCalls.push({name,args});return Promise.resolve(rpcQueued.shift()??{data:[],error:null});}};
   const storage={getItem(){return null;},setItem(){},removeItem(){}};
-  const context=vm.createContext({console,URL,crypto:globalThis.crypto,Blob,Date,Map,Set,Promise,setTimeout(){return 1;},clearTimeout(){},setInterval(){return 1;},clearInterval(){},sessionStorage:storage,localStorage:storage,createClient(){return db;},window:{INNOVATEX_CONFIG:{supabaseUrl:'https://qa.supabase.co',supabaseAnonKey:'fake'},addEventListener(){}},navigator:{},location:{hash:'#messages'},history:{replaceState(){}},document:{hidden:false,activeElement:null,querySelector(selector){return elements.get(selector)??null;},querySelectorAll(){return [];},getElementById(id){return elements.get('#'+id)??null;},addEventListener(){},documentElement:{dataset:{theme:'light'}}}});
+  const context=vm.createContext({console,URL,crypto:globalThis.crypto,Blob,Date,Map,Set,Promise,setTimeout(callback,delay=0){const id=++timerId;timers.set(id,{callback,delay});return id;},clearTimeout(id){timers.delete(id);},setInterval(){return 1;},clearInterval(){},sessionStorage:storage,localStorage:storage,createClient(){return db;},window:{INNOVATEX_CONFIG:{supabaseUrl:'https://qa.supabase.co',supabaseAnonKey:'fake'},addEventListener(){}},navigator:{},location:{hash:'#messages'},history:{replaceState(){}},document:{hidden:false,activeElement:null,querySelector(selector){return elements.get(selector)??null;},querySelectorAll(){return [];},getElementById(id){return elements.get('#'+id)??null;},addEventListener(){},documentElement:{dataset:{theme:'light'}}}});
   const source=fs.readFileSync(root+'/app.js','utf8').replace(/^import .*\n/,'').replace(/\ninit\(\);\s*$/,'');
   vm.runInContext(source,context,{filename:'app.js'});
   const run=code=>vm.runInContext(code,context);
   const exec=(code,args)=>{context.qaArgs=args;return run(code);};
   run("session={user:{id:'self'}};me={id:'self',full_name:'Tester',role:'member',membership_status:'approved'};dmReady=true;page='messages';cache={profiles:[me,{id:'a',full_name:'Alice',membership_status:'approved',role:'member'},{id:'b',full_name:'Bob',membership_status:'approved',role:'teacher'}],direct_messages:[],direct_message_reads:[],notifications:[]};render=()=>{};dmShowThreadUpdate=()=>{};refreshUnreadCounts=async()=>{};refreshInboxUnreadCount=async()=>{};");
   elements.set('#toast',node());elements.set('#dmBody',node());elements.set('#modal',node({open:false}));elements.set('#modalContent',node());
-  return {run,exec,requests,queued,rpcQueued,rpcCalls,elements,context};
+  const fireTimers=delay=>{for(const [id,timer]of [...timers])if(timer.delay===delay&&timers.has(id)){timers.delete(id);timer.callback();}};
+  return {run,exec,requests,queued,rpcQueued,rpcCalls,elements,context,db,timers,fireTimers};
 }
 const tests=[];
 function test(name,fn){tests.push({name,fn});}
 const message=(id,sender_id='a',recipient_id='self',body='hello',created_at='2026-10-01T08:00:00Z')=>({id,sender_id,recipient_id,body,created_at});
 function composer(peer,text){const input=node({value:text});const send=node();const form=node({id:'dmComposer',dataset:{peer},elements:{body:input},querySelector(s){return s==='[type=submit]'?send:null;}});return {form,input,send,event:{target:form,preventDefault(){}}};}
 function action(h,dataset){return h.exec('actions(qaArgs)',{target:{closest(){return node({dataset});}},preventDefault(){}});}
+
+function loginHarness({reducedMotion=false,play=()=>Promise.resolve()}={}){
+  const h=harness(),stats={opens:0,closes:0,plays:0,pauses:0,focused:0,workspaceFocused:0};
+  const dialog=node({open:false,showModal(){this.open=true;stats.opens++;},close(){this.open=false;stats.closes++;}});
+  const video=node({currentTime:0,pause(){stats.pauses++;},play(){stats.plays++;return play();}}),still=node({hidden:true});
+  h.elements.set('#loginWelcome',dialog);h.elements.set('#loginWelcomeVideo',video);h.elements.set('#loginWelcomeStill',still);h.elements.set('#loginWelcomeSkip',node({focus(){stats.focused++;}}));
+  h.elements.set('#content',node({focus(options){stats.workspaceFocused++;stats.workspaceFocusOptions=options;}}));
+  for(const id of ['imageViewer','memberAlert','adminAlert','sidebar','menuBtn'])h.elements.set('#'+id,node({open:false}));
+  h.context.window.matchMedia=()=>({matches:reducedMotion});
+  h.context.history.replaceState=(_state,_title,hash)=>{h.context.location.hash=hash;};
+  h.context.FormData=function(form){return form.entries;};
+  h.db.channel=()=>({on(){return this;},subscribe(){return this;}});h.db.removeChannel=async()=>{};h.db.auth={signOut:async()=>({error:null})};
+  h.run("session=null;me=null;page='home';location.hash='#home';hydrateOwnApplicationReason=async()=>{};refresh=async()=>{};touchPresence=async()=>{};loadPublic=async()=>{};");
+  return {...h,dialog,video,still,stats};
+}
+const loginSession=id=>({user:{id,email:id+'@example.test'}});
+const loginProfile=(id='self',overrides={})=>({id,full_name:'Tester',role:'member',membership_status:'approved',...overrides});
+function verifyForm(code='12345678'){
+  const submit=node(),form=node({id:'editor',dataset:{kind:'verify'},entries:[['code',code]],querySelector(selector){return selector==='[type=submit]'?submit:null;}});
+  return {event:{target:form,preventDefault(){}},submit};
+}
+
+test('Interactive OTP verification shows the logo once despite a delayed SIGNED_IN callback',async()=>{
+  const h=loginHarness(),verified=loginSession('self'),form=verifyForm();h.run("pendingEmail='self@example.test'");h.queued.push({data:loginProfile(),error:null});
+  h.db.auth.verifyOtp=async()=>{h.exec("handleAuthStateChange('SIGNED_IN',qaArgs)",verified);return {data:{session:verified},error:null};};
+  await h.exec('submit(qaArgs)',form.event);h.fireTimers(0);
+  assert.equal(h.stats.opens,1);assert.equal(h.stats.plays,1);assert.equal(h.run('authGeneration'),1);assert.equal(h.run('loginWelcomePendingOwner'),null);assert.equal(form.submit.disabled,false);assert.equal(h.requests.filter(r=>r.table==='profiles').length,1);
+});
+test('Invalid OTP verification never opens or arms the logo intro',async()=>{
+  const h=loginHarness(),form=verifyForm();h.db.auth.verifyOtp=async()=>({data:null,error:{message:'Incorrect code'}});h.context.console={...console,error(){}};
+  await h.exec('submit(qaArgs)',form.event);assert.equal(h.stats.opens,0);assert.equal(h.run('loginWelcomePendingOwner'),null);assert.equal(h.run('session'),null);assert.equal(form.submit.disabled,false);
+});
+test('Restoring a session and refreshing the same account never replay the login logo',async()=>{
+  const h=loginHarness(),restored=loginSession('self');h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs)',restored);
+  assert.equal(h.stats.opens,0);h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs)',restored);assert.equal(h.stats.opens,0);
+});
+test('TOKEN_REFRESHED and repeated SIGNED_IN events preserve the current workspace',async()=>{
+  const h=loginHarness(),current=loginSession('self');h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs,true)',current);h.run('dismissLoginWelcome()');
+  const generation=h.run('authGeneration');h.exec("handleAuthStateChange('TOKEN_REFRESHED',qaArgs);handleAuthStateChange('SIGNED_IN',qaArgs)",current);h.fireTimers(0);
+  assert.equal(h.run('authGeneration'),generation);assert.equal(h.stats.opens,1);assert.equal(h.dialog.open,false);
+});
+test('The winning same-account hydration shows an armed intro once',async()=>{
+  const h=loginHarness(),slow=deferred(),current=loginSession('self');h.queued.push(slow.promise);const first=h.exec('signedIn(qaArgs,true)',current);
+  h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs)',current);assert.equal(h.stats.opens,1);
+  slow.resolve({data:loginProfile(),error:null});await first;assert.equal(h.stats.opens,1);assert.equal(h.run('loginWelcomePendingOwner'),null);
+});
+test('Signing out while profile hydration is pending cancels the welcome',async()=>{
+  const h=loginHarness(),slow=deferred();h.queued.push(slow.promise);const login=h.exec('signedIn(qaArgs,true)',loginSession('self'));
+  await h.run('signOut()');slow.resolve({data:loginProfile(),error:null});await login;
+  assert.equal(h.stats.opens,0);assert.equal(h.run('session'),null);assert.equal(h.run('loginWelcomePendingOwner'),null);
+});
+test('Sign out immediately closes a running intro before authentication cleanup finishes',async()=>{
+  const h=loginHarness(),slow=deferred();h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs,true)',loginSession('self'));h.db.auth.signOut=()=>slow.promise;
+  const leaving=h.run('signOut()');assert.equal(h.dialog.open,false);assert.equal(h.video.onended,null);assert.equal(h.video.onerror,null);assert.equal(h.run('loginWelcomePendingOwner'),null);
+  slow.resolve({error:null});await leaving;assert.equal(h.run('session'),null);
+});
+test('A replacement account cannot inherit the previous account welcome',async()=>{
+  const h=loginHarness(),slow=deferred();h.queued.push(slow.promise);const first=h.exec('signedIn(qaArgs,true)',loginSession('self'));
+  h.queued.push({data:loginProfile('other'),error:null});await h.exec('signedIn(qaArgs)',loginSession('other'));slow.resolve({data:loginProfile(),error:null});await first;
+  assert.equal(h.stats.opens,0);assert.equal(h.run('session.user.id'),'other');assert.equal(h.run('loginWelcomePendingOwner'),null);
+});
+test('Failed profile hydration clears the intro instead of replaying it during a later refresh',async()=>{
+  const h=loginHarness(),current=loginSession('self');h.context.console={...console,error(){}};h.queued.push({data:null,error:{message:'Profile unavailable'}});await h.exec('signedIn(qaArgs,true)',current);
+  assert.equal(h.stats.opens,0);assert.equal(h.run('loginWelcomePendingOwner'),null);h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs)',current);assert.equal(h.stats.opens,0);
+});
+for(const [status,role,expected]of [['pending','member','#application'],['approved','investor','#investor-portal']])test(`The welcome preserves ${role==='investor'?'investor':'pending application'} routing`,async()=>{
+  const h=loginHarness();h.run("page='projects';location.hash='#projects'");h.queued.push({data:loginProfile('self',{role,membership_status:status}),error:null});await h.exec('signedIn(qaArgs,true)',loginSession('self'));
+  assert.equal(h.stats.opens,1);assert.equal(h.context.location.hash,expected);h.run('dismissLoginWelcome()');assert.equal(h.context.location.hash,expected);
+});
+test('The welcome preserves an approved member protected-page destination',async()=>{
+  const h=loginHarness();h.run("pendingProtectedPage='courses'");h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs,true)',loginSession('self'));
+  assert.equal(h.context.location.hash,'#courses');assert.equal(h.run('pendingProtectedPage'),'');h.run('dismissLoginWelcome()');assert.equal(h.context.location.hash,'#courses');
+});
+test('An ended intro briefly shows the final logo and then returns to the workspace',()=>{
+  const h=loginHarness();h.exec('session=qaArgs;showLoginWelcome()',loginSession('self'));h.video.onended();assert.equal(h.video.hidden,true);assert.equal(h.still.hidden,false);assert.equal(h.dialog.open,true);h.fireTimers(400);assert.equal(h.dialog.open,false);
+});
+for(const failure of ['media error','play rejected','play throws'])test(`The intro falls back to the still logo when ${failure}`,async()=>{
+  const h=loginHarness({play:failure==='play rejected'?()=>Promise.reject(Error('Playback blocked')):failure==='play throws'?()=>{throw Error('Playback unsupported');}:()=>Promise.resolve()});h.exec('session=qaArgs;showLoginWelcome()',loginSession('self'));
+  if(failure==='media error')h.video.onerror();await Promise.resolve();assert.equal(h.still.hidden,false);assert.equal(h.video.hidden,true);h.fireTimers(1100);assert.equal(h.dialog.open,false);
+});
+test('Reduced motion displays a still logo without attempting video playback',()=>{
+  const h=loginHarness({reducedMotion:true});h.exec('session=qaArgs;showLoginWelcome()',loginSession('self'));assert.equal(h.stats.plays,0);assert.equal(h.still.hidden,false);assert.equal(h.video.hidden,true);h.fireTimers(1100);assert.equal(h.dialog.open,false);
+});
+test('Dismissing the welcome stops playback and ignores late media callbacks',()=>{
+  const h=loginHarness();h.exec('session=qaArgs;showLoginWelcome()',loginSession('self'));const ended=h.video.onended,error=h.video.onerror;h.run('dismissLoginWelcome()');ended();error();h.fireTimers(4200);h.fireTimers(1100);
+  assert.equal(h.dialog.open,false);assert.equal(h.stats.opens,1);assert.equal(h.video.onended,null);assert.equal(h.video.onerror,null);assert.equal(h.video.currentTime,0);assert.equal(h.run('loginWelcomeOwner'),null);assert.equal(h.run('loginWelcomeTimer'),null);assert.equal(h.stats.workspaceFocused,1);assert.equal(h.stats.workspaceFocusOptions.preventScroll,true);
+});
+test('Late callbacks from an earlier same-account intro cannot interrupt its replacement',()=>{
+  const h=loginHarness();h.exec('session=qaArgs;showLoginWelcome()',loginSession('self'));const oldEnded=h.video.onended,oldError=h.video.onerror;h.run('dismissLoginWelcome();showLoginWelcome()');oldEnded();oldError();
+  assert.equal(h.dialog.open,true);assert.equal(h.video.hidden,false);assert.equal(h.still.hidden,true);assert.equal(h.stats.opens,2);
+});
+test('A stalled video cannot block the workspace indefinitely',()=>{
+  const h=loginHarness({play:()=>new Promise(()=>{})});h.exec('session=qaArgs;showLoginWelcome()',loginSession('self'));h.fireTimers(4200);assert.equal(h.still.hidden,false);h.fireTimers(400);assert.equal(h.dialog.open,false);
+});
+test('A queued SIGNED_IN event cannot restore a session after a newer SIGNED_OUT event',()=>{
+  const h=loginHarness();let calls=0;h.context.authSpy=()=>calls++;h.run('signedIn=async(newSession)=>{authSpy();session=newSession;}');h.exec("handleAuthStateChange('SIGNED_IN',qaArgs);handleAuthStateChange('SIGNED_OUT',null)",loginSession('self'));h.fireTimers(0);
+  assert.equal(calls,0);assert.equal(h.run('session'),null);
+});
+test('When multiple account events are queued only the latest account is hydrated',()=>{
+  const h=loginHarness(),calls=[];h.context.authSpy=id=>calls.push(id);h.run('signedIn=async(newSession)=>{authSpy(newSession?.user.id);session=newSession;}');h.exec("handleAuthStateChange('SIGNED_IN',qaArgs)",loginSession('self'));h.exec("handleAuthStateChange('SIGNED_IN',qaArgs)",loginSession('other'));h.fireTimers(0);
+  assert.deepEqual(calls,['other']);assert.equal(h.run('session.user.id'),'other');
+});
+test('Starting sign out cancels an older queued account event before auth cleanup completes',async()=>{
+  const h=loginHarness(),slow=deferred();h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs)',loginSession('self'));
+  h.exec("handleAuthStateChange('SIGNED_IN',qaArgs)",loginSession('other'));h.db.auth.signOut=()=>slow.promise;const leaving=h.run('signOut()');h.fireTimers(0);
+  assert.equal(h.run('session.user.id'),'self');assert.equal(h.requests.filter(r=>r.table==='profiles').length,1);slow.resolve({error:null});await leaving;assert.equal(h.run('session'),null);
+});
 
 test('Conversation rows escape user content and order messages chronologically',()=>{
   const h=harness();

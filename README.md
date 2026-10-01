@@ -33,6 +33,8 @@ A responsive workspace for a practical engineering and technology club. The site
 
 ## SPACE branding
 
+The segmented monochrome logo uses source frames from the club’s supplied recording. The matching animated reveal appears briefly after successful interactive email-code verification, with a Continue button and Escape support. Restoring a saved session and routine role/access refreshes do not replay it. Reduced motion, unsupported video playback and media errors use a still image, so branding never blocks account access.
+
 The platform now displays **SPACE** on the website, public pages, installation prompt, offline screen, notifications and app icons. Its GitHub address and existing account/PWA identity stay the same. Existing installed apps may update their launcher name/icon after opening online; if yours keeps the old branding, remove that shortcut and install again.
 
 No SQL migration is needed for the website rename. Email settings and deployed Edge Functions are stored separately in Supabase, so update them there to finish email branding:

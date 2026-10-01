@@ -3,10 +3,9 @@
 .public-skip:focus { top: 12px; }
 .public-header { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 22px; padding: 20px clamp(20px, 5vw, 76px); background: #111827; color: #fff; }
 .public-brand { display: inline-flex; align-items: center; gap: 13px; flex: none; }
-.public-brand-mark { display: grid; place-items: center; width: 43px; height: 43px; border-radius: 11px; background: #c4b5fd; color: #312e81; font: 700 19px 'Space Grotesk', sans-serif; }
-.public-brand-name strong { display: block; font: 700 17px 'Space Grotesk', sans-serif; letter-spacing: .07em; }
-.public-brand-name strong span { color: #c4b5fd; font-size: 1.24em; font-weight: 800; }
-.public-brand-name small { display: block; color: #c4cce2; font-size: 9px; letter-spacing: .2em; }
+.public-brand-logo { display: block; width: 155px; height: auto; mix-blend-mode: screen; }
+.public-brand-name small { display: block; margin-top: 7px; color: #c4cce2; font-size: 9px; letter-spacing: .2em; }
+.public-brand:focus-visible { outline: 2px solid #fff; outline-offset: 7px; border-radius: 2px; }
 .public-nav { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .public-nav a { color: #c4cce2; border-radius: 8px; padding: 9px 12px; font-size: 13px; font-weight: 700; }
 .public-nav a:hover, .public-nav a[aria-current="page"] { background: #29334b; color: #fff; }
