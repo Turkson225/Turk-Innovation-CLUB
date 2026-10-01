@@ -184,7 +184,7 @@ begin
     values(auth.uid(),'membership_'||p_status||'_'||v_type,'profile',p_user);
   if p_status='approved' then
     insert into public.notifications(user_id,kind,title,target_type,target_id)
-      values(p_user,'membership','Your InnovateX application was approved','application',p_user);
+      values(p_user,'membership','Your SPACE application was approved','application',p_user);
   end if;
 end $$;
 revoke all on function public.review_membership(uuid,text) from public,anon;

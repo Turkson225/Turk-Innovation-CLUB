@@ -1,4 +1,4 @@
-# InnovateX starter programme — editorial draft
+# SPACE starter programme — editorial draft
 
 **Status: planning copy, not a record of scheduled workshops, stocked equipment, active projects, results, founders, or completed work.** An approved teacher and club administrator should check the materials, facilitator, venue, date and safety plan before publishing anything. The four titles below match the platform's learning tracks and can be entered using **Teaching studio → Practical workshop**. Leave the start date empty until a date is confirmed. Upload a worksheet or slides to the related course only after someone has checked them.
 

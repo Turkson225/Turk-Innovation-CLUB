@@ -13,7 +13,7 @@
     if (!window.isSecureContext || !('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window))
       return 'This browser does not support web push notifications.';
     if (/iPad|iPhone|iPod/i.test(navigator.userAgent) && !installed())
-      return 'On iPhone, add InnovateX to your Home Screen and open it from the app icon first.';
+      return 'On iPhone, add SPACE to your Home Screen and open it from the app icon first.';
     return '';
   };
   const permission = () => 'Notification' in window ? Notification.permission : 'unsupported';
@@ -187,7 +187,7 @@
   window.InnovateXPush = { state, subscribe, unsubscribe, authChanged, updateBadge };
   if ('serviceWorker' in navigator && ['https:', 'http:'].includes(location.protocol)) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register(workerUrl.href).catch(error => console.warn('InnovateX offline screen unavailable', error));
+      navigator.serviceWorker.register(workerUrl.href).catch(error => console.warn('SPACE offline screen unavailable', error));
     }, { once: true });
     navigator.serviceWorker.addEventListener('message', event => {
       if (event.data?.type === 'INNOVATEX_PUSH_RECEIVED')

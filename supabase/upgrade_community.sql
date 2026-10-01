@@ -1,4 +1,4 @@
--- InnovateX community upgrade. Run in Supabase SQL Editor after schema.sql.
+-- SPACE community upgrade. Run in Supabase SQL Editor after schema.sql.
 -- Existing projects, accounts and club content are preserved.
 
 alter table public.profiles drop constraint if exists profiles_role_check;

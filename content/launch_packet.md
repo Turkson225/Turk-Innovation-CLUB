@@ -1,4 +1,4 @@
-# InnovateX practical launch packet
+# SPACE practical launch packet
 
 **Editorial status: draft.** These are ready-to-review lesson plans, not announced workshops, uploaded materials, booked events, active projects, stocked equipment, or approved public founder profiles. The administrator and a confirmed teacher must check every plan against the actual equipment, venue, duration, accessibility needs and safety arrangements before publication. The [starter programme](starter_workshops_and_projects.md) remains the source for the full project concepts; [launch_drafts.json](launch_drafts.json) has the fields laid out for the current site forms. Nothing in either file writes to Supabase.
 

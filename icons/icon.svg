@@ -1,9 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="InnovateX icon">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="SPACE icon">
   <rect width="1024" height="1024" fill="#101e2b"/>
   <circle cx="512" cy="512" r="445" fill="none" stroke="#286a69" stroke-width="3" opacity=".7"/>
   <circle cx="512" cy="512" r="410" fill="none" stroke="#25615f" stroke-width="2" opacity=".65"/>
   <rect x="214" y="214" width="596" height="596" rx="169" fill="#0cae99"/>
-  <path d="M352 367v290" fill="none" stroke="#f7fffd" stroke-width="82" stroke-linecap="round"/>
-  <path d="M519 367l163 290M682 367L519 657" fill="none" stroke="#ff626b" stroke-width="82" stroke-linecap="round"/>
+  <path d="M651 374c-36-32-82-47-139-47-91 0-150 40-150 101 0 134 300 32 300 166 0 64-62 103-150 103-61 0-113-19-151-56" fill="none" stroke="#f7fffd" stroke-width="76" stroke-linecap="round"/>
   <path d="M735 294v40m-20-20h40" fill="none" stroke="#e8fff9" stroke-width="11" stroke-linecap="round" opacity=".92"/>
 </svg>

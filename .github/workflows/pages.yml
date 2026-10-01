@@ -1,4 +1,4 @@
-name: Deploy InnovateX site
+name: Deploy SPACE site
 
 on:
   push:

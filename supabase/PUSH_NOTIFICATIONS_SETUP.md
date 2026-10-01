@@ -1,4 +1,4 @@
-# InnovateX Web Push setup
+# SPACE Web Push setup
 
 Web Push sends opt-in alerts to a supported browser or installed club app while
 it is closed. It reuses recipient-scoped rows in `public.notifications` for

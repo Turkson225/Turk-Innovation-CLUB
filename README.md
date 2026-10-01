@@ -1,4 +1,4 @@
-# InnovateX Engineering Club platform
+# SPACE platform
 
 A responsive workspace for a practical engineering and technology club. The site is static and can be hosted on GitHub Pages. Supabase provides email sign-in and a database protected by row level security.
 
@@ -31,6 +31,18 @@ A responsive workspace for a practical engineering and technology club. The site
 - Phone, tablet and desktop layouts. Untrusted member text is escaped before display.
 - Server-paged applications, feed, channel history and direct messages, with all-authorized-row CSV export for selected records and a separate private Storage backup procedure.
 
+## SPACE branding
+
+The platform now displays **SPACE** on the website, public pages, installation prompt, offline screen, notifications and app icons. Its GitHub address and existing account/PWA identity stay the same. Existing installed apps may update their launcher name/icon after opening online; if yours keeps the old branding, remove that shortcut and install again.
+
+No SQL migration is needed for the website rename. Email settings and deployed Edge Functions are stored separately in Supabase, so update them there to finish email branding:
+
+1. Under **Authentication → Email Templates**, set **Magic Link / OTP** to subject `Your SPACE verification code` and **Confirm Signup** to `Verify your SPACE account`. Replace each HTML body with the complete [updated OTP template](supabase/email-otp-template.html), keeping `{{ .Token }}`.
+2. Under **Authentication → SMTP Settings**, set **Sender name** to `SPACE`.
+3. Redeploy **send-approval-emails** using the updated [function source](supabase/functions/send-approval-emails/index.ts), with its existing secrets and verification settings. In the dashboard editor, replace all deployed code with this file and deploy.
+
+Internal storage keys, API globals, cron job names, calendar event UIDs and backup formats retain their established identifiers to preserve existing sessions, notification subscriptions, schedules and records.
+
 ## October 1 workspace upgrade
 
 The workspace now has a warmer visual system, clearer navigation groups and a keyboard-accessible search palette (**Ctrl/Command + K**). Search includes permitted pages and loaded courses, projects, members, events, documents and published technology news; it never indexes application answers. Home combines role-specific priorities, a personal agenda and recent club posts.
@@ -50,7 +62,7 @@ Run `node scripts/check_workspace.mjs` for the 55 dependency-free frontend regre
 ## Set up Supabase
 
 1. Create a Supabase project and open **SQL Editor**. Run [`supabase/schema.sql`](supabase/schema.sql) once. Use a new project or review existing schema before running it.
-2. In **Authentication → Providers → Email**, enable email sign-in and leave email confirmation enabled. Under **Authentication → Email Templates**, edit **Magic Link / OTP**: set the subject to `Your InnovateX verification code` and replace the HTML body with [`supabase/email-otp-template.html`](supabase/email-otp-template.html). Because a new user can receive the **Confirm Signup** template, set its subject to `Verify your InnovateX account` and use the same HTML body there too. Both templates must contain `{{ .Token }}` rather than an authentication link for the site's code entry screen to work. Save each template. To email club members beyond your Supabase team's authorized addresses, configure **Authentication → SMTP Settings** with a verified sender and set the sender name to `InnovateX Engineering Club`; Supabase's built-in sender is restricted.
+2. In **Authentication → Providers → Email**, enable email sign-in and leave email confirmation enabled. Under **Authentication → Email Templates**, edit **Magic Link / OTP**: set the subject to `Your SPACE verification code` and replace the HTML body with [`supabase/email-otp-template.html`](supabase/email-otp-template.html). Because a new user can receive the **Confirm Signup** template, set its subject to `Verify your SPACE account` and use the same HTML body there too. Both templates must contain `{{ .Token }}` rather than an authentication link for the site's code entry screen to work. Save each template. To email club members beyond your Supabase team's authorized addresses, configure **Authentication → SMTP Settings** with a verified sender and set the sender name to `SPACE`; Supabase's built-in sender is restricted.
 3. In **Authentication → URL Configuration**, set the Site URL to `https://turkson225.github.io/Turk-Innovation-CLUB/`. Add that exact URL to Redirect URLs. For local testing, add `http://localhost:8000/` as another Redirect URL.
 4. In the project's **Connect** dialog, copy the Project URL and **publishable** key into [`config.js`](config.js). These values are designed for browser use. **Never paste a service_role or secret key** into the repository. This repository is configured with the project's public values.
 5. Create your account and verify its email first. Then, in SQL Editor, promote your specific user to an administrator using the authenticated user's UUID from **Authentication → Users**:
@@ -62,7 +74,7 @@ Run `node scripts/check_workspace.mjs` for the 55 dependency-free frontend regre
 
    Check that exactly one row changed. If the membership upgrade has **already** been run, also run `update public.profiles set membership_status = 'approved' where id = 'YOUR-AUTH-USER-UUID';` and check that one row changed. On a new project, the membership upgrade below sets preexisting email-confirmed accounts to approved. The browser cannot promote accounts. An administrator can publish founder bios, courses, events and alerts. Other members can create projects and discussions.
 
-6. Add the founding team only after they agree to have their name and biography shown publicly. InnovateX is an independent club led by founders and members. The public About page says the club plans to inform the Dean of Students’ Affairs and seek acknowledgement of its existence; it does not claim patronage, institutional approval or a reporting relationship.
+6. Add the founding team only after they agree to have their name and biography shown publicly. SPACE is an independent club led by founders and members. The public About page says the club plans to inform the Dean of Students’ Affairs and seek acknowledgement of its existence; it does not claim patronage, institutional approval or a reporting relationship.
 
 ## Activate community pages
 
@@ -90,7 +102,7 @@ Run [`supabase/upgrade_message_counts.sql`](supabase/upgrade_message_counts.sql)
 
 ### Approval feedback email
 
-New applicants in all four categories receive an InnovateX email once an administrator approves their verified account. This is a separate email from the sign-in code. **Authentication → SMTP Settings** alone cannot deliver this approval message; the private Edge Function below needs its own Gmail App Password. Never put the App Password or a Supabase secret key in the repository, `config.js`, a browser console, or a public chat.
+New applicants in all four categories receive an SPACE email once an administrator approves their verified account. This is a separate email from the sign-in code. **Authentication → SMTP Settings** alone cannot deliver this approval message; the private Edge Function below needs its own Gmail App Password. Never put the App Password or a Supabase secret key in the repository, `config.js`, a browser console, or a public chat.
 
 1. After `upgrade_roles_investors.sql`, run [`supabase/upgrade_approval_emails.sql`](supabase/upgrade_approval_emails.sql) in **SQL Editor**. It adds a private delivery queue, updates the administrator approval action, and guards the underlying `profiles` status transition. A first-time applicant must have verified their email and submitted a reason for joining, even if a future approval path bypasses the button. Existing approved accounts are recorded as already approved and are **not** emailed retroactively. If you previously ran this migration, **run its updated full version again** to install the new status guard. Do not rerun `upgrade_roles_investors.sql` afterward: it would replace the updated approval function.
 
@@ -147,7 +159,7 @@ Approved club members can view the component, tool, equipment, supply and other 
 
 Only administrators have the **Finance** management page and can submit income or expense entries in GHS. Every entry must be approved or rejected by an **approved founder** in the separate **Finance review** page; a rejection requires a reason. Entries that existed before this upgrade keep their dates and details but enter the pending queue for founder review. The recorded balance includes only approved entries; rejected and pending entries remain visible in history but are excluded from totals. The entry and the founder review are immutable; correcting an approved transaction requires a new entry and approval. The admin ledger CSV includes decision status, reviewer and note. Record any opening balance explicitly with a clear reference. These records are not a substitute for database backups.
 
-The public [About](about/) and [Founders](founders/) pages have their own URLs and page descriptions. The About page introduces InnovateX's vision, mission, practical learning tracks, team workflow, values and independent leadership. Its engineering workshop images in `assets/` are illustrative artwork and do not depict actual club members. The Dean is mentioned as someone the club plans to inform and ask to acknowledge its existence; the Dean does not govern or receive reports from the club. Four proposed workshop cards appear on **Courses** until a teacher publishes a real workshop; two proposed project ideas appear on **Projects** until members create real plans. Use the [`content/launch_packet.md`](content/launch_packet.md) and [`content/launch_drafts.json`](content/launch_drafts.json) for reviewable lesson plans, worksheet prompts, matching event briefs and first project tasks. These are drafts with no invented teacher, date, owner, Meet link or consented portrait. Confirm the teacher, venue, equipment, safety plan, event date, project owner and public founder profile permission before publishing through the site. The Founders page loads only administrator-published public profiles.
+The public [About](about/) and [Founders](founders/) pages have their own URLs and page descriptions. The About page introduces SPACE's vision, mission, practical learning tracks, team workflow, values and independent leadership. Its engineering workshop images in `assets/` are illustrative artwork and do not depict actual club members. The Dean is mentioned as someone the club plans to inform and ask to acknowledge its existence; the Dean does not govern or receive reports from the club. Four proposed workshop cards appear on **Courses** until a teacher publishes a real workshop; two proposed project ideas appear on **Projects** until members create real plans. Use the [`content/launch_packet.md`](content/launch_packet.md) and [`content/launch_drafts.json`](content/launch_drafts.json) for reviewable lesson plans, worksheet prompts, matching event briefs and first project tasks. These are drafts with no invented teacher, date, owner, Meet link or consented portrait. Confirm the teacher, venue, equipment, safety plan, event date, project owner and public founder profile permission before publishing through the site. The Founders page loads only administrator-published public profiles.
 
 The entry screen has separate **Create an account** and **I have an account** choices. Creating an account verifies the email code once and creates a pending application. Returning users request a new one-time code for sign-in; that path does not create another account. Both flows require the custom Supabase OTP email templates from step 2 above. A successful code exchange creates a Supabase session; account approval and role permissions remain in the database.
 
@@ -186,7 +198,7 @@ For a local preview, run `python3 -m http.server 8000` from the repository root 
 
 ### Install the web app
 
-On Android, open the site in Chrome and choose **Install app** from the browser menu, or tap **Install InnovateX** in the site menu. On iPhone, open the site in Safari, tap **Share → Add to Home Screen**, and enable **Open as Web App** if offered. The site menu also contains device instructions. Installation requires a supported browser and the HTTPS GitHub Pages address; test on a phone after publishing. The app opens in its own window and has a branded home screen icon.
+On Android, open the site in Chrome and choose **Install app** from the browser menu, or tap **Install SPACE** in the site menu. On iPhone, open the site in Safari, tap **Share → Add to Home Screen**, and enable **Open as Web App** if offered. The site menu also contains device instructions. Installation requires a supported browser and the HTTPS GitHub Pages address; test on a phone after publishing. The app opens in its own window and has a branded home screen icon.
 
 The worker caches only a small set of public files, including the About and Founders page shells. When disconnected, the member workspace shows a reconnect screen. Chats, courses, approvals, account details, founder portraits and files require an internet connection and are never stored in the worker's offline cache. The public founder directory itself loads live from Supabase. To test the offline screen, load the site while online, then disable network in browser developer tools and reload a member workspace route. Reconnect before signing in or using member features.
 

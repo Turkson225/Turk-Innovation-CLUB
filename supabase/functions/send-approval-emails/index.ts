@@ -53,8 +53,8 @@ function emailFor(job: ApprovalJob) {
 
   const name = job.applicant_name.replace(/[\r\n\t]/g, " ").trim().slice(0, 100) || "there";
   const href = SITE_URL + role.path;
-  const subject = `Your InnovateX ${role.title.toLowerCase()} account is approved`;
-  const text = `Hi ${name},\n\nGood news! The InnovateX Engineering Club administrator approved your ${role.title.toLowerCase()} account. You can now sign in using your email and one-time code.\n\n${role.next}\n\nOpen the club platform: ${href}\n\nWelcome to InnovateX Engineering Club!\n\nIf you did not apply, please reply to this email to let us know.`;
+  const subject = `Your SPACE ${role.title.toLowerCase()} account is approved`;
+  const text = `Hi ${name},\n\nGood news! The SPACE Engineering Club administrator approved your ${role.title.toLowerCase()} account. You can now sign in using your email and one-time code.\n\n${role.next}\n\nOpen the club platform: ${href}\n\nWelcome to SPACE Engineering Club!\n\nIf you did not apply, please reply to this email to let us know.`;
   const html = `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
@@ -63,17 +63,17 @@ function emailFor(job: ApprovalJob) {
     <tr><td align="center">
       <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px;background:#ffffff;border:1px solid #d8e5e9;border-radius:18px">
         <tr><td style="padding:28px 32px 12px">
-          <p style="margin:0;font-size:13px;font-weight:800;letter-spacing:2px;color:#0b827b">INNOVATEX · ENGINEERING CLUB</p>
+          <p style="margin:0;font-size:13px;font-weight:800;letter-spacing:2px;color:#0b827b">SPACE · ENGINEERING CLUB</p>
           <h1 style="font-size:27px;line-height:1.25;margin:24px 0 12px;color:#153047">Your account is approved</h1>
           <p style="font-size:16px;line-height:1.65;margin:0 0 16px">Hi ${escapeHtml(name)},</p>
           <p style="font-size:16px;line-height:1.65;margin:0 0 16px">Good news! The club administrator approved your <strong>${escapeHtml(role.title.toLowerCase())}</strong> account. You can now sign in using your email and one-time code.</p>
           <p style="font-size:16px;line-height:1.65;margin:0 0 24px">${escapeHtml(role.next)}</p>
           <a href="${href}" style="display:inline-block;padding:14px 22px;border-radius:10px;background:#087e77;color:#ffffff;text-decoration:none;font-size:15px;font-weight:700">Open the club platform</a>
-          <p style="font-size:16px;line-height:1.65;margin:26px 0 8px">Welcome to InnovateX Engineering Club!</p>
+          <p style="font-size:16px;line-height:1.65;margin:26px 0 8px">Welcome to SPACE Engineering Club!</p>
         </td></tr>
         <tr><td style="padding:18px 32px 28px;color:#587080;font-size:13px;line-height:1.6;border-top:1px solid #e7eef0">
           If you did not apply, please reply to this email to let us know.<br>
-          <a href="${SITE_URL}" style="color:#087e77">InnovateX Engineering Club</a>
+          <a href="${SITE_URL}" style="color:#087e77">SPACE Engineering Club</a>
         </td></tr>
       </table>
     </td></tr>
@@ -125,7 +125,7 @@ async function send(job: ApprovalJob, smtp: NonNullable<ReturnType<typeof config
   });
   try {
     await withTimeout(client.send({
-      from: `InnovateX Engineering Club <${smtp.username}>`,
+      from: `SPACE <${smtp.username}>`,
       to: job.recipient_email,
       subject,
       content: text,
