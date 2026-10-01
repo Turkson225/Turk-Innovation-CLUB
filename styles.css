@@ -1153,3 +1153,31 @@ dialog::backdrop{background:rgba(17,24,39,.56);backdrop-filter:blur(3px)}
   .application-actions{justify-content:flex-start}
   .card.course-review{padding:20px}
 }
+
+/* Compact inbox rows. Keep the full notice and its actions readable. */
+.notification-list{margin-top:16px;gap:8px}
+.card.notification-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px 16px;padding:12px 14px;border-radius:9px}
+.notification-copy{min-width:0}
+.notification-meta{display:flex;align-items:center;flex-wrap:wrap;gap:5px 9px}
+.notification-meta .tag{padding:3px 6px;font-size:10px;line-height:1.4}
+.notification-meta time{font-size:11px;line-height:1.4;color:var(--muted)}
+.notification-item h3{margin:5px 0 0;color:var(--ink);font-size:14px;font-weight:600;line-height:1.4;overflow-wrap:anywhere}
+.notification-actions{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px}
+.notification-actions .text-button{min-height:40px;padding:8px 4px;font-size:12px;line-height:1.4;white-space:nowrap}
+.card.notification-item.unread{border-left-width:3px;background:color-mix(in srgb,var(--deep) 5%,var(--white))}
+.notification-list>.empty{padding:22px 18px}
+.card.push-settings{padding:14px 16px;gap:12px;margin:14px 0 16px}
+.push-settings-icon{flex-basis:36px;width:36px;height:36px;border-radius:9px}
+.push-settings h2{font-size:16px;line-height:1.35;margin:3px 0 5px}
+.push-settings p{margin-bottom:6px}
+.dm-peer{min-height:64px;padding:10px 14px;gap:10px}
+.dm-peer .avatar{flex-basis:40px;width:40px;height:40px}
+.dm-peer-meta time{font-size:10px}
+.dm-list .dm-empty{min-height:100px;padding:22px 18px}
+@media(max-width:740px){.dm-peer{min-height:68px;padding:12px 14px}}
+@media(max-width:640px){.push-settings>div{flex-basis:calc(100% - 48px)}.push-settings .button{margin-left:48px}}
+@media(max-width:520px){
+  .card.notification-item{grid-template-columns:minmax(0,1fr);gap:3px;padding:12px}
+  .notification-actions{gap:4px 12px}
+  .card.push-settings{padding:14px}
+}
