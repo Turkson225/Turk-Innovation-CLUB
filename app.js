@@ -1993,10 +1993,12 @@ function calendarShiftMonth(value,amount){
   const d=new Date(value),target=new Date(d.getFullYear(),d.getMonth()+amount,1,12);
   target.setDate(Math.min(d.getDate(),new Date(target.getFullYear(),target.getMonth()+1,0).getDate()));return target;
 }
-function calendarEnd(item){
+function calendarKnownEnd(item){
   const start=new Date(item.starts_at),end=item.ends_at?new Date(item.ends_at):null;
-  return end&&Number.isFinite(end.getTime())&&end>start?end:new Date(start.getTime()+(['task','course_due'].includes(item.kind)?60000:3600000));
+  return end&&Number.isFinite(end.getTime())&&end>start?end:null;
 }
+function calendarDisplayEnd(item){return calendarKnownEnd(item)||new Date(new Date(item.starts_at).getTime()+60000);}
+function calendarEnd(item){return calendarKnownEnd(item)||new Date(new Date(item.starts_at).getTime()+(['task','course_due'].includes(item.kind)?60000:3600000));}
 function calendarRange(){
   const date=calendarStartDay(calendarSelected),year=date.getFullYear(),month=date.getMonth();
   if(calendarView==='year')return {start:new Date(year,0,1),end:new Date(year+1,0,1)};
@@ -2004,7 +2006,7 @@ function calendarRange(){
   if(calendarView==='week'){const start=calendarAddDays(date,-((date.getDay()-calendarPreferences.weekStart+7)%7));return {start,end:calendarAddDays(start,7)};}
   return {start:date,end:calendarAddDays(date,calendarView==='agenda'?30:1)};
 }
-function calendarBetween(items,start,end){return items.filter(item=>new Date(item.starts_at)<end&&calendarEnd(item)>start);}
+function calendarBetween(items,start,end){return items.filter(item=>new Date(item.starts_at)<end&&calendarDisplayEnd(item)>start);}
 function calendarResponse(item){
   if(!['event','meeting'].includes(item.kind))return '';
   const key=item.kind==='meeting'?'meeting_id':'event_id',rows=cache[item.kind==='meeting'?'founder_meeting_rsvps':'event_rsvps']||[];
@@ -2036,23 +2038,24 @@ function calendarFilteredEntries(){
   return calendarEntries().filter(item=>prefs.kinds.includes(item.kind)
     &&(!prefs.mine||calendarPersonal(item))
     &&(!prefs.online||!!item.meet_url||/online|virtual/i.test(item.location||''))
-    &&(!prefs.hidePast||calendarEnd(item)>new Date())
+    &&(!prefs.hidePast||calendarDisplayEnd(item)>new Date())
     &&(prefs.track==='all'||['course','course_due'].includes(item.kind)&&courseTrackFor(item)===prefs.track)
     &&(prefs.response==='all'||calendarResponse(item)===prefs.response)
     &&(!term||[item.title,item.description,item.location,courseTrackFor(item)].filter(Boolean).join(' ').toLocaleLowerCase().includes(term)));
 }
 function calendarConflicts(items){
   const conflicts=new Set(),active=[];
-  for(const item of items.filter(i=>calendarPersonal(i)&&!['task','course_due'].includes(i.kind)).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at))){
-    const start=new Date(item.starts_at);for(let i=active.length-1;i>=0;i--)if(calendarEnd(active[i])<=start)active.splice(i,1);
+  for(const item of items.filter(i=>calendarPersonal(i)&&calendarKnownEnd(i)&&!['task','course_due'].includes(i.kind)).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at))){
+    const start=new Date(item.starts_at);for(let i=active.length-1;i>=0;i--)if(calendarKnownEnd(active[i])<=start)active.splice(i,1);
     for(const other of active){conflicts.add(calendarKey(item));conflicts.add(calendarKey(other));}active.push(item);
   }
   return conflicts;
 }
 function calendarLabel(item){return {event:'Club event',course:'Workshop',course_due:'Course deadline',task:'Task deadline',meeting:'Founder meeting'}[item.kind]||'Calendar item';}
 function calendarItemTime(item){
-  const start=new Date(item.starts_at),end=calendarEnd(item),time=d=>d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+  const start=new Date(item.starts_at),end=calendarKnownEnd(item),time=d=>d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
   if(['task','course_due'].includes(item.kind))return `Due ${time(start)}`;
+  if(!end)return `Starts ${time(start)} · duration not set`;
   return calendarDayKey(start)===calendarDayKey(end)?`${time(start)}–${time(end)}`:`${start.toLocaleDateString(undefined,{month:'short',day:'numeric'})}, ${time(start)} – ${end.toLocaleDateString(undefined,{month:'short',day:'numeric'})}, ${time(end)}`;
 }
 function loadCalendarPreferences(){
@@ -2110,7 +2113,7 @@ function calendarKeyboard(event){
   event.preventDefault();if(view)calendarNavigate(calendarSelected,view);else if(key==='t')calendarNavigate(new Date());else if(key==='/')$('#calendarSearch')?.focus();else calendarMove(key==='['?-1:1);return true;
 }
 function calendarEntryCard(item,conflicts=new Set()){
-  const response=calendarResponse(item),isPast=calendarEnd(item)<new Date(),pastLabel=['task','course_due'].includes(item.kind)?'Past deadline':'Past';
+  const response=calendarResponse(item),isPast=calendarDisplayEnd(item)<new Date(),pastLabel=['task','course_due'].includes(item.kind)?'Past deadline':'Past';
   return `<button class="cal-agenda-item cal-entry ${isPast?'is-past':''}" data-action="calendarItem" data-kind="${item.kind}" data-id="${esc(item.id)}"><span class="cal-dot ${item.kind}" aria-hidden="true"></span><span><strong>${esc(item.title)}</strong><small>${esc(calendarLabel(item))} · ${esc(calendarItemTime(item))}</small><span class="cal-entry-meta">${item.meet_url?'Online · ':''}${esc(item.location||'')}${response&&response!=='unanswered'?` · ${esc({going:'Going',maybe:'Maybe',not_going:'Can’t go'}[response]||response)}`:''}${isPast?' · '+pastLabel:''}${conflicts.has(calendarKey(item))?' · Overlaps another item':''}</span></span><span aria-hidden="true">↗</span></button>`;
 }
 function calendarMonthMarkup(entries,conflicts){
@@ -2134,7 +2137,7 @@ function calendarBoardMarkup(entries,visible,conflicts,range){
   return calendarListMarkup(visible,conflicts,range.start);
 }
 function calendarPage(){
-  const entries=calendarFilteredEntries(),range=calendarRange(),visible=calendarBetween(entries,range.start,range.end),conflicts=calendarConflicts(visible),dayStart=calendarStartDay(calendarSelected),selectedItems=calendarBetween(entries,dayStart,calendarAddDays(dayStart,1)),upcoming=entries.filter(item=>calendarEnd(item)>=new Date()).slice(0,4),prefs=calendarPreferences;
+  const entries=calendarFilteredEntries(),range=calendarRange(),visible=calendarBetween(entries,range.start,range.end),conflicts=calendarConflicts(visible),dayStart=calendarStartDay(calendarSelected),selectedItems=calendarBetween(entries,dayStart,calendarAddDays(dayStart,1)),upcoming=entries.filter(item=>calendarDisplayEnd(item)>=new Date()).slice(0,4),prefs=calendarPreferences;
   const availableKinds=Object.entries(calendarKinds).filter(([kind])=>kind!=='meeting'||founder()),kindOptions=availableKinds.map(([value,label])=>`<label class="cal-check"><input id="calendarKind-${value}" type="checkbox" data-calendar-setting="kinds" value="${value}" ${prefs.kinds.includes(value)?'checked':''}><span><i class="cal-dot ${value}" aria-hidden="true"></i>${label}</span></label>`).join('');
   const toggle=(key,label)=>`<label class="cal-check"><input id="calendarSetting-${key}" type="checkbox" data-calendar-setting="${key}" ${prefs[key]?'checked':''}><span>${label}</span></label>`;
   const selectSetting=(key,label,options)=>`<label class="cal-select"><span>${label}</span><select id="calendarSetting-${key}" data-calendar-setting="${key}">${options.map(([value,text])=>`<option value="${esc(value)}" ${String(prefs[key])===String(value)?'selected':''}>${esc(text)}</option>`).join('')}</select></label>`;
@@ -2612,7 +2615,7 @@ function actions(e) {
     if(action==='calendarView'){if(calendarViews.includes(el.dataset.view))calendarNavigate(calendarSelected,el.dataset.view);return;}
     if(action==='calendarPage'){const offset=Number(el.dataset.offset);if(![-1,1].includes(offset))return;const range=calendarRange(),count=calendarBetween(calendarFilteredEntries(),range.start,range.end).length;calendarAgendaPage=Math.max(0,Math.min(Math.max(0,Math.ceil(count/30)-1),calendarAgendaPage+offset));render();return;}
     if(action==='calendarReset'){calendarSearch='';Object.assign(calendarPreferences,{kinds:Object.keys(calendarKinds),mine:false,track:'all',response:'all',online:false,hidePast:false});calendarAgendaPage=0;saveCalendarPreferences();render();return;}
-    if(action==='calendarNextItem'){const next=calendarFilteredEntries().find(item=>calendarEnd(item)>new Date());if(next)return calendarNavigate(new Date(next.starts_at),'day');return show('No upcoming items match your filters.');}
+    if(action==='calendarNextItem'){const next=calendarFilteredEntries().find(item=>calendarDisplayEnd(item)>new Date());if(next)return calendarNavigate(new Date(next.starts_at),'day');return show('No upcoming items match your filters.');}
     if(action==='calendarExport'){const range=calendarRange();return calendarDownload(calendarBetween(calendarFilteredEntries(),range.start,range.end),`space-${calendarView}-${calendarDayKey(range.start)}.ics`);}
     if(action==='calendarPrint'){prepareCalendarPrint();return window.print();}
     if(action==='calendarCopyDate'){

@@ -491,6 +491,10 @@ test('Calendar date links preserve their date and view across sign-in',async()=>
   const h=loginHarness();h.run("authReady=true;setSidebarOpen=()=>{};signInDialog=()=>{};location.hash='#calendar/2028-02-29/week';route()");assert.equal(h.run('pendingProtectedPage'),'calendar/2028-02-29/week');assert.equal(h.context.location.hash,'#home');h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs)',loginSession('self'));assert.equal(h.context.location.hash,'#calendar/2028-02-29/week');assert.equal(h.run('calendarDayKey(calendarSelected)'),'2028-02-29');assert.equal(h.run('calendarView'),'week');
 });
 
+test('Sessions without an end time do not invent a displayed duration or an overlap warning',()=>{
+  const h=calendarHarness();h.exec('cache.events=qaArgs',[calEvent('unknown','2026-10-01T23:30:00',null),calEvent('other','2026-10-01T23:45:00','2026-10-02T00:15:00')]);h.run("cache.event_rsvps=['unknown','other'].map(event_id=>({event_id,user_id:'self',response:'going'}))");assert(h.run('calendarItemTime(calendarEntries()[0])').includes('duration not set'));assert.equal(h.run('calendarConflicts(calendarEntries()).size'),0);assert.equal(h.run("calendarBetween(calendarEntries().filter(i=>i.id==='unknown'),new Date(2026,9,2),new Date(2026,9,3)).length"),0);
+});
+
 let failed=0;
 for(const t of tests){try{await t.fn();console.log('PASS',t.name);}catch(e){failed++;console.log('FAIL',t.name,'\n',e.stack);}}
 console.log(`${tests.length-failed}/${tests.length} checks passed`);

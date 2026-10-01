@@ -64,7 +64,7 @@ The calendar has these 30 new or expanded capabilities, alongside the existing m
 | 17 | Upcoming and ongoing filter | Hide items that have ended, keeping in-progress sessions. |
 | 18 | Compact month layout | Reduce desktop calendar row height. Phone dates use large date controls and item counts. |
 | 19 | Multi-day events | Show an event on every day it occupies; a midnight end is exclusive. |
-| 20 | Overlap indicators | Flag overlapping personal sessions; deadlines and unrelated events do not cause warnings. |
+| 20 | Overlap indicators | Flag overlapping personal sessions with known end times; deadlines and unrelated events do not cause warnings. |
 | 21 | Next scheduled item | Jump to the next matching upcoming or ongoing item. |
 | 22 | Date links | Copy a link containing the date and view. Other accounts see only their permitted records. |
 | 23 | Saved preferences | Remember the view and filters per account on that device. |
@@ -76,7 +76,7 @@ The calendar has these 30 new or expanded capabilities, alongside the existing m
 | 29 | Schedule on selected date | Administrators get event forms prefilled for the selected local date. |
 | 30 | Completed-work cleanup | Finished tasks and a learner’s completed course deadlines stop appearing. Teachers/admins retain class deadline history. |
 
-Calendar exports use UTC event instants, valid end-time fallbacks, escaped text and UTF-8 line folding. Founder meetings are excluded from member, teacher and investor views and exports. Existing RSVP and Google Meet tools remain available in event details. No database migration is required for this upgrade.
+Calendar exports use UTC event instants, escaped text and UTF-8 line folding. Items with no end time display “duration not set” and do not cause overlap warnings. Their Google/ICS exports use a one-hour default; deadline exports use one minute. Adjust that duration in the destination calendar if needed. Founder meetings are excluded from member, teacher and investor views and exports. Existing RSVP and Google Meet tools remain available in event details. No database migration is required for this upgrade.
 
 After email-code verification, sign-in awaits the profile/access check, opens the permitted workspace, loads the visible page first, then hydrates the remaining tools in the background. The logo welcome is compact and nonmodal. The shell shows a loading state while records arrive; private records and capability flags are cleared before a new account is checked. Delayed responses from older accounts cannot restore their capability flags or signed media URLs. Applicants load their private answer before their form opens. Network authentication and access verification still require a response from Supabase; the app does not bypass either.
 
