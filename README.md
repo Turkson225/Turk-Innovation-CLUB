@@ -85,7 +85,7 @@ After email-code verification, sign-in awaits the profile/access check, opens th
 
 ## SPACE branding
 
-The segmented monochrome logo uses source frames from the club’s supplied recording. The matching animation appears in a small, nonmodal welcome after successful interactive email-code verification. It can be dismissed and does not cover or lock the workspace. Restoring a saved session and routine role/access refreshes do not replay it. Reduced motion, unsupported video playback and media errors use a still image.
+The segmented monochrome logo uses source frames from the club’s supplied recording. The matching animation appears in a small, nonmodal welcome after successful interactive email-code verification. It can be dismissed and does not cover or lock the workspace. Routine role/access refreshes do not replay it. Reopening the page requires a fresh sign-in code. Reduced motion, unsupported video playback and media errors use a still image.
 
 The platform now displays **SPACE** on the website, public pages, installation prompt, offline screen, notifications and app icons. Its GitHub address and existing account/PWA identity stay the same. Existing installed apps may update their launcher name/icon after opening online; if yours keeps the old branding, remove that shortcut and install again.
 
@@ -95,7 +95,7 @@ No SQL migration is needed for the website rename. Email settings and deployed E
 2. Under **Authentication → SMTP Settings**, set **Sender name** to `SPACE`.
 3. Redeploy **send-approval-emails** using the updated [function source](supabase/functions/send-approval-emails/index.ts), with its existing secrets and verification settings. In the dashboard editor, replace all deployed code with this file and deploy.
 
-Internal storage keys, API globals, cron job names, calendar event UIDs and backup formats retain their established identifiers to preserve existing sessions, notification subscriptions, schedules and records.
+Internal preference keys, API globals, cron job names, calendar event UIDs and backup formats retain their established identifiers to preserve notification subscriptions, schedules and records. Legacy saved Auth tokens are removed under the fresh-login policy below.
 
 ## October 1 workspace upgrade
 
@@ -217,6 +217,14 @@ The public [About](about/) and [Founders](founders/) pages have their own URLs a
 
 The entry screen has separate **Create an account** and **I have an account** choices. Creating an account verifies the email code once and creates a pending application. Returning users request a new one-time code for sign-in; that path does not create another account. Both flows require the custom Supabase OTP email templates from step 2 above. A successful code exchange creates a Supabase session; account approval and role permissions remain in the database.
 
+### Fresh-login sessions
+
+SPACE keeps authentication tokens only in the current page's memory (`persistSession: false`). Reloading, opening another tab, or relaunching the installed app requires a new email sign-in code. On startup, the app removes only this Supabase project's legacy Auth keys from local and session storage; preferences and other projects' credentials are preserved. Page exit also clears the private interface so browser back/forward restoration cannot replay an authenticated workspace.
+
+An open session ends after **30 minutes without user activity** or **8 hours total**, including time spent in the background. Only trusted, visible user input extends the inactivity timer; polling and token refresh do not. Focus, visibility and page restoration check elapsed time again to cover suspended phones. Expiry immediately clears member data, dialogs, drafts and subscriptions, stops token refresh, and attempts to revoke the current session with local sign-out. A delayed Auth event cannot restore it. These are browser controls; they do not revoke already issued access tokens before their server expiry or configure Supabase's optional server session limits. No SQL migration is required.
+
+Verify with `node scripts/check_workspace.mjs`, then check a test account: sign in with a fresh code; reload or reopen and confirm a new code is required; leave the app inactive for 30 minutes and confirm the workspace closes; confirm an active session cannot exceed eight hours. Approval, roles and existing account verification are unchanged.
+
 Once the first administrator has been promoted using step 5 above:
 
 1. Members can use **Channels**, share files up to 10 MB in **Document library**, and submit external stories through **Technology news**. Administrators review submitted news before publication and can create new channels. The news feed is curated by members; it does not automatically ingest third-party articles.
@@ -314,3 +322,4 @@ Only approved club profiles visible to the current account appear in directory r
 - [Supabase SMTP](https://supabase.com/docs/guides/auth/auth-smtp)
 - [Supabase redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls)
 - [GitHub Pages publishing source](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
+

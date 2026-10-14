@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 const root=fileURLToPath(new URL('../',import.meta.url));
 function deferred(){let resolve; const promise=new Promise(r=>resolve=r); return {promise,resolve};}
 function node(overrides={}){return {id:'',dataset:{},style:{},isConnected:true,hidden:false,textContent:'',innerHTML:'',value:'',scrollHeight:400,scrollTop:400,clientHeight:300,classList:{add(){},remove(){},toggle(){},contains(){return false;}},querySelector(){return null;},querySelectorAll(){return [];},closest(){return null;},setAttribute(){},getAttribute(){return null;},focus(){},remove(){},close(){this.open=false;},showModal(){this.open=true;},setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;},...overrides};}
-function harness(){
+function harness({localItems=new Map(),sessionItems=new Map()}={}){
   const requests=[],queued=[],elements=new Map(),timers=new Map();let timerId=0;
   function from(table){
     const call={table,ops:[]}; requests.push(call);
@@ -19,16 +19,17 @@ function harness(){
   }
   const rpcQueued=[],rpcCalls=[];
   const db={from,storage:{from},rpc(name,args){rpcCalls.push({name,args});return Promise.resolve(rpcQueued.shift()??{data:[],error:null});}};
-  const storage={getItem(){return null;},setItem(){},removeItem(){}};
-  const context=vm.createContext({console,URL,crypto:globalThis.crypto,Blob,Date,Map,Set,Promise,setTimeout(callback,delay=0){const id=++timerId;timers.set(id,{callback,delay});return id;},clearTimeout(id){timers.delete(id);},setInterval(){return 1;},clearInterval(){},sessionStorage:storage,localStorage:storage,createClient(){return db;},window:{INNOVATEX_CONFIG:{supabaseUrl:'https://qa.supabase.co',supabaseAnonKey:'fake'},addEventListener(){}},navigator:{},location:{hash:'#messages'},history:{replaceState(){}},document:{hidden:false,activeElement:null,querySelector(selector){return elements.get(selector)??null;},querySelectorAll(){return [];},getElementById(id){return elements.get('#'+id)??null;},addEventListener(){},documentElement:{dataset:{theme:'light'}}}});
+  const storage=items=>({getItem(key){return items.get(key)??null;},setItem(key,value){items.set(key,value);},removeItem(key){items.delete(key);}});
+  let clientOptions;
+  const context=vm.createContext({console,URL,crypto:globalThis.crypto,Blob,Date,Map,Set,Promise,setTimeout(callback,delay=0){const id=++timerId;timers.set(id,{callback,delay});return id;},clearTimeout(id){timers.delete(id);},setInterval(){return 1;},clearInterval(){},sessionStorage:storage(sessionItems),localStorage:storage(localItems),createClient(_url,_key,options){clientOptions=options;return db;},window:{INNOVATEX_CONFIG:{supabaseUrl:'https://qa.supabase.co',supabaseAnonKey:'fake'},addEventListener(){}},navigator:{},location:{hash:'#messages'},history:{replaceState(){}},document:{hidden:false,activeElement:null,querySelector(selector){return elements.get(selector)??null;},querySelectorAll(){return [];},getElementById(id){return elements.get('#'+id)??null;},addEventListener(){},documentElement:{dataset:{theme:'light'}}}});
   const source=fs.readFileSync(root+'/app.js','utf8').replace(/^import .*\n/,'').replace(/\ninit\(\);\s*$/,'');
   vm.runInContext(source,context,{filename:'app.js'});
   const run=code=>vm.runInContext(code,context);
   const exec=(code,args)=>{context.qaArgs=args;return run(code);};
-  run("session={user:{id:'self'}};me={id:'self',full_name:'Tester',role:'member',membership_status:'approved'};dmReady=true;page='messages';cache={profiles:[me,{id:'a',full_name:'Alice',membership_status:'approved',role:'member'},{id:'b',full_name:'Bob',membership_status:'approved',role:'teacher'}],direct_messages:[],direct_message_reads:[],notifications:[]};render=()=>{};dmShowThreadUpdate=()=>{};refreshUnreadCounts=async()=>{};refreshInboxUnreadCount=async()=>{};");
+  run("session={user:{id:'self'}};sessionStartedAt=Date.now();lastSessionActivityAt=sessionStartedAt;me={id:'self',full_name:'Tester',role:'member',membership_status:'approved'};dmReady=true;page='messages';cache={profiles:[me,{id:'a',full_name:'Alice',membership_status:'approved',role:'member'},{id:'b',full_name:'Bob',membership_status:'approved',role:'teacher'}],direct_messages:[],direct_message_reads:[],notifications:[]};render=()=>{};dmShowThreadUpdate=()=>{};refreshUnreadCounts=async()=>{};refreshInboxUnreadCount=async()=>{};");
   elements.set('#toast',node());elements.set('#dmBody',node());elements.set('#modal',node({open:false}));elements.set('#modalContent',node());
   const fireTimers=delay=>{for(const [id,timer]of [...timers])if(timer.delay===delay&&timers.has(id)){timers.delete(id);timer.callback();}};
-  return {run,exec,requests,queued,rpcQueued,rpcCalls,elements,context,db,timers,fireTimers};
+  return {run,exec,requests,queued,rpcQueued,rpcCalls,elements,context,db,timers,fireTimers,clientOptions,localItems,sessionItems};
 }
 const tests=[];
 function test(name,fn){tests.push({name,fn});}
@@ -46,7 +47,7 @@ function loginHarness({reducedMotion=false,play=()=>Promise.resolve()}={}){
   h.context.window.matchMedia=()=>({matches:reducedMotion});
   h.context.history.replaceState=(_state,_title,hash)=>{h.context.location.hash=hash;};
   h.context.FormData=function(form){return form.entries;};
-  h.db.channel=()=>({on(){return this;},subscribe(){return this;}});h.db.removeChannel=async()=>{};h.db.auth={signOut:async()=>({error:null})};
+  h.db.channel=()=>({on(){return this;},subscribe(){return this;}});h.db.removeChannel=async()=>{};h.db.auth={signOut:async()=>({error:null}),startAutoRefresh:async()=>{},stopAutoRefresh:async()=>{}};
   h.run("session=null;me=null;page='home';location.hash='#home';hydrateOwnApplicationReason=async()=>{};refresh=async()=>{};touchPresence=async()=>{};loadPublic=async()=>{};");
   return {...h,dialog,video,still,stats};
 }
@@ -574,7 +575,76 @@ test('Member profile links preserve the protected destination across email sign-
   const h=loginHarness(),id='12345678-1234-1234-1234-123456789abc';h.exec("authReady=true;setSidebarOpen=()=>{};signInDialog=()=>{};location.hash='#members/'+qaArgs;route()",id);assert.equal(h.run('pendingProtectedPage'),'members/'+id);h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs)',loginSession('self'));assert.equal(h.context.location.hash,'#members/'+id);
 });
 
+test('Auth starts without durable credentials and removes only this project legacy keys',()=>{
+  const legacy=['sb-qa-auth-token','sb-qa-auth-token-code-verifier','sb-qa-auth-token-user'];
+  const localItems=new Map([...legacy.map(k=>[k,'old credential']),['innovatex.theme','dark'],['sb-other-auth-token','other app'],['space.members.self','preferences']]);
+  const sessionItems=new Map([...legacy.map(k=>[k,'old credential']),['innovatex.pendingEmail','self@example.test']]);
+  const h=harness({localItems,sessionItems});
+  for(const key of legacy){assert.equal(localItems.has(key),false);assert.equal(sessionItems.has(key),false);}
+  assert.equal(localItems.get('sb-other-auth-token'),'other app');assert.equal(localItems.get('innovatex.theme'),'dark');assert.equal(localItems.get('space.members.self'),'preferences');assert.equal(sessionItems.get('innovatex.pendingEmail'),'self@example.test');
+  assert.equal(h.clientOptions.auth.persistSession,false);assert.equal(h.clientOptions.auth.autoRefreshToken,true);assert.equal(h.clientOptions.auth.detectSessionInUrl,true);
+});
+test('Unavailable browser storage cannot enable persistent authentication',()=>{
+  const h=harness();h.context.localStorage={removeItem(){throw Error('blocked');}};h.context.sessionStorage={removeItem(){throw Error('blocked');}};
+  assert.doesNotThrow(()=>h.run('clearSavedAuthTokens()'));assert.equal(h.clientOptions.auth.persistSession,false);
+});
+function sessionHarness(){
+  const h=loginHarness(),stats={stopped:0,started:0,signouts:[],prompts:0,renders:0};let now=1000000;
+  h.context.Date=class extends Date{static now(){return now;}};
+  h.db.auth={startAutoRefresh:async()=>{stats.started++;},stopAutoRefresh:async()=>{stats.stopped++;},signOut:async options=>{stats.signouts.push(options);return {error:null};}};
+  h.context.qaPrompt=()=>{stats.prompts++;};h.context.qaRender=()=>{stats.renders++;};h.run('signInDialog=qaPrompt;render=qaRender');
+  const login=async(id='self',interactive=true)=>{h.queued.push({data:loginProfile(id),error:null});await h.exec('signedIn(qaArgs.session,qaArgs.interactive)',{session:loginSession(id),interactive});};
+  return {...h,stats,setNow:value=>{now=value;},getNow:()=>now,login};
+}
+test('Visible trusted input extends idle time; background and synthetic input do not',async()=>{
+  const h=sessionHarness();await h.login();const start=h.getNow();
+  h.setNow(start+29*60000);h.exec('recordSessionActivity(qaArgs)',{isTrusted:true});assert.equal(h.run('lastSessionActivityAt'),h.getNow());
+  h.setNow(start+30*60000);assert.equal(h.run('checkSessionExpiry()'),false);
+  h.context.document.hidden=true;h.setNow(start+40*60000);h.exec('recordSessionActivity(qaArgs)',{isTrusted:true});assert.equal(h.run('lastSessionActivityAt'),start+29*60000);
+  h.context.document.hidden=false;h.exec('recordSessionActivity(qaArgs)',{isTrusted:false});assert.equal(h.run('lastSessionActivityAt'),start+29*60000);
+  h.setNow(start+59*60000);assert.equal(h.run('checkSessionExpiry()'),true);assert.equal(h.run('session'),null);assert.equal(h.stats.stopped,1);assert.equal(h.stats.prompts,1);assert.equal(h.stats.signouts[0].scope,'local');
+});
+test('The first input after a suspended idle session signs out instead of extending it',async()=>{
+  const h=sessionHarness();await h.login();h.run("cache.secret=['private'];mediaUrls.set('secret',{url:'signed-url'});dmDrafts.set('a',{text:'private draft'})");
+  h.setNow(h.getNow()+31*60000);h.exec('recordSessionActivity(qaArgs)',{isTrusted:true});
+  assert.equal(h.run('session'),null);assert.equal(h.run('me'),null);assert.equal(h.run('cache.secret'),undefined);assert.equal(h.run('mediaUrls.size'),0);assert.equal(h.run('dmDrafts.size'),0);assert.equal(h.run('sessionGuardTimer'),null);assert.equal(h.elements.get('#modal').open,false);
+});
+test('Active sessions have an eight-hour maximum and refresh does not restart the clock',async()=>{
+  const h=sessionHarness();await h.login();const start=h.run('sessionStartedAt');
+  h.setNow(start+7*3600000+59*60000);h.run('lastSessionActivityAt=Date.now()');await h.login('self',false);assert.equal(h.run('sessionStartedAt'),start);
+  h.setNow(start+8*3600000);assert.equal(h.run('checkSessionExpiry()'),true);assert.equal(h.run('session'),null);
+});
+test('Expiry blocks late auth events until a fresh interactive code is verified',async()=>{
+  const h=sessionHarness();await h.login();h.setNow(h.getNow()+31*60000);h.run('checkSessionExpiry()');
+  h.exec("handleAuthStateChange('TOKEN_REFRESHED',qaArgs)",loginSession('self'));h.fireTimers(0);await h.exec('signedIn(qaArgs)',loginSession('self'));assert.equal(h.run('session'),null);
+  await h.login('self',true);assert.equal(h.run('session.user.id'),'self');assert.equal(h.run('sessionEnding'),false);assert.equal(h.run('sessionStartedAt'),h.getNow());
+});
+test('Expiry clears private UI before slow or failed server sign-out completes',async()=>{
+  const h=sessionHarness();await h.login();const pending=deferred();h.db.auth.signOut=()=>pending.promise;h.context.console={...console,error(){}};
+  h.run("cache.secret=['private']");h.setNow(h.getNow()+31*60000);h.run('checkSessionExpiry()');
+  assert.equal(h.run('session'),null);assert.equal(h.run('cache.secret'),undefined);assert(h.stats.renders>0);assert.equal(h.stats.prompts,1);
+  pending.resolve({error:{message:'offline'}});await h.run('sessionSignOutPromise');h.exec("handleAuthStateChange('SIGNED_IN',qaArgs)",loginSession('self'));h.fireTimers(0);assert.equal(h.run('session'),null);
+});
+test('Profile loads started before expiry cannot restore the old account',async()=>{
+  const h=sessionHarness(),profile=deferred();h.queued.push(profile.promise);const signing=h.exec('signedIn(qaArgs)',loginSession('self'));
+  h.setNow(h.getNow()+31*60000);h.run('checkSessionExpiry()');profile.resolve({data:loginProfile(),error:null});await signing;
+  assert.equal(h.run('session'),null);assert.equal(h.run('me'),null);assert.equal(h.run('clubAccess()'),false);
+});
+test('Old editor submits and actions cannot run after local expiry',async()=>{
+  const h=sessionHarness();await h.login();h.setNow(h.getNow()+31*60000);h.run('checkSessionExpiry()');const before=h.requests.length;
+  let prevented=0;await h.exec('submit(qaArgs)',{target:{id:'editor',dataset:{kind:'projectEdit'}},preventDefault(){prevented++;}});action(h,{action:'taskDone',id:'old-task'});
+  assert.equal(prevented,1);assert.equal(h.requests.length,before);assert.equal(h.run('session'),null);
+});
+test('Page exit clears authentication and page restoration checks expiry before refresh',()=>{
+  const source=fs.readFileSync(root+'/app.js','utf8');
+  assert(source.includes("window.addEventListener('pagehide',()=>{expireSession('',false);})"));
+  assert(source.includes("window.addEventListener('focus',checkSessionExpiry)"));
+  assert.match(source,/document\.addEventListener\('visibilitychange',\(\)=>\{\s*if\(checkSessionExpiry\(\)\)return;/);
+  assert(fs.readFileSync(root+'/index.html','utf8').includes('app.js?v=space-session-20261014'));
+});
+
 let failed=0;
 for(const t of tests){try{await t.fn();console.log('PASS',t.name);}catch(e){failed++;console.log('FAIL',t.name,'\n',e.stack);}}
 console.log(`${tests.length-failed}/${tests.length} checks passed`);
 process.exitCode=failed?1:0;
+
