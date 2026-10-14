@@ -48,7 +48,7 @@ function loginHarness({reducedMotion=false,play=()=>Promise.resolve()}={}){
   h.context.history.replaceState=(_state,_title,hash)=>{h.context.location.hash=hash;};
   h.context.FormData=function(form){return form.entries;};
   h.db.channel=()=>({on(){return this;},subscribe(){return this;}});h.db.removeChannel=async()=>{};h.db.auth={signOut:async()=>({error:null}),startAutoRefresh:async()=>{},stopAutoRefresh:async()=>{}};
-  h.run("session=null;me=null;page='home';location.hash='#home';hydrateOwnApplicationReason=async()=>{};refresh=async()=>{};touchPresence=async()=>{};loadPublic=async()=>{};");
+  h.run("session=null;me=null;page='home';location.hash='#home';hydrateOwnApplicationReason=async()=>{};refresh=async()=>{};touchPresence=async()=>{};loadPublic=async()=>{};loadOwnLearningPath=async()=>{};");
   return {...h,dialog,video,still,stats};
 }
 const loginSession=id=>({user:{id,email:id+'@example.test'}});
@@ -640,7 +640,83 @@ test('Page exit clears authentication and page restoration checks expiry before 
   assert(source.includes("window.addEventListener('pagehide',()=>{expireSession('',false);})"));
   assert(source.includes("window.addEventListener('focus',checkSessionExpiry)"));
   assert.match(source,/document\.addEventListener\('visibilitychange',\(\)=>\{\s*if\(checkSessionExpiry\(\)\)return;/);
-  assert(fs.readFileSync(root+'/index.html','utf8').includes('app.js?v=space-session-20261014'));
+  assert(fs.readFileSync(root+'/index.html','utf8').includes('app.js?v=space-learning-20261014'));
+});
+
+function learningHarness(role='member'){
+  const h=loginHarness();
+  h.run(`session={user:{id:'self',email:'self@example.test'}};sessionStartedAt=Date.now();lastSessionActivityAt=sessionStartedAt;me={id:'self',full_name:'Student One',role:'${role}',application_type:'member',membership_status:'approved'};learningChoicesReady=true;learningHubReady=true;ownLearningTracks=['Controls and Automation','Software and Programming'];courseReady=true;coursePlanningReady=true;learningReady=true;courseLifecycleReady=true;courseSeenReady=true;route=()=>{};refresh=async()=>{};loadAdminApplicationPages=async()=>{};cache={profiles:[me,{id:'learner',full_name:'Learner One',role:'member',membership_status:'approved'}],courses:[{id:'c1',title:'Controller lab',category:'Controls and Automation',instructor_id:'self',status:'active',created_at:'2026-10-01'},{id:'c2',title:'Programming lab',category:'Software and Programming',instructor_id:'other-teacher',status:'active',created_at:'2026-10-02'}],course_enrollments:[{course_id:'c1',learner_id:'self',status:'enrolled'},{course_id:'c1',learner_id:'learner',status:'enrolled'}],course_roster:[{course_id:'c1',learner_id:'learner',full_name:'Learner One',status:'enrolled'}],teaching_track_assignments:[{teacher_id:'self',track:'Controls and Automation'}],learning_track_roster:[{learner_id:'learner',full_name:'Learner One',track:'Controls and Automation'}],classroom_assignments:[{id:'a1',course_id:'c1',title:'Test three setpoints',kind:'practical',instructions:'Build a controller and record the results for three different setpoints.',due_at:'2026-11-01T12:00:00Z',created_at:'2026-10-01'},{id:'personal',course_id:'c1',title:'Personal revision',kind:'assignment',learner_id:'learner',instructions:'Improve your controller and record the new response in three trials.',created_at:'2026-10-01'},{id:'other',course_id:'c2',title:'Other teacher work',kind:'project',instructions:'This is work for another class and teacher.',created_at:'2026-10-01'}],classroom_assignment_submissions:[],course_submissions:[],course_completions:[],learning_materials:[],notifications:[],events:[],project_tasks:[]};`);
+  return h;
+}
+function learningForm(kind,entries,id='editor'){
+  const send=node(),form=node({id,dataset:{kind},entries,matches(){return false;},querySelector(selector){return selector==='[type=submit]'?send:null;}});
+  return {event:{target:form,preventDefault(){}},send};
+}
+test('Course selection offers all four courses as independent checkboxes',()=>{
+  const h=learningHarness(),markup=h.run('learningPathForm(true)');assert.equal((markup.match(/name="learning_tracks"/g)||[]).length,4);assert.equal((markup.match(/ checked/g)||[]).length,2);assert(markup.includes('type="checkbox"'));assert(!markup.includes('type="radio"'));
+});
+test('New approved members must choose courses while upgraded teachers keep their studio',()=>{
+  const h=learningHarness();h.run('ownLearningTracks=[]');assert.equal(h.run('learningSelectionRequired()'),true);assert(h.run('courses()').includes('Save courses and open my dashboard'));h.run("me.role='teacher'");assert.equal(h.run('learningSelectionRequired()'),false);
+});
+test('New applicant forms include course choices without exposing other applicants',()=>{
+  const h=learningHarness();h.run("me.membership_status='pending';me.application_reason='I want to build and learn practical engineering.'");const markup=h.run('application()');assert(markup.includes('Choose the courses you want to learn'));assert.equal((markup.match(/name="learning_tracks"/g)||[]).length,4);
+});
+test('Saving multiple selected courses sends the complete array to the protected RPC',async()=>{
+  const h=learningHarness(),form=learningForm('learningPath',[['learning_tracks','Controls and Automation'],['learning_tracks','Software and Programming']],'learningPathForm');await h.exec('submit(qaArgs)',form.event);assert.equal(h.rpcCalls[0].name,'set_my_learning_tracks');assert.deepEqual(Array.from(h.rpcCalls[0].args.p_tracks),['Controls and Automation','Software and Programming']);assert.equal(form.send.disabled,false);
+});
+test('An empty course choice is rejected before a database mutation',async()=>{
+  const h=learningHarness(),form=learningForm('learningPath',[],'learningPathForm');h.context.console={...console,error(){}};await h.exec('submit(qaArgs)',form.event);assert.equal(h.rpcCalls.length,0);assert(h.elements.get('#toast').textContent.includes('Choose at least one'));
+});
+test('A learning-path response from a signed-out account cannot restore old choices',async()=>{
+  const h=harness(),pending=deferred();h.queued.push(pending.promise);const loading=h.run('loadOwnLearningPath()');h.run('session=null;authGeneration++;ownLearningTracks=[]');pending.resolve({data:{tracks:['Controls and Automation']},error:null});await loading;assert.equal(h.run('ownLearningTracks.length'),0);assert.equal(h.run('learningChoicesReady'),false);
+});
+test('Student classwork excludes another class and personal tasks for someone else',()=>{
+  const h=learningHarness();assert.deepEqual(Array.from(h.run('classworkForStudent().map(a=>a.id)')),['a1']);const markup=h.run("studentClassworkPanel('c1')");assert(markup.includes('Test three setpoints'));assert(!markup.includes('Personal revision'));assert(!markup.includes('Other teacher work'));
+});
+test('Classwork history displays feedback and allows revisions without removing prior attempts',()=>{
+  const h=learningHarness();h.run("cache.classroom_assignment_submissions=[{id:'s1',assignment_id:'a1',learner_id:'self',details:'I tested three setpoints and measured the response.',review_status:'revision_requested',teacher_feedback:'Compare your overshoot in each trial.',created_at:'2026-10-03'}]");const markup=h.run("studentClassworkPanel('c1')");assert(markup.includes('Compare your overshoot'));assert(markup.includes('Submit an improved attempt'));h.run("cache.classroom_assignment_submissions[0].review_status='accepted'");assert(!h.run("studentClassworkPanel('c1')").includes('data-action="classworkSubmitForm"'));
+});
+test('Teacher student cards include course-choice cohorts and legacy enrolled students once',()=>{
+  const h=learningHarness('teacher');h.run("cache.course_roster.push({course_id:'c1',learner_id:'old',full_name:'Existing Student',status:'enrolled'})");const markup=h.run('teachingStudentsPanel()');assert.equal((markup.match(/<h3>Learner One<\/h3>/g)||[]).length,1);assert(markup.includes('Existing Student'));assert(markup.includes('Assign work'));
+});
+test('Teachers can filter and page student rosters with bounded card sizes',()=>{
+  const h=learningHarness('teacher');h.exec('cache.learning_track_roster=qaArgs',Array.from({length:55},(_,i)=>({learner_id:'student'+i,full_name:'Student '+String(i).padStart(2,'0'),track:'Controls and Automation'})));h.run('cache.course_roster=[]');assert.equal((h.run('teachingStudentsPanel()').match(/learning-student-card/g)||[]).length,24);h.run('teachingStudentPage=2');assert.equal((h.run('teachingStudentsPanel()').match(/learning-student-card/g)||[]).length,7);h.run("teachingStudentSearch='Student 01'");assert.equal((h.run('teachingStudentsPanel()').match(/learning-student-card/g)||[]).length,1);
+});
+test('Teacher classwork queues exclude classes belonging to other teachers',()=>{
+  const h=learningHarness('teacher');h.run("cache.classroom_assignment_submissions=[{id:'s1',assignment_id:'a1',learner_id:'learner',details:'A complete result for the controls exercise.',review_status:'submitted',created_at:'2026-10-04'},{id:'s2',assignment_id:'other',learner_id:'learner',details:'PRIVATE OTHER CLASS RESULT',review_status:'submitted',created_at:'2026-10-04'}]");const markup=h.run('teacherClassworkPanel()');assert(markup.includes('A complete result'));assert(!markup.includes('PRIVATE OTHER CLASS RESULT'));assert(markup.includes('Mark as seen'));assert(markup.includes('Give feedback'));
+});
+test('Teaching navigation exposes Students and Classwork while preserving existing review tools',()=>{
+  const h=learningHarness('teacher');const markup=h.run('teaching()');assert(markup.includes('teaching-tab-students'));assert(markup.includes('teaching-tab-classwork'));assert(markup.includes('teaching-tab-reviews'));action(h,{action:'teachingTab',tab:'classwork'});assert.equal(h.run('teachingTab'),'classwork');
+});
+test('Assignment publishing targets an enrolled student in the teachers own open class',async()=>{
+  const h=learningHarness('teacher'),form=learningForm('classwork',[['course_id','c1'],['learner_id','learner'],['title','A personal practical'],['kind','practical'],['instructions','Build a controller and measure the step response for three setpoints.'],['due_at','2026-11-01T10:00'],['resource_url','https://example.test/slides']]);await h.exec('submit(qaArgs)',form.event);assert.equal(h.rpcCalls[0].name,'publish_classroom_assignment');assert.equal(h.rpcCalls[0].args.p_learner,'learner');assert.equal(h.rpcCalls[0].args.p_course,'c1');
+});
+test('Cross-course classwork publishing is rejected in the browser before the RPC',async()=>{
+  const h=learningHarness('teacher');h.context.console={...console,error(){}};const form=learningForm('classwork',[['course_id','c2'],['title','Not my class'],['kind','project'],['instructions','This is a valid length of instructions for a different class.']]);await h.exec('submit(qaArgs)',form.event);assert.equal(h.rpcCalls.length,0);
+});
+test('A student sends classwork through a scoped submission RPC',async()=>{
+  const h=learningHarness(),form=learningForm('classworkSubmission',[['assignment_id','a1'],['details','I measured all three responses and compared the settling times.'],['evidence_url','https://example.test/results']]);await h.exec('submit(qaArgs)',form.event);assert.equal(h.rpcCalls[0].name,'submit_classroom_assignment');assert.equal(h.rpcCalls[0].args.p_assignment,'a1');
+});
+test('Teacher feedback requires the assigned class and another student',async()=>{
+  const h=learningHarness('teacher');h.run("cache.classroom_assignment_submissions=[{id:'s1',assignment_id:'a1',learner_id:'learner',review_status:'submitted'}]");const form=learningForm('classworkReview',[['submission_id','s1'],['decision','revision_requested'],['feedback','Please repeat the test with a smaller step input.']]);await h.exec('submit(qaArgs)',form.event);assert.equal(h.rpcCalls[0].name,'review_classroom_assignment');assert.equal(h.rpcCalls[0].args.p_decision,'revision_requested');
+});
+test('Role management is administrator-only and uses the approved account directory',()=>{
+  const h=learningHarness('teacher');h.run("approvedAccountRows=[{id:'target',full_name:'Another account',role:'member',membership_status:'approved'}];accountRoleForm('target')");assert.equal(h.elements.get('#modal').open,false);h.run("me.role='admin';accountRoleForm('target')");assert(h.elements.get('#modalContent').innerHTML.includes('name="next_role"'));assert(h.elements.get('#modalContent').innerHTML.includes('Teaching courses'));h.elements.get('#modal').open=false;h.run("accountRoleForm('self')");assert.equal(h.elements.get('#modal').open,false);
+});
+test('Administrators assign multiple teaching courses with a role change',async()=>{
+  const h=learningHarness('admin'),form=learningForm('accountRole',[['user_id','learner'],['next_role','teacher'],['teaching_tracks','Controls and Automation'],['teaching_tracks','AI & Machine Learning']]);await h.exec('submit(qaArgs)',form.event);assert.equal(h.rpcCalls[0].name,'assign_account_role');assert.deepEqual(Array.from(h.rpcCalls[0].args.p_tracks),['Controls and Automation','AI & Machine Learning']);
+});
+test('Teaching-course authorization controls publishing choices independently of profile interests',()=>{
+  const h=learningHarness('teacher');assert.deepEqual(Array.from(h.run('allowedTeachingTracks()')),['Controls and Automation']);h.run("teacherProfile={track:'AI & Machine Learning'}");assert.deepEqual(Array.from(h.run('allowedTeachingTracks()')),['Controls and Automation']);h.run("cache.teaching_track_assignments=[]");action(h,{action:'courseForm'});assert(h.elements.get('#toast').textContent.includes('administrator'));
+});
+test('New dashboards escape names, assignment instructions and feedback',()=>{
+  const h=learningHarness('teacher');h.run("cache.learning_track_roster[0].full_name='<script>bad</script>';cache.course_roster=[];cache.classroom_assignments[0].instructions='<img src=x onerror=bad>';cache.classroom_assignment_submissions=[{id:'s',assignment_id:'a1',learner_id:'self',details:'A valid description of my practical work.',review_status:'revision_requested',teacher_feedback:'<svg onload=bad>',created_at:'2026-10-01'}]");assert(!h.run('teachingStudentsPanel()').includes('<script>bad'));const markup=h.run("studentClassworkPanel('c1')");assert(!markup.includes('<img src=x'));assert(!markup.includes('<svg onload'));assert(markup.includes('&lt;svg onload=bad&gt;'));
+});
+test('Student Home and calendar include assigned classwork without exposing personal work for others',()=>{
+  const h=learningHarness();const home=h.run('personalHome()');assert(home.includes('YOUR NEXT CLASSWORK'));const entries=Array.from(h.run('calendarEntries()'));assert(entries.some(e=>e.assignment_id==='a1'));assert(!entries.some(e=>e.assignment_id==='personal'));assert.equal(h.exec('calendarPersonal(qaArgs)',entries.find(e=>e.assignment_id==='a1')),true);
+});
+test('Role dashboard entry points match each approved account capability',()=>{
+  const h=learningHarness();assert(h.run('roleDashboardIntro()').includes('STUDENT DASHBOARD'));h.run("me.role='teacher'");assert(h.run('roleDashboardIntro()').includes('TEACHER DASHBOARD'));h.run("me.role='founder';me.founder_teaching_enabled=true");assert(h.run('roleDashboardIntro()').includes('FOUNDER DASHBOARD'));h.run("me.role='admin'");assert(h.run('roleDashboardIntro()').includes('ADMINISTRATOR DASHBOARD'));
 });
 
 let failed=0;

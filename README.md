@@ -5,6 +5,42 @@
 
 A responsive workspace for a practical engineering and technology club. The site is static and can be hosted on GitHub Pages. Supabase provides email sign-in and a database protected by row level security.
 
+## Activate the connected learning dashboards — 14 October 2026
+
+Run the **entire** [`supabase/upgrade_learning_dashboards.sql`](supabase/upgrade_learning_dashboards.sql) in **Supabase → SQL Editor → New query → Run**, after the existing course lifecycle, classroom access, private applications, approval emails and founder teaching upgrades. Then reopen SPACE and sign in. This is one new migration; it runs inside a transaction and is safe to rerun. The new controls activate after the database tables exist. Older workshops and their feedback keep working before activation.
+
+### Student journey
+
+1. Verify the account email and complete the membership application. Choose **one or more** of the four courses; all four are allowed. The choices are saved while administrator approval is pending. An investor application can skip learning choices.
+2. After approval, open **My learning**. Existing approved members without choices must choose their courses once before opening their workspace.
+3. Open a matching class for its practical brief, **Materials & slides**, **Classwork**, final project submissions and feedback. Classwork supports assignments, practical exercises and projects, with deadlines and HTTPS resource or evidence links. Students can read only their own attempts and feedback.
+4. Read the teacher's feedback and send an improved attempt when a revision is requested. Attempts are retained; an accepted task cannot be resubmitted. Completing an individual task does not replace the class's final-project completion record.
+
+Selecting a course automatically enrolls an approved, verified member in its **open** published classes. Newly published classes enroll matching approved learners and notify them. Closed or archived classes are excluded. Updating choices controls future automatic enrollments and preserves all existing classes, materials, submissions and completion history. A member can still manually join an open workshop through Browse workshops. Previously joined students remain visible in the assigned teacher's class roster even after their choices change.
+
+### Teacher journey
+
+1. An administrator assigns a **Teacher** role and one or more **teaching courses**. Existing teachers retain the courses of their already assigned workshops. A teaching-profile preference by itself does not grant a teaching course.
+2. Open **Teaching studio → Teaching profile** and complete experience, practical plans and availability.
+3. **My students** combines learners who chose the teacher's assigned courses with existing class enrollments. Search, course filters and pages of 24 cards keep the list manageable. A private directory profile still exposes the learner's name to their teaching lead, without exposing email or application answers.
+4. Publish an open workshop in an assigned teaching course. Its matching approved learners join automatically. Add or manage learners through the existing class roster when needed.
+5. Upload slides, notes or worksheets against that workshop. Its enrolled students find them in **Materials & slides**. The existing file permissions remain in force.
+6. Use **Classwork & feedback → Assign work** for the whole class or one enrolled student. Set clear instructions, type of work, an optional deadline and resource link. Read incoming attempts, mark them as seen, then accept with feedback or request a revision. The existing final-project review workflow remains available separately.
+
+Student Home, teaching review summaries and the Calendar include classwork. Accepted student tasks drop out of their personal deadlines, while teachers retain planning and review records. No real teacher, class, date or student is invented or published by this upgrade.
+
+### Administrator role management
+
+Open **Membership approvals → Approved accounts → Change role / teaching courses**. Choose **Member**, **Teacher**, **Founder**, **Investor** or **Administrator**. Teachers require at least one teaching course; a founder with no teaching courses retains leadership without teaching access. Administrators have the full management dashboard. Role changes keep the existing approved account, notify the person in-app and create an audit entry. Their sidebar and dashboard follow the role on the next access refresh or sign-in; database permissions apply immediately.
+
+The role tool cannot change the signed-in administrator's own access. Reassign every class before removing its instructor's teaching role or course responsibility, including past classes whose reviews must remain supported. Public founder biographies are managed separately. Roles apply only to approved, email-verified accounts and cannot be self-assigned. Existing notification subscriptions and the fresh-login/30-minute inactivity policy remain in place.
+
+### Verification
+
+- `node scripts/check_workspace.mjs` covers frontend journeys, account isolation and the existing session, chat, calendar and member regressions.
+- `scripts/check_learning_database.mjs` runs the previous course migrations and this upgrade in an isolated PostgreSQL-compatible PGlite database. It tests separate administrator, teacher, student, applicant, investor, unverified and outsider identities, real RLS policies, role restrictions, enrollment, private tasks, reviews and migration reruns. Its header gives the temporary dependency install command. It never connects to the live database.
+- After applying the migration, use separate test accounts to confirm multi-course onboarding, automatic enrollment, teacher rosters, classwork and feedback, and an administrator-assigned role. The deployment does not execute SQL against the live Supabase project.
+
 ## What is included
 
 - Public home and founders pages. A founder profile uses a wide portrait layout and a short biography with optional full text; the administrator publishes a real photo only after that person consents.
