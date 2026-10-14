@@ -5,6 +5,10 @@
 
 A responsive workspace for a practical engineering and technology club. The site is static and can be hosted on GitHub Pages. Supabase provides email sign-in and a database protected by row level security.
 
+## Sign-in recovery — 14 October 2026
+
+After a valid email code, SPACE checks the account profile before allowing access. Course selections load separately and cannot hold the OTP form open. An unavailable or missing learning table leaves existing account access working; the new learning controls still require their migration. Account checks time out after 15 seconds with **Retry account check**, which reuses the verified session without another code. Initial workspace loads have a 20-second deadline and a retry screen; the current page stays usable while other tools load. Course-choice lookups have an 8-second deadline, and late responses cannot restore a signed-out account. This login fix requires no SQL migration. Run `node scripts/check_workspace.mjs` for the offline regression checks, then verify email delivery and code exchange with a test account on the deployed site.
+
 ## Activate the connected learning dashboards — 14 October 2026
 
 Run the **entire** [`supabase/upgrade_learning_dashboards.sql`](supabase/upgrade_learning_dashboards.sql) in **Supabase → SQL Editor → New query → Run**, after the existing course lifecycle, classroom access, private applications, approval emails and founder teaching upgrades. Then reopen SPACE and sign in. This is one new migration; it runs inside a transaction and is safe to rerun. The new controls activate after the database tables exist. Older workshops and their feedback keep working before activation.

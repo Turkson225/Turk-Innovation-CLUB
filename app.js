@@ -488,6 +488,15 @@ function setupImageViewer(){
   window.addEventListener('resize',()=>{if(viewer.open&&photo.naturalWidth)fitImageViewer();});
 }
 const fail = (error) => { console.error(error); show(error?.message || 'Something went wrong. Please try again.'); };
+async function requestWithDeadline(request,milliseconds,message){
+  let timer;
+  try{
+    return await Promise.race([
+      Promise.resolve().then(request),
+      new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error(message)),milliseconds);})
+    ]);
+  }finally{clearTimeout(timer);}
+}
 const read = async (table,query=q=>q) => { const {data,error}=await query(db.from(table).select('*')); if(error) throw error; return data || []; };
 async function readRecords(table){
   // These relation tables use composite primary keys and do not have an `id` or `created_at`.
@@ -1059,12 +1068,13 @@ async function signedIn(newSession,showWelcome=false) {
   if(session) {
     render();
     pendingEmail=''; sessionStorage.removeItem('innovatex.pendingEmail');sessionStorage.removeItem('innovatex.pendingAuthMode');
-    const {data,error}=await db.from('profiles').select('*').eq('id',session.user.id).single();
+    let profile;
+    try{profile=await requestWithDeadline(()=>db.from('profiles').select('*').eq('id',newSession.user.id).single(),15000,'The account check took too long. Please retry.');}
+    catch(error){profile={data:null,error};}
+    const {data,error}=profile;
     if(generation!==authGeneration)return;
     if(error||!data) { loginWelcomePendingOwner=null;workspaceLoading=false;workspaceHydrating=false;workspaceLoadError='We could not check your account access. Please retry.';authReady=true;render();fail(error||Error(workspaceLoadError)); return; }
     me=data;
-    await loadOwnLearningPath(generation);
-    if(generation!==authGeneration)return;
     loadCalendarPreferences();
     if(!approved())await hydrateOwnApplicationReason();
     if(generation!==authGeneration)return;
@@ -1093,20 +1103,27 @@ async function signedIn(newSession,showWelcome=false) {
   route();completeLoginWelcome(generation);
   if(session)void finishWorkspaceSignIn(generation).catch(error=>{
     if(generation!==authGeneration)return;
+    if(workspaceHydrating)workspaceLoadError='Your account is signed in, but we could not load the workspace. Please retry.';
     workspaceHydrating=false;render();fail(error);
   });
 }
 async function finishWorkspaceSignIn(generation){
     if(generation!==authGeneration)return;
+    // Course setup is optional workspace data, never part of the OTP exchange.
+    const learningPath=loadOwnLearningPath(generation);
     if(!approved()){
+      await learningPath;
+      if(generation!==authGeneration)return;
       workspaceHydrating=false;render();pollTimer=setInterval(refreshVisiblePage,45000);return;
     }
     await hydrateOwnApplicationReason();
     if(generation!==authGeneration)return;
-    await refresh('page');
+    await Promise.all([learningPath,requestWithDeadline(()=>refresh('page'),20000,'Your account is signed in, but workspace records took too long to load. Please retry.')]);
     if(generation!==authGeneration)return;
-    render();
-    if(!investor())await refresh();
+    // The current page can be used while the remaining tools load.
+    workspaceHydrating=false;
+    if(learningSelectionRequired())route();else render();
+    if(!investor())await requestWithDeadline(()=>refresh(),20000,'Some workspace records could not be loaded. Please retry.');
     if(generation!==authGeneration)return;
     workspaceHydrating=false;render();
     pollTimer=setInterval(refreshVisiblePage,45000);
@@ -1327,7 +1344,7 @@ function render() {
   const financeBadge=$('#financeReviewBadge');if(financeBadge){financeBadge.textContent=pendingFinance;financeBadge.hidden=!pendingFinance;}
   const unreadDm=unreadCountsReady?unreadCounts.direct_total:(cache.direct_messages||[]).filter(m=>m.recipient_id===session?.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;
   $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
-  if(workspaceLoadError||workspaceLoading||workspaceHydrating&&!(pageRefreshDependencies[page]||[]).every(name=>Object.hasOwn(cache,name))){
+  if(workspaceLoadError||workspaceLoading||workspaceHydrating&&!learningSelectionRequired()&&!(pageRefreshDependencies[page]||[]).every(name=>Object.hasOwn(cache,name))){
     $('#content').classList.remove('dm-view');
     $('#content').innerHTML=workspaceLoadError?`<section class="workspace-start"><h1>Let’s open your workspace</h1><p>${esc(workspaceLoadError)}</p><button class="button" data-action="retryWorkspace">Retry account check</button></section>`:`<section class="workspace-start" aria-busy="true"><span class="eyebrow">${workspaceLoading?'SIGNING IN':'YOUR WORKSPACE'}</span><h1>${workspaceLoading?'Opening SPACE…':page==='home'?`Welcome, ${esc((me?.full_name||'member').split(/\s+/)[0])}.`:esc(workspacePageInfo[page]?.title||'SPACE')}</h1><p role="status">${workspaceLoading?'Checking your account access…':'Your workspace is open. Loading your latest records…'}</p><div class="workspace-skeleton" aria-hidden="true"><span></span><span></span><span></span></div></section>`;
     return;
@@ -2051,8 +2068,11 @@ function validLearningTracks(value){return Array.isArray(value)?[...new Set(valu
 function learningSelectionRequired(){return clubAccess()&&me?.role==='member'&&learningChoicesReady&&!ownLearningTracks.length;}
 async function loadOwnLearningPath(generation=authGeneration){
   const owner=session?.user.id;if(!owner)return;
-  const {data,error}=await db.from('member_learning_paths').select('tracks').eq('user_id',owner).maybeSingle();
+  let result;
+  try{result=await requestWithDeadline(()=>db.from('member_learning_paths').select('tracks').eq('user_id',owner).maybeSingle(),8000,'Course selections are temporarily unavailable.');}
+  catch(error){result={data:null,error};}
   if(generation!==authGeneration||session?.user.id!==owner)return;
+  const {data,error}=result;
   learningChoicesReady=!error;ownLearningTracks=error?[]:validLearningTracks(data?.tracks);
 }
 function learningTrackCheckboxes(selected=[],legend='Your courses',hint='Choose one or more. You can select all four.',name='learning_tracks'){

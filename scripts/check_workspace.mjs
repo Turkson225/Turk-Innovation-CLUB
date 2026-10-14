@@ -37,7 +37,7 @@ const message=(id,sender_id='a',recipient_id='self',body='hello',created_at='202
 function composer(peer,text){const input=node({value:text});const send=node();const form=node({id:'dmComposer',dataset:{peer},elements:{body:input},querySelector(s){return s==='[type=submit]'?send:null;}});return {form,input,send,event:{target:form,preventDefault(){}}};}
 function action(h,dataset){return h.exec('actions(qaArgs)',{target:{closest(){return node({dataset});}},preventDefault(){}});}
 
-function loginHarness({reducedMotion=false,play=()=>Promise.resolve()}={}){
+function loginHarness({reducedMotion=false,play=()=>Promise.resolve(),realLearningPath=false}={}){
   const h=harness(),stats={opens:0,closes:0,plays:0,pauses:0,focused:0,workspaceFocused:0};
   const dialog=node({open:false,show(){this.open=true;stats.opens++;},showModal(){throw Error("Welcome must not block the workspace");},close(){this.open=false;stats.closes++;}});
   const video=node({currentTime:0,pause(){stats.pauses++;},play(){stats.plays++;return play();}}),still=node({hidden:true});
@@ -48,7 +48,8 @@ function loginHarness({reducedMotion=false,play=()=>Promise.resolve()}={}){
   h.context.history.replaceState=(_state,_title,hash)=>{h.context.location.hash=hash;};
   h.context.FormData=function(form){return form.entries;};
   h.db.channel=()=>({on(){return this;},subscribe(){return this;}});h.db.removeChannel=async()=>{};h.db.auth={signOut:async()=>({error:null}),startAutoRefresh:async()=>{},stopAutoRefresh:async()=>{}};
-  h.run("session=null;me=null;page='home';location.hash='#home';hydrateOwnApplicationReason=async()=>{};refresh=async()=>{};touchPresence=async()=>{};loadPublic=async()=>{};loadOwnLearningPath=async()=>{};");
+  h.run("session=null;me=null;page='home';location.hash='#home';hydrateOwnApplicationReason=async()=>{};refresh=async()=>{};touchPresence=async()=>{};loadPublic=async()=>{};");
+  if(!realLearningPath)h.run('loadOwnLearningPath=async()=>{}');
   return {...h,dialog,video,still,stats};
 }
 const loginSession=id=>({user:{id,email:id+'@example.test'}});
@@ -57,6 +58,67 @@ function verifyForm(code='12345678'){
   const submit=node(),form=node({id:'editor',dataset:{kind:'verify'},entries:[['code',code]],querySelector(selector){return selector==='[type=submit]'?submit:null;}});
   return {event:{target:form,preventDefault(){}},submit};
 }
+
+test('A stalled course lookup cannot keep a valid OTP submission waiting',async()=>{
+  const h=loginHarness({realLearningPath:true}),slow=deferred(),form=verifyForm();h.run("pendingEmail='self@example.test'");
+  h.queued.push({data:loginProfile(),error:null},slow.promise);
+  h.db.auth.verifyOtp=async()=>({data:{session:loginSession('self')},error:null});
+  let finished=false;const signing=h.exec('submit(qaArgs)',form.event).then(()=>{finished=true;});
+  for(let i=0;i<30;i++)await Promise.resolve();
+  assert.equal(finished,true,'Verified sign-in must not wait for the course service');
+  assert.equal(form.submit.disabled,false);assert.equal(h.run('authReady'),true);assert.equal(h.run('workspaceLoading'),false);assert.equal(h.run('clubAccess()'),true);
+  slow.resolve({data:{tracks:['Controls and Automation']},error:null});await signing;
+});
+test('A thrown profile request leaves a retryable account check without granting access',async()=>{
+  const h=loginHarness();h.context.console={...console,error(){}};h.db.from=()=>{throw Error('Network unavailable');};
+  await h.exec('signedIn(qaArgs,true)',loginSession('self'));
+  assert.equal(h.run('workspaceLoading'),false);assert.equal(h.run('workspaceHydrating'),false);assert.equal(h.run('authReady'),true);assert.equal(h.run('clubAccess()'),false);assert(h.run('workspaceLoadError').includes('retry'));
+});
+test('An account-check timeout ends the spinner and ignores a late profile response',async()=>{
+  const h=loginHarness(),slow=deferred();h.context.console={...console,error(){}};h.queued.push(slow.promise);
+  const signing=h.exec('signedIn(qaArgs,true)',loginSession('self'));for(let i=0;i<5;i++)await Promise.resolve();h.fireTimers(15000);await signing;
+  assert.equal(h.run('workspaceLoading'),false);assert.equal(h.run('clubAccess()'),false);assert(h.run('workspaceLoadError').includes('retry'));
+  slow.resolve({data:loginProfile(),error:null});for(let i=0;i<5;i++)await Promise.resolve();assert.equal(h.run('me'),null);assert.equal(h.stats.opens,0);
+});
+test('A rejected course service cannot undo a verified account',async()=>{
+  const h=loginHarness({realLearningPath:true});h.context.console={...console,error(){}};h.queued.push({data:loginProfile(),error:null});
+  const from=h.db.from;h.db.from=table=>{if(table==='member_learning_paths')throw Error('Learning service unavailable');return from(table);};
+  await h.exec('signedIn(qaArgs,true)',loginSession('self'));for(let i=0;i<30;i++)await Promise.resolve();
+  assert.equal(h.run('authReady'),true);assert.equal(h.run('clubAccess()'),true);assert.equal(h.run('learningChoicesReady'),false);assert.equal(h.run('workspaceHydrating'),false);
+});
+test('Unavailable course tables do not block existing accounts or force empty course setup',async()=>{
+  const h=loginHarness({realLearningPath:true});h.queued.push({data:loginProfile(),error:null},{data:null,error:{code:'PGRST205',message:'Table not found'}});
+  await h.exec('signedIn(qaArgs,true)',loginSession('self'));for(let i=0;i<30;i++)await Promise.resolve();
+  assert.equal(h.run('clubAccess()'),true);assert.equal(h.run('learningSelectionRequired()'),false);assert.equal(h.run('workspaceHydrating'),false);
+});
+test('A course lookup timeout opens the existing workspace and ignores its late result',async()=>{
+  const h=loginHarness({realLearningPath:true}),slow=deferred();h.queued.push({data:loginProfile(),error:null},slow.promise);
+  await h.exec('signedIn(qaArgs,true)',loginSession('self'));for(let i=0;i<10;i++)await Promise.resolve();h.fireTimers(8000);for(let i=0;i<30;i++)await Promise.resolve();
+  assert.equal(h.run('workspaceHydrating'),false);assert.equal(h.run('learningChoicesReady'),false);assert.equal(h.run('clubAccess()'),true);
+  slow.resolve({data:{tracks:['Controls and Automation']},error:null});for(let i=0;i<10;i++)await Promise.resolve();assert.equal(h.run('ownLearningTracks.length'),0);
+});
+test('Deferred course setup still sends approved members without choices to My learning',async()=>{
+  const h=loginHarness({realLearningPath:true});h.queued.push({data:loginProfile(),error:null},{data:null,error:null});
+  await h.exec('signedIn(qaArgs,true)',loginSession('self'));for(let i=0;i<30;i++)await Promise.resolve();
+  assert.equal(h.run('learningSelectionRequired()'),true);assert.equal(h.context.location.hash,'#courses');assert.equal(h.run('workspaceHydrating'),false);
+});
+test('A stalled first page load offers a workspace retry without asking for another OTP',async()=>{
+  const h=loginHarness(),slow=deferred();h.context.console={...console,error(){}};h.context.slowPage=()=>slow.promise;h.run('refresh=()=>slowPage()');h.queued.push({data:loginProfile(),error:null});
+  await h.exec('signedIn(qaArgs,true)',loginSession('self'));for(let i=0;i<10;i++)await Promise.resolve();h.fireTimers(20000);for(let i=0;i<30;i++)await Promise.resolve();
+  assert.equal(h.run('workspaceHydrating'),false);assert.equal(h.run('session.user.id'),'self');assert(h.run('workspaceLoadError').includes('retry'));assert.equal(h.run('pendingEmail'),'');
+  slow.resolve();
+});
+test('A checked account can retry a failed profile request using its verified session',async()=>{
+  const h=loginHarness();h.context.console={...console,error(){}};h.queued.push({data:null,error:{message:'Network unavailable'}});
+  await h.exec('signedIn(qaArgs,true)',loginSession('self'));assert(h.run('workspaceLoadError'));
+  h.queued.push({data:loginProfile(),error:null});await action(h,{action:'retryWorkspace'});
+  assert.equal(h.run('workspaceLoadError'),'');assert.equal(h.run('clubAccess()'),true);assert.equal(h.run('authReady'),true);
+});
+test('The current page is usable while additional workspace tools are still loading',async()=>{
+  const h=loginHarness(),slow=deferred();h.context.hydratePage=mode=>mode==='page'?Promise.resolve():slow.promise;h.run('refresh=mode=>hydratePage(mode)');h.queued.push({data:loginProfile(),error:null});
+  await h.exec('signedIn(qaArgs,true)',loginSession('self'));for(let i=0;i<30;i++)await Promise.resolve();
+  assert.equal(h.run('workspaceHydrating'),false);assert.equal(h.run('clubAccess()'),true);assert.equal(h.run('workspaceLoadError'),'');h.run('authGeneration++');slow.resolve();
+});
 
 test('Interactive OTP verification shows the logo once despite a delayed SIGNED_IN callback',async()=>{
   const h=loginHarness(),verified=loginSession('self'),form=verifyForm();h.run("pendingEmail='self@example.test'");h.queued.push({data:loginProfile(),error:null});
@@ -472,7 +534,7 @@ test('Calendar preference storage is account-specific and rejects unrecognized o
   const h=calendarHarness(),values=new Map();h.context.localStorage={getItem:key=>values.get(key)||null,setItem:(key,value)=>values.set(key,value)};h.run("calendarView='week';calendarPreferences.compact=true;saveCalendarPreferences()");assert(values.has('space.calendar.self'));h.run("calendarView='day';loadCalendarPreferences()");assert.equal(h.run('calendarView'),'week');h.run("session.user.id='other';loadCalendarPreferences()");assert.equal(h.run('calendarView'),'month');assert.equal(h.run('calendarPreferences.compact'),false);values.set('space.calendar.other',JSON.stringify({view:'admin',weekStart:6,kinds:['event','secret'],track:'secret',response:'admin'}));h.run('loadCalendarPreferences()');assert.equal(h.run('calendarView'),'month');assert.deepEqual(Array.from(h.run('calendarPreferences.kinds')),['event']);assert.equal(h.run('calendarPreferences.weekStart'),1);
 });
 test('Sign-in opens the authorized shell before page and full refresh requests finish',async()=>{
-  const h=loginHarness(),pending=deferred(),calls=[];h.context.recordRefresh=mode=>{calls.push(mode);return pending.promise;};h.run('refresh=mode=>recordRefresh(mode)');h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs,true)',loginSession('self'));assert.equal(h.run('authReady'),true);assert.equal(h.run('workspaceLoading'),false);assert.equal(h.dialog.open,true);assert.equal(h.stats.focused,0);assert.equal(h.run('workspaceHydrating'),true);assert.deepEqual(calls,['page']);h.run('authGeneration++');pending.resolve();await Promise.resolve();await Promise.resolve();assert.deepEqual(calls,['page'],'Superseded sign-in must not start another refresh');
+  const h=loginHarness(),pending=deferred(),calls=[];h.context.recordRefresh=mode=>{calls.push(mode);return pending.promise;};h.run('refresh=mode=>recordRefresh(mode)');h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs,true)',loginSession('self'));for(let i=0;i<10;i++)await Promise.resolve();assert.equal(h.run('authReady'),true);assert.equal(h.run('workspaceLoading'),false);assert.equal(h.dialog.open,true);assert.equal(h.stats.focused,0);assert.equal(h.run('workspaceHydrating'),true);assert.deepEqual(calls,['page']);h.run('authGeneration++');pending.resolve();await Promise.resolve();await Promise.resolve();assert.deepEqual(calls,['page'],'Superseded sign-in must not start another refresh');
 });
 test('Pending profile validation immediately clears previous private records and capabilities',async()=>{
   const h=loginHarness(),pending=deferred();h.run("session={user:{id:'old'}};me={id:'old',role:'admin',membership_status:'approved'};cache={finance_entries:[{id:'private'}]};financeReady=true;courseReady=true");h.queued.push(pending.promise);const signing=h.exec('signedIn(qaArgs)',loginSession('self'));assert.equal(h.run('me'),null);assert.equal(h.run('Object.keys(cache).length'),0);assert.equal(h.run('financeReady'),false);assert.equal(h.run('courseReady'),false);assert.equal(h.run('workspaceLoading'),true);pending.resolve({data:loginProfile(),error:null});await signing;assert.equal(h.run('me.id'),'self');
