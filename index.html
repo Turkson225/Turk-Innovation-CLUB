@@ -23,7 +23,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=space-logo-20261001">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?v=space-logo-20261001">
-  <link rel="stylesheet" href="styles.css?v=space-learning-20261014">
+  <link rel="stylesheet" href="styles.css?v=space-resilient-loading-20261014">
 </head>
 <body>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -118,7 +118,8 @@
           <button id="authButton" class="button button-outline">Sign in</button>
         </div>
       </header>
-      <div class="content" id="content"></div>
+      <aside id="networkStatus" class="network-status" role="status" aria-live="polite" hidden><span class="network-status-dot" aria-hidden="true"></span><span data-network-message></span><button class="text-button" type="button" data-action="retryPage">Retry</button></aside>
+      <div class="content" id="content"><section class="workspace-start workspace-page-loading" aria-busy="true"><span class="eyebrow">SPACE ENGINEERING CLUB</span><h1>Opening SPACE…</h1><p role="status">Loading your workspace. This may take a little longer on a slow connection.</p><div class="page-skeleton skeleton-cards" aria-hidden="true"><div class="skeleton-heading"><i></i><i></i></div><div class="skeleton-block"><span class="skeleton-avatar"></span><div><i></i><i></i></div></div><div class="skeleton-block"><span class="skeleton-avatar"></span><div><i></i><i></i></div></div><div class="skeleton-block"><span class="skeleton-avatar"></span><div><i></i><i></i></div></div></div></section><noscript>Enable JavaScript to open SPACE.</noscript></div>
     </main>
   </div>
   <section id="adminAlert" class="admin-alert" role="status" aria-live="polite" aria-atomic="true" hidden>
@@ -150,7 +151,7 @@
   <script src="config.js"></script>
   <script src="pwa-register.js?v=space-members-20261001" defer></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script type="module" src="app.js?v=space-login-recovery-20261014"></script>
+  <script type="module" src="app.js?v=space-resilient-loading-20261014"></script>
 </body>
 </html>
 

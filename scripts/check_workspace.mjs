@@ -26,10 +26,11 @@ function harness({localItems=new Map(),sessionItems=new Map()}={}){
   vm.runInContext(source,context,{filename:'app.js'});
   const run=code=>vm.runInContext(code,context);
   const exec=(code,args)=>{context.qaArgs=args;return run(code);};
+  const renderOriginal=run('render');
   run("session={user:{id:'self'}};sessionStartedAt=Date.now();lastSessionActivityAt=sessionStartedAt;me={id:'self',full_name:'Tester',role:'member',membership_status:'approved'};dmReady=true;page='messages';cache={profiles:[me,{id:'a',full_name:'Alice',membership_status:'approved',role:'member'},{id:'b',full_name:'Bob',membership_status:'approved',role:'teacher'}],direct_messages:[],direct_message_reads:[],notifications:[]};render=()=>{};dmShowThreadUpdate=()=>{};refreshUnreadCounts=async()=>{};refreshInboxUnreadCount=async()=>{};");
   elements.set('#toast',node());elements.set('#dmBody',node());elements.set('#modal',node({open:false}));elements.set('#modalContent',node());
   const fireTimers=delay=>{for(const [id,timer]of [...timers])if(timer.delay===delay&&timers.has(id)){timers.delete(id);timer.callback();}};
-  return {run,exec,requests,queued,rpcQueued,rpcCalls,elements,context,db,timers,fireTimers,clientOptions,localItems,sessionItems};
+  return {run,exec,requests,queued,rpcQueued,rpcCalls,elements,context,db,timers,fireTimers,clientOptions,localItems,sessionItems,renderOriginal};
 }
 const tests=[];
 function test(name,fn){tests.push({name,fn});}
@@ -105,7 +106,7 @@ test('Deferred course setup still sends approved members without choices to My l
 test('A stalled first page load offers a workspace retry without asking for another OTP',async()=>{
   const h=loginHarness(),slow=deferred();h.context.console={...console,error(){}};h.context.slowPage=()=>slow.promise;h.run('refresh=()=>slowPage()');h.queued.push({data:loginProfile(),error:null});
   await h.exec('signedIn(qaArgs,true)',loginSession('self'));for(let i=0;i<10;i++)await Promise.resolve();h.fireTimers(20000);for(let i=0;i<30;i++)await Promise.resolve();
-  assert.equal(h.run('workspaceHydrating'),false);assert.equal(h.run('session.user.id'),'self');assert(h.run('workspaceLoadError').includes('retry'));assert.equal(h.run('pendingEmail'),'');
+  assert.equal(h.run('workspaceHydrating'),false);assert.equal(h.run('session.user.id'),'self');assert.equal(h.run("workspacePageLoads.get('home').status"),'error');assert(h.run("workspaceSkeleton('home',{error:true})").includes('data-action="retryPage"'));assert.equal(h.run('pendingEmail'),'');
   slow.resolve();
 });
 test('A checked account can retry a failed profile request using its verified session',async()=>{
@@ -114,10 +115,10 @@ test('A checked account can retry a failed profile request using its verified se
   h.queued.push({data:loginProfile(),error:null});await action(h,{action:'retryWorkspace'});
   assert.equal(h.run('workspaceLoadError'),'');assert.equal(h.run('clubAccess()'),true);assert.equal(h.run('authReady'),true);
 });
-test('The current page is usable while additional workspace tools are still loading',async()=>{
-  const h=loginHarness(),slow=deferred();h.context.hydratePage=mode=>mode==='page'?Promise.resolve():slow.promise;h.run('refresh=mode=>hydratePage(mode)');h.queued.push({data:loginProfile(),error:null});
+test('Sign-in loads the current page without preloading unrelated tools',async()=>{
+  const h=loginHarness(),calls=[];h.context.hydratePage=mode=>{calls.push(mode);return Promise.resolve();};h.run('refresh=mode=>hydratePage(mode)');h.queued.push({data:loginProfile(),error:null});
   await h.exec('signedIn(qaArgs,true)',loginSession('self'));for(let i=0;i<30;i++)await Promise.resolve();
-  assert.equal(h.run('workspaceHydrating'),false);assert.equal(h.run('clubAccess()'),true);assert.equal(h.run('workspaceLoadError'),'');h.run('authGeneration++');slow.resolve();
+  assert.equal(h.run('workspaceHydrating'),false);assert.equal(h.run('clubAccess()'),true);assert.equal(h.run('workspaceLoadError'),'');assert.deepEqual(calls,['page']);
 });
 
 test('Interactive OTP verification shows the logo once despite a delayed SIGNED_IN callback',async()=>{
@@ -543,7 +544,7 @@ test('Failed profile checks show a retry state without giving approved account a
   const h=loginHarness();h.context.console={...console,error(){}};h.queued.push({data:null,error:{message:'Offline'}});await h.exec('signedIn(qaArgs,true)',loginSession('self'));assert.equal(h.run('approved()'),false);assert.equal(h.run('workspaceLoading'),false);assert(h.run('workspaceLoadError'));assert.equal(h.stats.opens,0);
 });
 test('A late course capability response cannot restore flags after an account changes',async()=>{
-  const h=harness(),probe=deferred();h.run("courseReady=true;hydrateOwnApplicationReason=async()=>{};readRecords=async()=>[];detectFounderPortraits=async()=>{};hydrateMedia=async()=>{};refreshUnreadCounts=async()=>{};");h.queued.push({data:{id:'self',role:'member',membership_status:'approved'},error:null},...Array.from({length:8},()=>({data:[],error:null})),probe.promise,probe.promise,probe.promise);const loading=h.run('refresh()');for(let i=0;i<30;i++)await Promise.resolve();assert(h.requests.some(call=>call.ops.some(op=>op[0]==='select'&&op[1]==='submission_due_at')));h.run("authGeneration++;session={user:{id:'other'}};me={id:'other',role:'member',membership_status:'approved'};cache={};courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false");probe.resolve({error:null});await loading;assert.equal(h.run('coursePlanningReady'),false);assert.equal(h.run('courseLifecycleReady'),false);assert.equal(h.run('courseSeenReady'),false);assert.equal(h.run('Object.keys(cache).length'),0);
+  const h=harness(),probe=deferred();h.run("page='courses';courseReady=true;detectWorkspaceCapabilities=async()=>{};hydrateOwnApplicationReason=async()=>{};readRecords=async()=>[];detectFounderPortraits=async()=>{};hydrateMedia=async()=>{};refreshUnreadCounts=async()=>{};");h.queued.push({data:{id:'self',role:'member',membership_status:'approved'},error:null},{data:[],error:null},probe.promise,probe.promise,probe.promise);const loading=h.run('refresh()');for(let i=0;i<100;i++)await Promise.resolve();assert(h.requests.some(call=>call.ops.some(op=>op[0]==='select'&&op[1]==='submission_due_at')));h.run("authGeneration++;session={user:{id:'other'}};me={id:'other',role:'member',membership_status:'approved'};cache={};courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false");probe.resolve({error:null});await loading;assert.equal(h.run('coursePlanningReady'),false);assert.equal(h.run('courseLifecycleReady'),false);assert.equal(h.run('courseSeenReady'),false);assert.equal(h.run('Object.keys(cache).length'),0);
 });
 
 test('Signed media URLs from an old account do not repopulate a new account cache',async()=>{
@@ -702,7 +703,7 @@ test('Page exit clears authentication and page restoration checks expiry before 
   assert(source.includes("window.addEventListener('pagehide',()=>{expireSession('',false);})"));
   assert(source.includes("window.addEventListener('focus',checkSessionExpiry)"));
   assert.match(source,/document\.addEventListener\('visibilitychange',\(\)=>\{\s*if\(checkSessionExpiry\(\)\)return;/);
-  assert(fs.readFileSync(root+'/index.html','utf8').includes('app.js?v=space-login-recovery-20261014'));
+  assert(fs.readFileSync(root+'/index.html','utf8').includes('app.js?v=space-resilient-loading-20261014'));
 });
 
 function learningHarness(role='member'){
@@ -781,6 +782,100 @@ test('Role dashboard entry points match each approved account capability',()=>{
   const h=learningHarness();assert(h.run('roleDashboardIntro()').includes('STUDENT DASHBOARD'));h.run("me.role='teacher'");assert(h.run('roleDashboardIntro()').includes('TEACHER DASHBOARD'));h.run("me.role='founder';me.founder_teaching_enabled=true");assert(h.run('roleDashboardIntro()').includes('FOUNDER DASHBOARD'));h.run("me.role='admin'");assert(h.run('roleDashboardIntro()').includes('ADMINISTRATOR DASHBOARD'));
 });
 
+function dataHarness(target='home',{role='member',tables={},errors={}}={}){
+  const h=harness(),requests=[];h.context.console={...console,error(){}};
+  const profile=loginProfile('self',{role,application_type:'member'});
+  h.exec("me=qaArgs;authReady=true;page='"+target+"';cache={};hydrateOwnApplicationReason=async()=>{};detectFounderPortraits=async()=>{};hydrateMedia=async()=>{};loadDmCapabilities=async()=>{};loadAdminApplicationPages=async()=>{};loadFeedPage=async()=>{};loadChannelHistory=async()=>{};",profile);
+  h.db.from=table=>{
+    const call={table,ops:[]};requests.push(call);let builder;
+    builder=new Proxy({}, {get(_,method){
+      if(method==='then')return(resolve,reject)=>Promise.resolve().then(()=>{
+        if(errors[table])throw errors[table];
+        if(table==='profiles'&&call.ops.some(op=>op[0]==='single'))return {data:profile,error:null};
+        let rows=tables[table]||[];
+        for(const [op,column,value] of call.ops){if(op==='in')rows=rows.filter(row=>value.includes(row[column]));if(op==='eq')rows=rows.filter(row=>row[column]===value);}
+        const count=rows.length,range=call.ops.find(op=>op[0]==='range'),limit=call.ops.find(op=>op[0]==='limit');
+        if(range)rows=rows.slice(range[1],range[2]+1);if(limit)rows=rows.slice(0,limit[1]);
+        return {data:rows,count,error:null};
+      }).then(resolve,reject);
+      return(...args)=>{call.ops.push([method,...args]);return builder;};
+    }});return builder;
+  };
+  return {...h,requests,profile};
+}
+const flush=async(count=100)=>{for(let i=0;i<count;i++)await Promise.resolve();};
+test('Dataset batches never exceed six active tasks and retain failed positions',async()=>{
+  const h=harness();let active=0,max=0;h.context.poolTask=async value=>{active++;max=Math.max(max,active);await Promise.resolve();active--;if(value===11)throw Error('One failed batch');return value*2;};
+  const results=await h.run('settledMapLimit(Array.from({length:2000},(_,i)=>i),6,poolTask)');
+  assert(max<=6);assert.equal(results.length,2000);assert.equal(results[11].status,'rejected');assert.equal(results[1999].value,3998);
+});
+test('Home loads page records without inventory, finance, audits or the full member directory',async()=>{
+  const h=dataHarness('home');await h.run('refresh()');
+  for(const table of ['inventory_items','finance_entries','audit_events','investor_inquiries','documents','topics'])assert(!h.requests.some(r=>r.table===table),table);
+  assert(!h.requests.some(r=>r.table==='profiles'&&r.ops.some(op=>op[0]==='range')));assert(h.requests.some(r=>r.table==='courses'));assert.equal(h.run('profilesComplete'),false);
+});
+test('Opening Inventory loads its records without fetching learning and feed tables',async()=>{
+  const h=dataHarness('inventory');await h.run('refresh()');assert(h.requests.some(r=>r.table==='inventory_items'));
+  for(const table of ['courses','learning_materials','classroom_assignments','project_tasks'])assert(!h.requests.some(r=>r.table===table),table);
+});
+test('A complete profile cache avoids repeated directory downloads on other pages',async()=>{
+  const h=dataHarness('news');await h.run('refresh()');const count=h.requests.filter(r=>r.table==='profiles'&&r.ops.some(op=>op[0]==='range')).length;assert.equal(count,1);
+  await h.run('refresh()');assert.equal(h.requests.filter(r=>r.table==='profiles'&&r.ops.some(op=>op[0]==='range')).length,count);
+});
+test('Course-choice reads stay scoped to the signed-in account even for an administrator',async()=>{
+  const h=dataHarness('home',{role:'admin'});await h.run('refresh()');const query=h.requests.find(r=>r.table==='member_learning_paths');assert(query.ops.some(op=>op[0]==='eq'&&op[1]==='user_id'&&op[2]==='self'));
+});
+test('Complete record retrieval includes 2,505 rows in bounded stable pages',async()=>{
+  const profiles=Array.from({length:2505},(_,i)=>({id:'member-'+i,created_at:'2026-10-01',full_name:'Member '+i}));
+  const h=dataHarness('members',{tables:{profiles}}),rows=await h.run("readRecords('profiles')");assert.equal(rows.length,2505);assert.equal(new Set(rows.map(r=>r.id)).size,2505);assert.equal(rows.at(-1).id,'member-2504');
+  const pages=h.requests.flatMap(r=>r.ops.filter(op=>op[0]==='range'));assert.equal(pages.length,6);assert(pages.every(op=>op[2]-op[1]===499));
+});
+test('Duplicate background loads share one request for the same account and page',async()=>{
+  const h=loginHarness(),slow=deferred();let calls=0;h.context.pageJob=()=>{calls++;return slow.promise;};h.run("session={user:{id:'self'}};me={id:'self',role:'member',membership_status:'approved'};authReady=true;refresh=()=>pageJob()");
+  const first=h.run('refreshVisiblePage()'),second=h.run('refreshVisiblePage()');await flush(10);assert.equal(calls,1);slow.resolve();await Promise.all([first,second]);assert.equal(h.run('workspacePageRequests.size'),0);
+});
+test('A slow request updates its loading state after three seconds without clearing cached records',async()=>{
+  const h=loginHarness(),slow=deferred();h.context.pageJob=()=>slow.promise;h.run("session={user:{id:'self'}};me={id:'self',role:'member',membership_status:'approved'};authReady=true;cache={events:[{id:'saved'}]};refresh=()=>pageJob()");
+  const loading=h.run('refreshVisiblePage()');h.fireTimers(3000);assert.equal(h.run("workspacePageLoads.get('home').slow"),true);assert.equal(h.run('cache.events[0].id'),'saved');slow.resolve();await loading;
+});
+test('Offline refresh, presence and alert polls make no database calls',async()=>{
+  const h=dataHarness('members');h.context.navigator.onLine=false;await h.run('refreshVisiblePage();touchPresence();refreshChat();refreshAdminAlerts();refreshInboxUnreadCount()');assert.equal(h.requests.length,0);assert.equal(h.run("workspacePageLoads.get('members').status"),'offline');
+});
+test('Automatic retries back off after an error while an explicit retry remains available',async()=>{
+  const h=loginHarness();h.context.console={...console,error(){}};let calls=0;h.context.failPage=()=>{calls++;throw Error('Offline service');};h.run("session={user:{id:'self'}};me={id:'self',role:'member',membership_status:'approved'};authReady=true;refresh=()=>failPage()");
+  await h.run('refreshVisiblePage()');await h.run('refreshVisiblePage()');assert.equal(calls,1);assert(h.run("workspacePageLoads.get('home').retryAt")>Date.now());await h.run('refreshVisiblePage({force:true})');assert.equal(calls,2);
+});
+test('A page load captures its destination before another page is opened',async()=>{
+  const h=dataHarness('home');const loading=h.run('refreshVisiblePage()');h.run("page='inventory'");await loading;assert(!h.requests.some(r=>r.table==='inventory_items'));assert(h.requests.some(r=>r.table==='courses'));
+});
+test('Failed table refreshes preserve previously loaded data and report the failure',async()=>{
+  const h=dataHarness('events',{errors:{events:Error('Connection interrupted')}});h.run("cache.events=[{id:'saved',title:'Workshop'}]");const result=await h.run('refresh()');assert.equal(h.run('cache.events[0].id'),'saved');assert(result.failures.includes('events'));
+});
+test('A late page response cannot restore data or network status after sign-out',async()=>{
+  const h=loginHarness(),slow=deferred();h.context.pageJob=()=>slow.promise;h.run("session={user:{id:'self'}};me={id:'self',role:'member',membership_status:'approved'};authReady=true;refresh=()=>pageJob()");const loading=h.run('refreshVisiblePage()');h.run('authGeneration++;session=null;me=null;cache={};clearWorkspaceLoads()');slow.resolve();await loading;assert.equal(h.run('workspacePageLoads.size'),0);assert.equal(h.run('Object.keys(cache).length'),0);
+});
+test('Skeletons reflect chat and list layouts and stop animating when loading fails',()=>{
+  const h=harness();assert(h.run("workspaceSkeleton('messages')").includes('skeleton-chat'));assert(h.run("workspaceSkeleton('notifications')").includes('skeleton-list'));const failed=h.run("workspaceSkeleton('members',{error:true})");assert(failed.includes('aria-busy="false"'));assert(failed.includes('retryPage'));assert(!failed.includes('page-skeleton'));assert(h.run("workspaceSkeleton('members',{offline:true})").includes('Reconnect'));
+  assert(fs.readFileSync(root+'/styles.css','utf8').includes('.page-skeleton i,.skeleton-avatar{animation:none}'));
+});
+test('A complete CSV includes 2,505 members and their private application answers',async()=>{
+  const profiles=Array.from({length:2505},(_,i)=>({id:'member-'+i,full_name:i===0?'=SUM(1,2)':'Member '+i,created_at:'2026-10-01',role:'member'}));
+  const answers=profiles.map((p,i)=>({user_id:p.id,reason:'Application '+i})),h=dataHarness('admin',{role:'admin',tables:{profiles,application_answers:answers}}),blobs=[];let downloads=0;
+  h.context.URL=class extends URL{static createObjectURL(blob){blobs.push(blob);return 'blob:fixture';}static revokeObjectURL(){}};h.context.document.createElement=()=>({click(){downloads++;}});h.run('applicationAnswersReady=true');await h.run("exportCsv('profiles')");
+  assert.equal(downloads,1);const csv=await blobs[0].text();assert.equal(csv.trim().split(/\r?\n/).length,2506);assert(csv.includes('Member 2504'));assert(csv.includes('Application 2504'));assert(csv.includes("\"'=SUM(1,2)\""));assert.equal(h.requests.filter(r=>r.table==='profiles').length,6);
+});
+test('Course notifications wait for enrollment data before choosing the classroom and feedback tab',async()=>{
+  const h=learningHarness();h.run("cache.notifications=[{id:'n',read_at:'2026-10-14',target_type:'course',target_id:'new-class',title:'Classwork feedback: build'}];cache.course_enrollments=[];openWorkspaceDestination=async()=>{cache.course_enrollments=[{course_id:'new-class',learner_id:'self'}];return true;}");
+  await h.run("openNotification('n')");assert.equal(h.run('activeCourseId'),'new-class');assert.equal(h.run('courseView'),'mine');assert.equal(h.run('courseDetailView'),'classwork');
+});
+test('Project notifications wait for the destination data before opening a project',async()=>{
+  const h=learningHarness();let opened='';h.context.captureProject=id=>{opened=id;};h.run("cache.notifications=[{id:'n',read_at:'2026-10-14',target_type:'project',target_id:'p-new'}];openWorkspaceDestination=async()=>true;projectDetail=id=>captureProject(id)");await h.run("openNotification('n')");assert.equal(opened,'p-new');
+});
+test('The real workspace renderer shows skeletons and replaces them with retry content on failure',()=>{
+  const h=harness();for(const id of ['authButton','connectionLabel','accountBadge','pageCrumb','guestSidebarCta','onlineBadge','dmBadge','content'])h.elements.set('#'+id,node());
+  h.run("authReady=true;updateWorkspaceNavigation=()=>{};updateInboxIndicators=()=>{};updateAdminAlertControls=()=>{};workspacePageLoads.set('messages',{status:'loading',hadData:false,slow:true})");h.renderOriginal();assert(h.elements.get('#content').innerHTML.includes('skeleton-chat'));assert(h.elements.get('#content').innerHTML.includes('Still loading'));
+  h.run("workspacePageLoads.get('messages').status='error'");h.renderOriginal();assert(h.elements.get('#content').innerHTML.includes('retryPage'));assert(!h.elements.get('#content').innerHTML.includes('page-skeleton'));
+});
 let failed=0;
 for(const t of tests){try{await t.fn();console.log('PASS',t.name);}catch(e){failed++;console.log('FAIL',t.name,'\n',e.stack);}}
 console.log(`${tests.length-failed}/${tests.length} checks passed`);

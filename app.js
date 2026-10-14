@@ -58,6 +58,8 @@ let unreadCounts = {channels:{},direct_messages:{},direct_peers:[],direct_total:
 let calendarMonth = new Date(new Date().getFullYear(),new Date().getMonth(),1), calendarSelected = new Date();
 let calendarView='month',calendarSearch='',calendarAgendaPage=0,calendarPreferences={weekStart:1,compact:false,kinds:['event','course','course_due','task','meeting'],mine:false,track:'all',response:'all',online:false,hidePast:false};
 let workspaceLoading=false,workspaceHydrating=false,workspaceLoadError='';
+const workspacePageLoads=new Map(),workspacePageRequests=new Map(),workspacePageVersions=new Map();
+let workspaceCapabilityTask=null,profilesComplete=false;
 let courseTrack = 'all', courseView = 'mine', activeCourseId = null, courseDetailView = 'overview';
 let learningChoicesReady=false,learningHubReady=false,ownLearningTracks=[],teachingStudentSearch='',teachingStudentTrack='all',teachingStudentPage=0;
 const courseTracks = [
@@ -230,6 +232,7 @@ function updateInboxIndicators(){
   void window.InnovateXPush?.updateBadge(count);
 }
 async function refreshInboxUnreadCount(){
+  if(networkOffline())return;
   const owner=session?.user.id,request=++inboxCountRequest;
   if(!owner||!clubAccess()||!enhancedReady){inboxUnreadCount=null;updateInboxIndicators();return;}
   const {count,error}=await db.from('notifications').select('id',{count:'exact',head:true}).eq('user_id',owner).is('read_at',null);
@@ -317,6 +320,7 @@ function mergeAdminNotifications(rows){
   if(changed){updateInboxIndicators();void refreshInboxUnreadCount();if(page==='notifications')render();}
 }
 async function refreshAdminAlerts(){
+  if(networkOffline())return;
   if(!admin()||!session||adminAlertPolling)return;
   adminAlertPolling=true;
   const userId=session.user.id;
@@ -497,15 +501,60 @@ async function requestWithDeadline(request,milliseconds,message){
     ]);
   }finally{clearTimeout(timer);}
 }
+async function settledMapLimit(items,limit,task){
+  const results=new Array(items.length);let next=0;
+  await Promise.all(Array.from({length:Math.min(limit,items.length)},async()=>{
+    for(;;){const index=next++;if(index>=items.length)return;
+      try{results[index]={status:'fulfilled',value:await task(items[index],index)};}
+      catch(reason){results[index]={status:'rejected',reason};}
+    }
+  }));
+  return results;
+}
+const networkOffline=()=>navigator.onLine===false;
+const schemaUnavailable=error=>['PGRST202','PGRST204','PGRST205','42P01','42703','42883'].includes(error?.code);
+const pageDataReady=(target=page)=>(pageRefreshDependencies[target]||[]).every(name=>Object.hasOwn(cache,name));
+function clearWorkspaceLoads(){
+  for(const load of workspacePageLoads.values())clearTimeout(load.timer);
+  workspacePageLoads.clear();workspacePageRequests.clear();workspacePageVersions.clear();workspaceCapabilityTask=null;profilesComplete=false;
+  updateNetworkStatus();
+}
+function updateNetworkStatus(){
+  const banner=$('#networkStatus');if(!banner)return;
+  const load=workspacePageLoads.get(page),offline=networkOffline();
+  const message=offline?'You’re offline. Previously loaded records are available in this open session. Reconnect to get updates.':load?.status==='error'?'We could not refresh this page. Previously loaded records may be out of date.':load?.status==='loading'&&load.slow?'This is taking longer than usual. Your saved records have not changed.':'';
+  banner.hidden=!message;banner.dataset.state=offline?'offline':load?.status||'';
+  const text=banner.querySelector('[data-network-message]');if(text)text.textContent=message;
+  const retry=banner.querySelector('button');if(retry){retry.hidden=offline||load?.status==='loading';retry.disabled=offline;}
+}
+function workspaceSkeleton(target=page,{slow=false,offline=networkOffline(),error=false,account=false}={}){
+  const title=account?'Opening SPACE…':workspacePageInfo[target]?.title||'Your workspace';
+  const message=offline?'You’re offline. Reconnect to load this page.':error?'We could not load this page. Please try again.':slow?'Still loading. Your connection or the service may be slow.':account?'Checking your account access…':'Loading your latest records…';
+  const chat=['messages','channels'].includes(target),list=['notifications','applications','library'].includes(target);
+  return `<section class="workspace-start workspace-page-loading" aria-busy="${!offline&&!error}"><span class="eyebrow">${account?'SIGNING IN':offline?'NO CONNECTION':error?'TRY AGAIN':'YOUR WORKSPACE'}</span><h1>${esc(title)}</h1><p role="status">${esc(message)}</p>${offline||error?`<button class="button button-outline" type="button" data-action="retryPage">Try again</button>`:`<div class="page-skeleton ${chat?'skeleton-chat':list?'skeleton-list':'skeleton-cards'}" aria-hidden="true"><div class="skeleton-heading"><i></i><i></i></div>${Array.from({length:chat?5:list?4:6},(_,i)=>`<div class="skeleton-block"><span class="skeleton-avatar"></span><div><i></i><i></i>${!chat&&i%2===0?'<i></i>':''}</div></div>`).join('')}</div>`}</section>`;
+}
+async function detectWorkspaceCapabilities(generation=authGeneration){
+  if(workspaceCapabilityTask?.generation===generation)return workspaceCapabilityTask.promise;
+  const probes=[['channels','id'],['channel_reads','channel_id'],['direct_messages','id'],['activity_posts','image_path'],['profiles','avatar_path']];
+  const promise=(async()=>{
+    const results=await settledMapLimit(probes,4,([table,column])=>requestWithDeadline(()=>db.from(table).select(column).limit(1),12000,'Workspace setup check timed out.'));
+    if(generation!==authGeneration||!session)return;
+    const available=i=>results[i].status==='fulfilled'&&!results[i].value.error;
+    communityReady=available(0);enhancedReady=available(1);dmReady=available(2);mediaReady=available(3);avatarReady=available(4);
+    if(results.some(r=>r.status==='rejected'||r.value.error&&!schemaUnavailable(r.value.error)))workspaceCapabilityTask=null;
+  })();
+  workspaceCapabilityTask={generation,promise};return promise;
+}
 const read = async (table,query=q=>q) => { const {data,error}=await query(db.from(table).select('*')); if(error) throw error; return data || []; };
 async function readRecords(table){
   // These relation tables use composite primary keys and do not have an `id` or `created_at`.
   // A stable, unique order is needed when a result is larger than PostgREST's row limit.
   const relationKeys={project_members:['project_id','user_id'],event_rsvps:['event_id','user_id'],founder_meeting_rsvps:['meeting_id','user_id'],member_learning_paths:['user_id'],teaching_track_assignments:['teacher_id','track']};
   const keys=relationKeys[table]||['created_at','id'];
-  const rows=[];
+  const rows=[],owner=session?.user.id;
   for(;;){
     let query=db.from(table).select('*',{count:'exact'});
+    if(table==='member_learning_paths')query=query.eq('user_id',owner);
     for(const key of keys)query=query.order(key,{ascending:!!relationKeys[table]});
     const {data,error,count}=await query.range(rows.length,rows.length+499);
     if(error)throw error;
@@ -745,6 +794,7 @@ async function refreshDmAfterNotification(peerId){
   if(page==='messages'){if(document.activeElement?.closest('#dmComposer'))dmPeerPreview(peerId,data?.[0]);else render();}
 }
 async function refreshUnreadCounts(){
+  if(networkOffline())return;
   if(!session||!clubAccess())return;
   const owner=session.user.id;
   const {data,error}=await db.rpc('club_unread_counts');
@@ -766,18 +816,17 @@ async function refreshUnreadCounts(){
   }
 }
 
-// Open the authorized shell first, hydrate its page, then load the remaining tools.
-// Background checks revisit the visible page; chat and approval loops stay focused.
+// Load the open page on demand. Exports fetch complete records independently.
 const pageRefreshDependencies={
-  home:['project_tasks','courses','course_enrollments','course_submissions','course_completions','events','activity_posts','profiles','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions'],
+  home:['project_tasks','courses','course_enrollments','course_submissions','course_completions','events','announcements','activity_posts','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions'],
   about:[],founders:['founders'],investors:['founders','investor_updates'],
   privacy:['privacy_requests','profiles'],application:[],
   admin:['profiles','projects','reports','privacy_requests','investor_inquiries','activity_posts','founder_meetings','events','channels','news_posts','documents','audit_events'],
-  applications:[],moderation:['reports','audit_events','profiles'],
-  notifications:['events','founder_meetings','project_tasks'],members:['profiles'],
+  applications:['teaching_track_assignments','member_learning_paths','classroom_assignments','classroom_assignment_submissions'],moderation:['reports','audit_events','profiles'],
+  notifications:['events','founder_meetings','project_tasks'],members:['profiles','founder_invites'],
   messages:['profiles','direct_messages','direct_message_reads'],
   feed:['profiles','documents','announcements','news_posts','activity_posts'],
-  channels:['profiles','channels','channel_reads','documents'],
+  channels:['profiles','channels','channel_reads','documents','channel_messages','message_reactions'],
   library:['documents','document_versions','channels','profiles'],news:['news_posts','profiles'],
   projects:['projects','project_tasks','project_members','project_milestones','profiles'],
   inventory:['inventory_items','profiles'],finance:['finance_entries','finance_reviews','profiles'],
@@ -785,90 +834,136 @@ const pageRefreshDependencies={
   discussions:['topics','replies','projects','profiles'],
   courses:['courses','learning_materials','course_enrollments','course_submissions','course_completions','profiles','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions'],
   teaching:['courses','learning_materials','course_enrollments','course_submissions','course_completions','profiles','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions'],
-  events:['events','event_rsvps'],calendar:['events','event_rsvps','founder_meetings','founder_meeting_rsvps','project_tasks','projects','courses','course_enrollments','course_submissions','course_completions','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions'],
-  announcements:['announcements'],'founder-room':['founder_meetings','founder_meeting_rsvps','founder_invites','profiles']
+  events:['events','event_rsvps','profiles'],calendar:['events','event_rsvps','founder_meetings','founder_meeting_rsvps','project_tasks','projects','profiles','courses','course_enrollments','course_submissions','course_completions','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions'],
+  announcements:['announcements'],'founder-room':['founder_meetings','founder_meeting_rsvps','founder_invites','profiles'],
+  'investor-portal':['investor_updates','investor_inquiries']
 };
-let backgroundRefreshBusy=false, lastProfileRefreshAt=0;
-async function refreshVisiblePage(){
+let lastProfileRefreshAt=0;
+async function refreshVisiblePage({force=false}={}){
   if(session&&checkSessionExpiry())return;
-  if(backgroundRefreshBusy||workspaceHydrating||document.hidden||!session)return;
-  backgroundRefreshBusy=true;
-  try{await refresh('page');}catch(error){console.error('Page refresh',error);}
-  finally{backgroundRefreshBusy=false;}
+  if(document.hidden||!session||!authReady||!approved())return;
+  const target=page,generation=authGeneration,key=`${generation}:${target}`,previous=workspacePageLoads.get(target);
+  if(workspacePageRequests.has(key))return workspacePageRequests.get(key);
+  if(!force&&previous?.retryAt>Date.now())return;
+  const hadData=previous?.status==='error'?previous.hadData:pageDataReady(target),load={status:networkOffline()?'offline':'loading',hadData,slow:false,failures:previous?.failures||0};
+  workspacePageLoads.set(target,load);updateNetworkStatus();
+  if(networkOffline()){if(!hadData)render();return;}
+  load.timer=setTimeout(()=>{if(generation!==authGeneration||workspacePageLoads.get(target)!==load)return;load.slow=true;updateNetworkStatus();if(page===target&&!hadData)render();},3000);
+  const task=(async()=>{
+    try{
+      const result=await requestWithDeadline(()=>refresh('page',target),20000,'The page took too long to load. Please retry.');
+      if(generation!==authGeneration||workspacePageLoads.get(target)!==load)return;
+      if(result?.failures?.length)throw Error('Some records could not be loaded.');
+      load.status='ready';load.failures=0;load.retryAt=0;
+    }catch(error){
+      if(generation!==authGeneration||workspacePageLoads.get(target)!==load)return;
+      load.status='error';load.failures++;load.retryAt=Date.now()+Math.min(120000,15000*2**Math.min(load.failures-1,3))+Math.floor(Math.random()*3000);
+      console.error('Page refresh',error);
+    }finally{
+      clearTimeout(load.timer);workspacePageRequests.delete(key);
+      if(generation===authGeneration&&workspacePageLoads.get(target)===load){updateNetworkStatus();if(page===target&&!hadData)render();}
+    }
+  })();
+  workspacePageRequests.set(key,task);return task;
 }
-async function refresh(mode='full') {
+async function refresh(mode='page',requestedPage=page) {
   if (!db || !session) return;
-  const owner=session.user.id,generation=authGeneration,scoped=mode==='page';
+  const targetPage=requestedPage,owner=session.user.id,generation=authGeneration,scoped=mode==='page',version=(workspacePageVersions.get(requestedPage)||0)+1;
+  workspacePageVersions.set(targetPage,version);
   const knownNotificationIds=new Set((cache.notifications||[]).map(n=>n.id));
   const previous=accessSignature(me);
   const self=await db.from('profiles').select('*').eq('id',session.user.id).single();
-  if(session?.user.id!==owner||generation!==authGeneration)return;
+  if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
+  if(self.error)throw self.error;
   if(!self.error&&self.data){me=self.data;await hydrateOwnApplicationReason();}
-  if(session?.user.id!==owner||generation!==authGeneration)return;
+  if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
   roleReady=!!me&&'application_type' in me;
   if(previous!==accessSignature(me))return signedIn(session);
   if(!approved()){
     if($('#imageViewer').open)closeImageViewer(false);
     let publicFounders=cache.founders||[];
-    if(!scoped||page==='founders')try{publicFounders=await readRecords('founders');}catch(error){console.error('Public founders',error);}
-    if(session?.user.id!==owner||generation!==authGeneration)return;
+    if(!scoped||targetPage==='founders')try{publicFounders=await readRecords('founders');}catch(error){console.error('Public founders',error);}
+    if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
     cache={profiles:me?[me]:[],founders:publicFounders};
-    if(!scoped||page==='founders')await detectFounderPortraits();
-    if(session?.user.id!==owner||generation!==authGeneration)return;
+    if(!scoped||targetPage==='founders')await detectFounderPortraits();
+    if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
     communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();if(!document.activeElement?.closest('form[data-kind="application"]'))route();return;
   }
   if(investor()){
-    const results=await Promise.allSettled(['investor_updates','investor_inquiries','privacy_requests','founders'].map(readRecords));
-    if(session?.user.id!==owner||generation!==authGeneration)return;
-    cache={profiles:[me],investor_updates:results[0].status==='fulfilled'?results[0].value:[],investor_inquiries:results[1].status==='fulfilled'?results[1].value:[],privacy_requests:results[2].status==='fulfilled'?results[2].value:[],founders:results[3].status==='fulfilled'?results[3].value:[]};
+    const investorTables=['investor_updates','investor_inquiries','privacy_requests','founders'];
+    const results=await settledMapLimit(investorTables,4,n=>requestWithDeadline(()=>readRecords(n),16000,'These records took too long to load.'));
+    if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
+    const failures=[];
+    const next={profiles:[me]};
+    results.forEach((result,i)=>{const name=investorTables[i];if(result.status==='fulfilled')next[name]=result.value;else{if(Object.hasOwn(cache,name))next[name]=cache[name];else if(schemaUnavailable(result.reason))next[name]=[];if(!schemaUnavailable(result.reason))failures.push(name);}});
+    cache=next;
     await detectFounderPortraits();
-    if(session?.user.id!==owner||generation!==authGeneration)return;
+    if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
     communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=results[2].status==='fulfilled';inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
-    if(previous!==accessSignature(me)||!['home','about','founders','investors','investor-portal','privacy'].includes(page)) {route();return;}
-    render();return;
+    if(previous!==accessSignature(me)||!['home','about','founders','investors','investor-portal','privacy'].includes(targetPage)) {route();return;}
+    render();return {failures};
   }
+  await detectWorkspaceCapabilities(generation);
+  if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
   const names=['profiles','projects','project_tasks','topics','replies','courses','learning_materials','course_enrollments','course_submissions','course_completions','privacy_requests','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes','direct_messages','direct_message_reads','investor_updates','investor_inquiries','inventory_items','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions'];
   if(founder())names.push('inventory_movements','finance_entries','finance_reviews');
   if(scoped){
-    const needed=new Set(['notifications',...(pageRefreshDependencies[page]||[])]);
-    if(page==='home'&&founder()){
+    const needed=new Set(['notifications',...(pageRefreshDependencies[targetPage]||[])]);
+    for(const table of ['channels','channel_reads'])if(!Object.hasOwn(cache,table))needed.add(table);
+    if(targetPage==='home'&&founder()){
       needed.add('founder_meetings');needed.add('finance_entries');needed.add('finance_reviews');
     }
-    if(page==='home'&&admin())needed.add('reports');
-    if(page==='inventory'&&founder())needed.add('inventory_movements');
-    if(Date.now()-lastProfileRefreshAt>120000)needed.add('profiles');
+    if(targetPage==='home'&&admin())needed.add('reports');
+    if(targetPage==='inventory'&&founder())needed.add('inventory_movements');
+    if(profilesComplete&&targetPage!=='members'&&Date.now()-lastProfileRefreshAt<120000)needed.delete('profiles');
     for(let i=names.length-1;i>=0;i--)if(!needed.has(names[i]))names.splice(i,1);
   }
   const records=new Set(['profiles','projects','project_tasks','topics','replies','courses','learning_materials','events','announcements','founders','channels','documents','news_posts','founder_invites','founder_meetings','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','investor_updates','investor_inquiries','course_enrollments','course_submissions','course_completions','privacy_requests','inventory_items','inventory_movements','finance_entries','finance_reviews','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions']);
   const previews={channel_messages:120,direct_messages:120,activity_posts:50,activity_comments:1,activity_likes:1,message_reactions:1,notifications:100};
-  const checkTeacherProfile=teacher()&&!admin()&&(!scoped||page==='teaching');
+  const checkTeacherProfile=teacher()&&!admin()&&(!scoped||targetPage==='teaching');
   const [results,teachingProfileResult]=await Promise.all([
-    Promise.allSettled(names.map(n=>records.has(n)?readRecords(n):read(n,q=>{
+    settledMapLimit(names,6,n=>requestWithDeadline(()=>records.has(n)?readRecords(n):read(n,q=>{
       if(n!=='channel_reads')q=q.order('created_at',{ascending:false});
       return Object.hasOwn(previews,n)?q.limit(previews[n]):q;
-    }))),
+    }),16000,'These records took too long to load.')),
     checkTeacherProfile?db.from('teacher_profiles').select('*').eq('teacher_id',owner).maybeSingle():Promise.resolve({data:null,error:null})
   ]);
-  if(session?.user.id!==owner||generation!==authGeneration)return;
+  if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
   if(checkTeacherProfile){
     teacherProfileReady=!teachingProfileResult.error;
     teacherProfile=teacherProfileReady?teachingProfileResult.data:null;
     if(teachingProfileResult.error)console.error('teacher_profiles',teachingProfileResult.error);
   }else if(!scoped){teacherProfileReady=false;teacherProfile=null;}
-  results.forEach((r,i)=>{ if(r.status==='fulfilled') cache[names[i]]=r.value; else {cache[names[i]]=[];console.error(names[i],r.reason);} });
-  if(names.includes('member_learning_paths')){learningChoicesReady=results[names.indexOf('member_learning_paths')].status==='fulfilled';ownLearningTracks=validLearningTracks((cache.member_learning_paths||[]).find(x=>x.user_id===owner)?.tracks);}
-  if(names.includes('classroom_assignments'))learningHubReady=['classroom_assignments','classroom_assignment_submissions','teaching_track_assignments','member_learning_paths'].every(n=>results[names.indexOf(n)]?.status==='fulfilled');
-  if(names.includes('profiles')&&results[names.indexOf('profiles')].status==='fulfilled')lastProfileRefreshAt=Date.now();
+  const failures=[];
+  results.forEach((r,i)=>{if(r.status==='fulfilled')cache[names[i]]=r.value;else{
+    if(schemaUnavailable(r.reason)){if(!Object.hasOwn(cache,names[i]))cache[names[i]]=[];}
+    else failures.push(names[i]);
+    console.error(names[i],r.reason);
+  }});
+  const succeeded=n=>results[names.indexOf(n)]?.status==='fulfilled'||Object.hasOwn(cache,n)&&!schemaUnavailable(results[names.indexOf(n)]?.reason);
+  if(names.includes('member_learning_paths')){learningChoicesReady=succeeded('member_learning_paths');ownLearningTracks=validLearningTracks((cache.member_learning_paths||[]).find(x=>x.user_id===owner)?.tracks);}
+  if(names.includes('classroom_assignments'))learningHubReady=['classroom_assignments','classroom_assignment_submissions','teaching_track_assignments','member_learning_paths'].every(succeeded);
+  if(names.includes('profiles')&&results[names.indexOf('profiles')].status==='fulfilled'){lastProfileRefreshAt=Date.now();profilesComplete=true;}
+  if(!cache.profiles)cache.profiles=[me];
+  if(!profilesComplete&&targetPage==='home'){
+    const ids=[...new Set((cache.activity_posts||[]).slice(0,50).map(p=>p.author_id).filter(Boolean))];
+    if(ids.length){
+      try{
+        const result=await requestWithDeadline(()=>db.from('profiles').select('*').in('id',ids),8000,'Member names could not be loaded.');
+        if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
+        if(!result.error){const people=new Map((cache.profiles||[]).map(p=>[p.id,p]));for(const person of result.data||[])people.set(person.id,person);cache.profiles=[...people.values()];}
+      }catch(error){console.error('Post authors',error);}
+    }
+  }
   if(names.includes('founders'))await detectFounderPortraits();
-  if(session?.user.id!==owner||generation!==authGeneration)return;
-  if(admin()&&(!scoped||page==='admin')){
+  if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
+  if(admin()&&(!scoped||targetPage==='admin')){
     const pending=await db.from('profiles').select('id',{count:'exact',head:true}).eq('membership_status','pending');
-    if(session?.user.id!==owner||generation!==authGeneration)return;
+    if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
     if(pending.error)console.error('Pending application count',pending.error);
     else adminPendingCount=pending.count||0;
   }
   if(admin()&&names.includes('notifications')&&results[names.indexOf('notifications')].status==='fulfilled')receiveAdminApplications(cache.notifications);
-  const succeeded=n=>results[names.indexOf(n)]?.status==='fulfilled';
   if(names.includes('notifications')&&succeeded('notifications')){
     if(memberNotificationPrimed){
       const latest=(cache.notifications||[]).find(n=>!n.read_at&&!knownNotificationIds.has(n.id)&&!(admin()&&n.kind==='application'));
@@ -889,63 +984,57 @@ async function refresh(mode='full') {
       db.from('courses').select('status').limit(1),
       db.from('course_submissions').select('seen_at').limit(1)
     ]):[{error:true},{error:true},{error:true}];
-    if(session?.user.id!==owner||generation!==authGeneration)return;
+    if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
     coursePlanningReady=!planningProbe.error;
     courseLifecycleReady=!lifecycleProbe.error;
     courseSeenReady=!seenProbe.error;
   }
-  if(!scoped||page==='teaching')cache.course_roster=[];
-  if(coursePlanningReady&&teacher()&&(!scoped||page==='teaching')){
+  if(!scoped||targetPage==='teaching')cache.course_roster=[];
+  if(coursePlanningReady&&teacher()&&(!scoped||targetPage==='teaching')){
     try{
       for(let offset=0;;offset+=500){
         const roster=await db.rpc('teacher_course_roster').order('course_id').order('learner_id').range(offset,offset+499);
-        if(session?.user.id!==owner||generation!==authGeneration)return;
+        if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
         if(roster.error)throw roster.error;
         cache.course_roster.push(...(roster.data||[]));
         if((roster.data||[]).length<500)break;
       }
-    }catch(error){if(session?.user.id!==owner||generation!==authGeneration)return;console.error('teacher_course_roster',error);coursePlanningReady=false;cache.course_roster=[];}
+    }catch(error){if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;console.error('teacher_course_roster',error);coursePlanningReady=false;cache.course_roster=[];}
   }
-  if(teacher()&&learningHubReady&&(!scoped||page==='teaching')){
+  if(teacher()&&learningHubReady&&(!scoped||targetPage==='teaching')){
     cache.learning_track_roster=[];cache.learning_track_roster_error='';
-    try{for(let offset=0;;offset+=500){const result=await db.rpc('learning_track_roster').order('track').order('learner_id').range(offset,offset+499);if(session?.user.id!==owner||generation!==authGeneration)return;if(result.error)throw result.error;cache.learning_track_roster.push(...(result.data||[]));if((result.data||[]).length<500)break;}}catch(error){if(session?.user.id!==owner||generation!==authGeneration)return;console.error('Learning roster',error);cache.learning_track_roster=[];cache.learning_track_roster_error='The course student list could not be loaded. Your existing class rosters are still below.';}
+    try{for(let offset=0;;offset+=500){const result=await db.rpc('learning_track_roster').order('track').order('learner_id').range(offset,offset+499);if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;if(result.error)throw result.error;cache.learning_track_roster.push(...(result.data||[]));if((result.data||[]).length<500)break;}}catch(error){if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;console.error('Learning roster',error);cache.learning_track_roster=[];cache.learning_track_roster_error='The course student list could not be loaded. Your existing class rosters are still below.';}
   }
-  if(session?.user.id!==owner||generation!==authGeneration)return;
+  if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
   if(names.includes('privacy_requests'))privacyReady=succeeded('privacy_requests');
   if(names.includes('inventory_items')){
     inventoryReady=succeeded('inventory_items')&&(!founder()||succeeded('inventory_movements'));
     const {error:catalogError}=inventoryReady?await db.from('inventory_items').select('item_type').limit(1):{error:true};
-    if(session?.user.id!==owner||generation!==authGeneration)return;
+    if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
     inventoryCatalogReady=!catalogError;
   }
   if(names.includes('finance_entries'))financeReady=founder()&&succeeded('finance_entries');
   if(names.includes('finance_reviews'))financeApprovalsReady=financeReady&&succeeded('finance_reviews');
   await refreshUnreadCounts();
-  if(session?.user.id!==owner||generation!==authGeneration)return;
-  if(page==='feed'&&feedReady)await loadFeedPage(false);
-  if(page==='channels'&&communityReady&&activeChannelId)await loadChannelHistory(false);
+  if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
+  if(targetPage==='feed'&&feedReady)await loadFeedPage(false);
+  if(targetPage==='channels'&&communityReady&&activeChannelId)await loadChannelHistory(false);
   if(dmReady&&!dmUpgradeChecked)await loadDmCapabilities();
-  if(page==='messages'&&dmReady){if(dmInboxReady)await loadDmInbox();if(activePeerId)await loadDmThread(false);}
-  if(session?.user.id!==owner||generation!==authGeneration)return;
-  if(!scoped){
-    const {error:mediaError}=feedReady?await db.from('activity_posts').select('image_path').limit(1):{error:true};
-    if(session?.user.id!==owner||generation!==authGeneration)return;
-    mediaReady=!mediaError;
-    const {error:avatarError}=mediaReady?await db.from('profiles').select('avatar_path').eq('id',owner).limit(1):{error:true};
-    if(session?.user.id!==owner||generation!==authGeneration)return;
-    avatarReady=!avatarError;
-  }
+  if(targetPage==='messages'&&dmReady){if(dmInboxReady)await loadDmInbox();if(activePeerId)await loadDmThread(false);}
+  if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
   await hydrateMedia();
-  if(session?.user.id!==owner||generation!==authGeneration)return;
-  if(page==='applications'&&admin())void loadAdminApplicationPages();
+  if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
+  if(page!==targetPage)return {failures};
+  if(targetPage==='applications'&&admin())void loadAdminApplicationPages();
   if(previous!==accessSignature(me)){route();return;}
-  if(page==='notifications' && document.activeElement?.closest('#content')) { render(); return; }
-  if(page==='channels' && document.activeElement?.closest('#chatComposer')) { renderChatMessages(); return; }
-  if(page==='messages' && document.activeElement?.closest('#dmComposer')) {dmShowThreadUpdate();return;}
-  if(page==='teaching' && document.activeElement?.closest('#teacherProfileForm')) return;
-  render();
+  if(targetPage==='notifications' && document.activeElement?.closest('#content')) { render(); return {failures}; }
+  if(targetPage==='channels' && document.activeElement?.closest('#chatComposer')) { renderChatMessages(); return {failures}; }
+  if(targetPage==='messages' && document.activeElement?.closest('#dmComposer')) {dmShowThreadUpdate();return {failures};}
+  if(targetPage==='teaching' && document.activeElement?.closest('#teacherProfileForm')) return {failures};
+  render();return {failures};
 }
 async function refreshChat() {
+  if(networkOffline())return;
   if(document.hidden||!session || !clubAccess() || !communityReady) return;
   try { cache.channel_messages=await read('channel_messages',q=>q.order('created_at',{ascending:false}).limit(120));if(page==='channels'&&activeChannelId)await loadChannelHistory(false);await refreshUnreadCounts();await hydrateMedia();
     if(page==='channels') renderChatMessages();
@@ -963,6 +1052,7 @@ async function detectFounderPortraits(){
   founderPortraitReady=!error;
 }
 async function touchPresence(online=true) {
+  if(networkOffline())return;
   if (!session || !db) return;
   const {error}=await db.from('profiles').update({last_seen_at:online?new Date().toISOString():null}).eq('id',session.user.id);
   if(error) console.error(error);
@@ -1040,6 +1130,7 @@ async function signedIn(newSession,showWelcome=false) {
   const previousOwner=session?.user.id;
   if(newSession&&showWelcome){sessionEnding=false;void db.auth.startAutoRefresh().catch(console.error);}
   const generation=++authGeneration;
+  clearWorkspaceLoads();
   if(!newSession||loginWelcomePendingOwner&&loginWelcomePendingOwner!==newSession.user.id)loginWelcomePendingOwner=null;
   if(!newSession||loginWelcomeOwner&&loginWelcomeOwner!==newSession.user.id)dismissLoginWelcome();
   if(showWelcome&&newSession?.user.id)loginWelcomePendingOwner=newSession.user.id;
@@ -1118,18 +1209,17 @@ async function finishWorkspaceSignIn(generation){
     }
     await hydrateOwnApplicationReason();
     if(generation!==authGeneration)return;
-    await Promise.all([learningPath,requestWithDeadline(()=>refresh('page'),20000,'Your account is signed in, but workspace records took too long to load. Please retry.')]);
+    await Promise.all([learningPath,refreshVisiblePage({force:true})]);
     if(generation!==authGeneration)return;
-    // The current page can be used while the remaining tools load.
+    // Other pages load only when opened, rather than preloading the workspace.
     workspaceHydrating=false;
     if(learningSelectionRequired())route();else render();
-    if(!investor())await requestWithDeadline(()=>refresh(),20000,'Some workspace records could not be loaded. Please retry.');
     if(generation!==authGeneration)return;
     workspaceHydrating=false;render();
-    pollTimer=setInterval(refreshVisiblePage,45000);
+    pollTimer=setInterval(refreshVisiblePage,45000+Math.floor(Math.random()*15000));
     if(approved()){
       presenceTimer=setInterval(()=>{if(!document.hidden)void touchPresence();},20000);
-      if(clubAccess())chatTimer=setInterval(()=>{if(document.hidden)return;if(page==='messages'){if(activePeerId&&!dmThreadLoading&&!dmEarlierLoading)void loadDmThread();void refreshUnreadCounts();}else if(page==='channels')void refreshChat();},9000);
+      if(clubAccess())chatTimer=setInterval(()=>{if(document.hidden||networkOffline())return;if(page==='messages'){if(activePeerId&&!dmThreadLoading&&!dmEarlierLoading)void loadDmThread();void refreshUnreadCounts();}else if(page==='channels')void refreshChat();},9000);
     }
     if(communityReady && clubAccess()) chatRealtime=db.channel('innovatex-chat')
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'channel_messages'},refreshChat).subscribe();
@@ -1143,7 +1233,7 @@ async function finishWorkspaceSignIn(generation){
           }else receiveMemberNotification(notification);
         }).subscribe();
     }
-    if(admin())adminAlertTimer=setInterval(()=>{if(!document.hidden)void refreshAdminAlerts();},10000);
+    if(admin()){void refreshAdminAlerts();adminAlertTimer=setInterval(()=>{if(!document.hidden)void refreshAdminAlerts();},10000);}
 }
 async function init() {
   document.querySelectorAll('#nav a[data-page]').forEach(a=>{const slot=a.querySelector('span');if(slot)slot.innerHTML=iconSvg(a.dataset.page);});
@@ -1178,9 +1268,6 @@ async function init() {
   window.addEventListener('beforeprint',prepareCalendarPrint);
   window.addEventListener('afterprint',()=>{const list=$('#calendarPrintList');if(list)list.innerHTML='';});
   window.addEventListener('hashchange',route);
-  window.addEventListener('hashchange',()=>{
-    if(session&&authReady&&!document.hidden&&!['feed','channels','messages','applications'].includes(page))void refreshVisiblePage();
-  });
   $('#authButton').onclick=()=>session ? signOut() : signInDialog();
   $('#loginWelcomeSkip')?.addEventListener('click',dismissLoginWelcome);
   $('#loginWelcome')?.addEventListener('cancel',event=>{event.preventDefault();dismissLoginWelcome();});
@@ -1253,6 +1340,8 @@ async function init() {
     if(admin())void refreshAdminAlerts();
   });
   window.addEventListener('pagehide',()=>{expireSession('',false);});
+  window.addEventListener('offline',()=>{updateNetworkStatus();if(session&&!pageDataReady())render();});
+  window.addEventListener('online',()=>{updateNetworkStatus();if(session)void refreshVisiblePage({force:true});});
 }
 function updateInstallButton(){
   $('#installAppButton').hidden=window.matchMedia?.('(display-mode: standalone)').matches===true||navigator.standalone===true;
@@ -1314,14 +1403,17 @@ function route() {
   if(page==='founder-room'&&authReady&&!founder()){page='founders';history.replaceState(null,'','#founders');show('Founder access required.');}
   if(['admin','applications','moderation'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   if(page==='messages'){const peer=location.hash.slice(1).split('/')[1]||'';const next=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(peer)?peer:null;if(next!==activePeerId){activePeerId=next;dmRequest++;dmSearchRequest++;dmThreadLoading=false;dmEarlierLoading=false;dmSearchOpen=false;dmSearchBusy=false;dmReactionTarget=null;dmEmojiOpen=false;}}
-  setSidebarOpen(false);render();
+  setSidebarOpen(false);
+  if(session&&authReady&&approved()&&!workspaceHydrating)void refreshVisiblePage({force:true});
+  render();
   if(protectedGuestPage&&(authReady||!configured))signInDialog('signin');
-  if(page==='applications'&&admin())void loadAdminApplicationPages();
-  if(page==='feed'&&feedReady)void loadFeedPage();
-  if(page==='channels'&&communityReady&&activeChannelId)void loadChannelHistory();
-  if(page==='messages'&&dmReady){if(dmInboxReady)void loadDmInbox().then(()=>{if(page==='messages'&&!activePeerId)render();});if(activePeerId)void loadDmThread();}
+  if(!networkOffline()&&page==='applications'&&admin())void loadAdminApplicationPages();
+  if(!networkOffline()&&page==='feed'&&feedReady)void loadFeedPage();
+  if(!networkOffline()&&page==='channels'&&communityReady&&activeChannelId)void loadChannelHistory();
+  if(!networkOffline()&&page==='messages'&&dmReady){if(dmInboxReady)void loadDmInbox().then(()=>{if(page==='messages'&&!activePeerId)render();});if(activePeerId)void loadDmThread();}
 }
 function render() {
+  updateNetworkStatus();
   const memberFocus=page==='members'&&document.activeElement?.id==='memberSearch'?{start:document.activeElement.selectionStart,end:document.activeElement.selectionEnd}:null;
   const previousDmStream=page==='messages'?$('#dmStream'):null;
   const previousDmList=page==='messages'?$('.dm-list'):null;
@@ -1337,7 +1429,7 @@ function render() {
   updateWorkspaceNavigation();
   $('#guestSidebarCta').hidden=!!session||configured&&!authReady;
   const online=(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length;
-  $('#onlineBadge').textContent=online;
+  $('#onlineBadge').textContent=profilesComplete?online:'—';
   updateInboxIndicators();
   updateAdminAlertControls();
   const pendingFinance=founderOnly()&&financeApprovalsReady?(cache.finance_entries||[]).filter(x=>financeStatus(x)==='pending').length:0;
@@ -1346,8 +1438,13 @@ function render() {
   $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
   if(workspaceLoadError||workspaceLoading||workspaceHydrating&&!learningSelectionRequired()&&!(pageRefreshDependencies[page]||[]).every(name=>Object.hasOwn(cache,name))){
     $('#content').classList.remove('dm-view');
-    $('#content').innerHTML=workspaceLoadError?`<section class="workspace-start"><h1>Let’s open your workspace</h1><p>${esc(workspaceLoadError)}</p><button class="button" data-action="retryWorkspace">Retry account check</button></section>`:`<section class="workspace-start" aria-busy="true"><span class="eyebrow">${workspaceLoading?'SIGNING IN':'YOUR WORKSPACE'}</span><h1>${workspaceLoading?'Opening SPACE…':page==='home'?`Welcome, ${esc((me?.full_name||'member').split(/\s+/)[0])}.`:esc(workspacePageInfo[page]?.title||'SPACE')}</h1><p role="status">${workspaceLoading?'Checking your account access…':'Your workspace is open. Loading your latest records…'}</p><div class="workspace-skeleton" aria-hidden="true"><span></span><span></span><span></span></div></section>`;
+    const load=workspacePageLoads.get(page);
+    $('#content').innerHTML=workspaceLoadError?`<section class="workspace-start"><h1>Let’s open your workspace</h1><p>${esc(workspaceLoadError)}</p><button class="button" data-action="retryWorkspace">Retry account check</button></section>`:workspaceSkeleton(page,{account:workspaceLoading,slow:load?.slow,error:load?.status==='error'});
     return;
+  }
+  const load=workspacePageLoads.get(page);
+  if(session&&approved()&&load&&!load.hadData&&['loading','offline','error'].includes(load.status)&&!learningSelectionRequired()){
+    $('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
   }
   const views={home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
@@ -2688,7 +2785,7 @@ function adminDashboard(){
   ${privacyQueue.length?`<div class="notice privacy-admin-notice"><strong>${privacyQueue.length} privacy ${privacyQueue.length===1?'request needs':'requests need'} review.</strong> <a href="#privacy">Open the administrator queue →</a></div>`:''}
   <div class="grid grid-2 admin-overview"><div class="card attention-panel ${adminPendingCount||reports.length||inquiries.length?'is-priority':''}"><h2>Needs attention</h2>${pending.slice(0,5).map(p=>`<div class="list-item"><span class="tag gold">${esc(p.application_type||'member')}</span><div><strong>${esc(p.full_name)}</strong><small>Applied ${date(p.created_at)}</small></div></div>`).join('')||`<p class="muted">${adminPendingCount?`${adminPendingCount} pending applications. Open Applications to review every page.`:'No pending applications.'}</p>`}${reports.length?`<p class="subtle">${reports.length} open ${reports.length===1?'report':'reports'} await review.</p>`:''}${inquiries.length?`<p class="subtle">${inquiries.length} new investor ${inquiries.length===1?'inquiry':'inquiries'} await review.</p>`:''}<div class="profile-buttons"><a class="button button-sm" href="#applications">Review applications</a><a class="button button-outline button-sm" href="#investor-portal">Investor portal</a></div></div>
   <div class="card"><h2>Club activity</h2><div class="admin-quick"><a href="#founder-room">Founder meetings <strong>${(cache.founder_meetings||[]).length} →</strong></a><a href="#events">Events <strong>${(cache.events||[]).length} →</strong></a><a href="#channels">Channels <strong>${(cache.channels||[]).length} →</strong></a><a href="#news">Technology stories <strong>${(cache.news_posts||[]).length} →</strong></a><a href="#library">Shared documents <strong>${(cache.documents||[]).length} →</strong></a></div><p class="hint">Private direct messages remain visible only to their participants.</p></div></div>
-  <div class="section-heading"><h2>Download CSV</h2><p>Each CSV fetches all records you are authorized to see, in batches, when you click Download.</p></div><div class="card"><div class="export-actions">${exports.map(([key,label])=>`<button class="button button-outline button-sm" data-action="exportCsv" data-table="${key}">${esc(label)} CSV ↓</button>`).join('')}</div><p class="hint">CSV files exclude authentication records, direct messages and uploaded file contents. Preserve Storage files separately; use database backups for recovery.</p></div>
+  <div class="section-heading"><h2>Download CSV</h2><p>Each CSV fetches all records you are authorized to see, in batches, when you click Download.</p></div><div class="card"><div class="export-actions">${exports.map(([key,label])=>`<button class="button button-outline button-sm" data-action="exportCsv" data-table="${key}">${esc(label)} CSV ↓</button>`).join('')}</div><p class="hint">CSV files exclude authentication records, direct messages and uploaded file contents. Preserve Storage files separately; use database backups for recovery.</p><div class="profile-buttons"><a class="link" href="https://github.com/Turkson225/Turk-Innovation-CLUB/blob/main/docs/backup_restore.md" target="_blank" rel="noopener noreferrer">Backup &amp; recovery guide ↗</a><a class="link" href="https://github.com/Turkson225/Turk-Innovation-CLUB/blob/main/docs/capacity_and_loading.md" target="_blank" rel="noopener noreferrer">Capacity &amp; connection guide ↗</a></div></div>
   <div class="section-heading"><h2>Recent administrator actions</h2></div><div class="card">${(cache.audit_events||[]).slice(0,8).map(a=>`<div class="list-item"><div><strong>${esc(a.action.replaceAll('_',' '))}</strong><small>${dateTime(a.created_at)} · ${esc(memberName(a.actor_id))}</small></div></div>`).join('')||'<p class="muted">No actions recorded yet.</p>'}</div>`;
 }
 function pushSettingsCard(){
@@ -2863,6 +2960,7 @@ async function deleteAnnouncement(id){
 function actions(e) {
   if(session&&checkSessionExpiry()){e.preventDefault();return;}
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
+  if(action==='retryPage'){if(session&&authReady)return refreshVisiblePage({force:true});return signInDialog('signin');}
   if(sessionEnding&&!session&&!['login','signup','signin','resendCode','changeEmail'].includes(action)){e.preventDefault();signInDialog('signin');return;}
   if(action==='learningPathForm'&&clubAccess()&&learningChoicesReady)return modal(learningPathForm());
   if(action==='accountRoleForm')return accountRoleForm(id);
@@ -3394,16 +3492,23 @@ async function removeFounderCard(id) {
 async function markNotification(id) {
   try {const {error}=await db.from('notifications').update({read_at:new Date().toISOString()}).eq('id',id);if(error)throw error;await refresh();void refreshInboxUnreadCount();}catch(e){fail(e);}
 }
+async function openWorkspaceDestination(target){
+  if(!session||!authReady||!approved())return false;
+  const generation=authGeneration;
+  location.hash='#'+target;route();await refreshVisiblePage({force:true});
+  return generation===authGeneration&&!!session&&page===target&&workspacePageLoads.get(target)?.status==='ready';
+}
 async function openNotification(id) {
   const n=(cache.notifications||[]).find(x=>x.id===id);if(!n)return;
   if(!n.read_at)await markNotification(id);
   if(n.target_type==='channel'){activeChannelId=n.target_id;location.hash='#channels';}
-  else if(n.target_type==='project'){location.hash='#projects';setTimeout(()=>projectDetail(n.target_id),60);}
+  else if(n.target_type==='project'){if(await openWorkspaceDestination('projects'))projectDetail(n.target_id);}
   else if(n.target_type==='course'){
+    if(!await openWorkspaceDestination('courses'))return;
     const joined=(cache.course_enrollments||[]).some(e=>e.course_id===n.target_id&&e.learner_id===session?.user.id);
     courseView=joined?'mine':'explore';activeCourseId=joined?n.target_id:null;
     courseDetailView=joined&&/^(New classwork|Classwork feedback):/i.test(n.title||'')?'classwork':joined&&/^(Project accepted|Revision requested):/i.test(n.title||'')?'feedback':'overview';
-    courseTrack='all';location.hash='#courses';render();
+    courseTrack='all';render();
     setTimeout(()=>{const target=document.getElementById(`course-${n.target_id}`);target?.querySelector('h2,h3')?.focus({preventScroll:true});target?.scrollIntoView({behavior:'smooth',block:'center'});},80);
   }
   else if(n.target_type==='meeting')location.hash='#founder-room';
@@ -3416,7 +3521,8 @@ async function openNotification(id) {
     const isReview=n.kind==='course'&&/^Project ready for review:/i.test(n.title||'');
     const isEnrollment=n.kind==='course'&&/^New learner enrolled in:/i.test(n.title||'');
     teachingTab=isClasswork?'classwork':isReview?'reviews':isEnrollment?'workshops':'profile';
-    if(location.hash==='#teaching')render();else location.hash='#teaching';
+    if(!await openWorkspaceDestination('teaching'))return;
+    render();
     if(isEnrollment&&n.target_id)setTimeout(()=>document.getElementById(`teaching-workshop-${n.target_id}`)?.scrollIntoView({behavior:'smooth',block:'center'}),120);
   }
   else if(n.target_type==='privacy_request'){location.hash='#privacy';if(admin())setTimeout(()=>document.getElementById('privacy-admin-queue')?.scrollIntoView({behavior:'smooth',block:'start'}),80);}
