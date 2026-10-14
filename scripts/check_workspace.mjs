@@ -876,6 +876,19 @@ test('The real workspace renderer shows skeletons and replaces them with retry c
   h.run("authReady=true;updateWorkspaceNavigation=()=>{};updateInboxIndicators=()=>{};updateAdminAlertControls=()=>{};workspacePageLoads.set('messages',{status:'loading',hadData:false,slow:true})");h.renderOriginal();assert(h.elements.get('#content').innerHTML.includes('skeleton-chat'));assert(h.elements.get('#content').innerHTML.includes('Still loading'));
   h.run("workspacePageLoads.get('messages').status='error'");h.renderOriginal();assert(h.elements.get('#content').innerHTML.includes('retryPage'));assert(!h.elements.get('#content').innerHTML.includes('page-skeleton'));
 });
+function startupGuardSource(){const match=fs.readFileSync(root+'/index.html','utf8').match(/<script id="spaceStartupGuard">([\s\S]*?)<\/script>/);assert(match,'An inline guard must work even before external scripts download');return match[1];}
+test('A startup module that cannot download gets a reload action instead of an endless skeleton',()=>{
+  const placeholder=node(),listeners=new Map();let timeout,reloads=0,click;
+  placeholder.querySelector=()=>({addEventListener(_event,handler){click=handler;}});
+  const context=vm.createContext({document:{querySelector:()=>placeholder,addEventListener(name,handler){listeners.set(name,handler);}},location:{reload(){reloads++;}},setTimeout(fn,ms){assert.equal(ms,12000);timeout=fn;}});
+  vm.runInContext(startupGuardSource(),context);timeout();assert(placeholder.innerHTML.includes('Reload SPACE'));assert(!placeholder.innerHTML.includes('page-skeleton'));click();assert.equal(reloads,1);
+  placeholder.innerHTML='pending';listeners.get('error')({target:{matches:()=>true}});assert(placeholder.innerHTML.includes('Reload SPACE'));
+});
+test('The startup recovery guard cannot replace a workspace that is already initialized',()=>{
+  const placeholder=node({innerHTML:'private workspace'});let timeout;
+  const context=vm.createContext({document:{querySelector:()=>placeholder,addEventListener(){}},location:{},setTimeout(fn){timeout=fn;}});
+  vm.runInContext(startupGuardSource(),context);placeholder.isConnected=false;timeout();assert.equal(placeholder.innerHTML,'private workspace');
+});
 let failed=0;
 for(const t of tests){try{await t.fn();console.log('PASS',t.name);}catch(e){failed++;console.log('FAIL',t.name,'\n',e.stack);}}
 console.log(`${tests.length-failed}/${tests.length} checks passed`);

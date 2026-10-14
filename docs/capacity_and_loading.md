@@ -11,7 +11,7 @@
 - At most six dataset-loading tasks run together in a page batch. Small capability checks use four workers. This is a limit on those batches, not a global limit on all browser requests, uploads or Realtime connections.
 - A complete directory cache is reused for two minutes on other pages; the Members page refreshes presence. Only the current account's course-choice row is fetched, including for administrators.
 - Repeated background loads for the same account and page share a request. Polls are staggered between 45 and 60 seconds and failed page loads back off up to about two minutes. Chat and approval alerts keep their focused checks.
-- Initial HTML, sign-in, and first visits have responsive card, list or chat skeletons. After three seconds a slow-load message appears. A page has a 20-second deadline and a retry action; failed refreshes preserve previously loaded data.
+- Initial HTML, sign-in, and first visits have responsive card, list or chat skeletons. After three seconds a slow-load message appears. A page has a 20-second deadline and a retry action; failed refreshes preserve previously loaded data. An independent startup guard offers Reload after 12 seconds, or when the main module fails to download, and cannot overwrite an initialized workspace.
 - Browser offline events show a connection banner. Automatic page, chat, unread-count, presence and approval polls pause while offline. Reconnecting refreshes the page; it does not replay unsent writes.
 - Member records and signed file URLs stay in memory for the open session. Sign-out, session expiry and account changes clear loading state and cached private data. This release does not add private offline storage.
 
