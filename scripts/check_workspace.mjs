@@ -702,7 +702,7 @@ test('Page exit clears authentication and page restoration checks expiry before 
   assert(source.includes("window.addEventListener('pagehide',()=>{expireSession('',false);})"));
   assert(source.includes("window.addEventListener('focus',checkSessionExpiry)"));
   assert.match(source,/document\.addEventListener\('visibilitychange',\(\)=>\{\s*if\(checkSessionExpiry\(\)\)return;/);
-  assert(fs.readFileSync(root+'/index.html','utf8').includes('app.js?v=space-learning-20261014'));
+  assert(fs.readFileSync(root+'/index.html','utf8').includes('app.js?v=space-login-recovery-20261014'));
 });
 
 function learningHarness(role='member'){
