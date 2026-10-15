@@ -17,7 +17,8 @@ export const migrations = [
   'upgrade_course_planning.sql','upgrade_private_applications.sql',
   'upgrade_course_classroom_access.sql','upgrade_course_lifecycle_reviews.sql',
   'upgrade_message_counts.sql','upgrade_dm_conversations.sql','upgrade_web_push.sql',
-  'upgrade_learning_dashboards.sql','upgrade_officer_workspaces_finance.sql','upgrade_advanced_platform.sql'
+  'upgrade_learning_dashboards.sql','upgrade_officer_workspaces_finance.sql','upgrade_advanced_platform.sql',
+  'upgrade_directory_learning_performance.sql'
 ];
 export async function prepareFixture(db, members = 2000) {
   if(!Number.isInteger(members)||members<2000||members>10000)throw Error('Synthetic members must be an integer from 2000 to 10000');

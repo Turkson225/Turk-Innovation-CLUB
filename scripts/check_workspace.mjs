@@ -638,18 +638,18 @@ test('Member profile links preserve the protected destination across email sign-
   const h=loginHarness(),id='12345678-1234-1234-1234-123456789abc';h.exec("authReady=true;setSidebarOpen=()=>{};signInDialog=()=>{};location.hash='#members/'+qaArgs;route()",id);assert.equal(h.run('pendingProtectedPage'),'members/'+id);h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs)',loginSession('self'));assert.equal(h.context.location.hash,'#members/'+id);
 });
 
-test('Auth starts without durable credentials and removes only this project legacy keys',()=>{
-  const legacy=['sb-qa-auth-token','sb-qa-auth-token-code-verifier','sb-qa-auth-token-user'];
-  const localItems=new Map([...legacy.map(k=>[k,'old credential']),['innovatex.theme','dark'],['sb-other-auth-token','other app'],['space.members.self','preferences']]);
-  const sessionItems=new Map([...legacy.map(k=>[k,'old credential']),['innovatex.pendingEmail','self@example.test']]);
-  const h=harness({localItems,sessionItems});
-  for(const key of legacy){assert.equal(localItems.has(key),false);assert.equal(sessionItems.has(key),false);}
-  assert.equal(localItems.get('sb-other-auth-token'),'other app');assert.equal(localItems.get('innovatex.theme'),'dark');assert.equal(localItems.get('space.members.self'),'preferences');assert.equal(sessionItems.get('innovatex.pendingEmail'),'self@example.test');
-  assert.equal(h.clientOptions.auth.persistSession,true);assert(h.clientOptions.auth.storage);assert.equal(h.clientOptions.auth.autoRefreshToken,true);assert.equal(h.clientOptions.auth.detectSessionInUrl,true);
+test('Remembered authentication survives startup without clearing other projects or preferences',()=>{
+ const localItems=new Map([['sb-qa-auth-token','remembered'],['sb-other-auth-token','other'],['innovatex.theme','dark']]);const h=harness({localItems});
+ assert.equal(h.clientOptions.auth.storage.getItem('sb-qa-auth-token'),'remembered');assert.equal(localItems.get('sb-other-auth-token'),'other');assert.equal(localItems.get('innovatex.theme'),'dark');assert.equal(h.clientOptions.auth.autoRefreshToken,true);assert.equal(h.clientOptions.auth.persistSession,true);
 });
-test('Unavailable browser storage keeps authentication in the memory fallback',()=>{
-  const h=harness();h.context.localStorage={removeItem(){throw Error('blocked');}};h.context.sessionStorage={removeItem(){throw Error('blocked');}};
-  assert.doesNotThrow(()=>h.run('clearSavedAuthTokens()'));h.clientOptions.auth.storage.setItem('test','temporary');assert.equal(h.clientOptions.auth.storage.getItem('test'),'temporary');assert.equal(h.clientOptions.auth.persistSession,true);
+test('A current tab sign-in is migrated to durable storage, while existing durable credentials win',()=>{
+ const localItems=new Map([['sb-qa-auth-token','newer']]),sessionItems=new Map([['sb-qa-auth-token','old'],['sb-qa-auth-token-user','user'],['space.auth.tab-clock.v1','old-clock']]);const h=harness({localItems,sessionItems});
+ assert.equal(h.clientOptions.auth.storage.getItem('sb-qa-auth-token'),'newer');assert.equal(localItems.get('sb-qa-auth-token-user'),'user');assert.equal(sessionItems.has('sb-qa-auth-token'),false);assert.equal(sessionItems.has('space.auth.tab-clock.v1'),false);
+ const tab=new Map([['sb-qa-auth-token','current-tab']]),fresh=harness({sessionItems:tab});assert.equal(fresh.clientOptions.auth.storage.getItem('sb-qa-auth-token'),'current-tab');
+});
+test('Unavailable durable storage keeps authentication in memory without throwing',()=>{
+ const h=harness();h.context.localStorage={getItem(){throw Error('blocked');},setItem(){throw Error('blocked');},removeItem(){throw Error('blocked');}};
+ h.clientOptions.auth.storage.setItem('test','temporary');assert.equal(h.clientOptions.auth.storage.getItem('test'),'temporary');h.clientOptions.auth.storage.removeItem('test');assert.equal(h.clientOptions.auth.storage.getItem('test'),null);
 });
 function sessionHarness(){
   const h=loginHarness(),stats={stopped:0,started:0,signouts:[],prompts:0,renders:0};let now=1000000;
@@ -659,51 +659,28 @@ function sessionHarness(){
   const login=async(id='self',interactive=true)=>{h.queued.push({data:loginProfile(id),error:null});await h.exec('signedIn(qaArgs.session,qaArgs.interactive)',{session:loginSession(id),interactive});};
   return {...h,stats,setNow:value=>{now=value;},getNow:()=>now,login};
 }
-test('Visible trusted input extends idle time; background and synthetic input do not',async()=>{
-  const h=sessionHarness();await h.login();const start=h.getNow();
-  h.setNow(start+29*60000);h.exec('recordSessionActivity(qaArgs)',{isTrusted:true});assert.equal(h.run('lastSessionActivityAt'),h.getNow());
-  h.setNow(start+30*60000);assert.equal(h.run('checkSessionExpiry()'),false);
-  h.context.document.hidden=true;h.setNow(start+40*60000);h.exec('recordSessionActivity(qaArgs)',{isTrusted:true});assert.equal(h.run('lastSessionActivityAt'),start+29*60000);
-  h.context.document.hidden=false;h.exec('recordSessionActivity(qaArgs)',{isTrusted:false});assert.equal(h.run('lastSessionActivityAt'),start+29*60000);
-  h.setNow(start+59*60000);assert.equal(h.run('checkSessionExpiry()'),true);assert.equal(h.run('session'),null);assert.equal(h.stats.stopped,1);assert.equal(h.stats.prompts,1);assert.equal(h.stats.signouts[0].scope,'local');
+test('Remembered sign-in has no app-imposed inactivity or eight-hour cutoff',async()=>{
+ const h=sessionHarness();await h.login();for(const elapsed of [31*60000,9*3600000,30*86400000]){h.setNow(1000000+elapsed);assert.equal(h.run('checkSessionExpiry()'),false);assert.equal(h.run('session.user.id'),'self');}assert.equal(h.stats.signouts.length,0);
 });
-test('The first input after a suspended idle session signs out instead of extending it',async()=>{
-  const h=sessionHarness();await h.login();h.run("cache.secret=['private'];mediaUrls.set('secret',{url:'signed-url'});dmDrafts.set('a',{text:'private draft'})");
-  h.setNow(h.getNow()+31*60000);h.exec('recordSessionActivity(qaArgs)',{isTrusted:true});
-  assert.equal(h.run('session'),null);assert.equal(h.run('me'),null);assert.equal(h.run('cache.secret'),undefined);assert.equal(h.run('mediaUrls.size'),0);assert.equal(h.run('dmDrafts.size'),0);assert.equal(h.run('sessionGuardTimer'),null);assert.equal(h.elements.get('#modal').open,false);
+test('Explicit sign-out clears private UI immediately while server revocation is pending',async()=>{
+ const h=sessionHarness();await h.login();const pending=deferred();h.db.auth.signOut=()=>pending.promise;h.run("cache.secret=['private'];mediaUrls.set('secret',{url:'signed'});authPersistentStorage.setItem(authStorageKey,'token')");const signing=h.run('signOut()');
+ assert.equal(h.run('session'),null);assert.equal(h.run('me'),null);assert.equal(h.run('cache.secret'),undefined);assert.equal(h.run('mediaUrls.size'),0);assert(h.localItems.has('sb-qa-auth-token-space-signed-out'));
+ pending.resolve({error:null});await signing;assert.equal(h.localItems.has('sb-qa-auth-token'),false);
 });
-test('Active sessions have an eight-hour maximum and refresh does not restart the clock',async()=>{
-  const h=sessionHarness();await h.login();const start=h.run('sessionStartedAt');
-  h.setNow(start+7*3600000+59*60000);h.run('lastSessionActivityAt=Date.now()');await h.login('self',false);assert.equal(h.run('sessionStartedAt'),start);
-  h.setNow(start+8*3600000);assert.equal(h.run('checkSessionExpiry()'),true);assert.equal(h.run('session'),null);
+test('A failed revocation still removes remembered credentials and blocks delayed auth events',async()=>{
+ const h=sessionHarness();await h.login();h.context.console={...console,error(){}};h.db.auth.signOut=async()=>({error:{message:'offline'}});h.run("authPersistentStorage.setItem(authStorageKey,'token')");await h.run('signOut()');h.exec("handleAuthStateChange('TOKEN_REFRESHED',qaArgs)",loginSession('self'));h.fireTimers(0);assert.equal(h.run('session'),null);assert.equal(h.localItems.has('sb-qa-auth-token'),false);
 });
-test('Expiry blocks late auth events until a fresh interactive code is verified',async()=>{
-  const h=sessionHarness();await h.login();h.setNow(h.getNow()+31*60000);h.run('checkSessionExpiry()');
-  h.exec("handleAuthStateChange('TOKEN_REFRESHED',qaArgs)",loginSession('self'));h.fireTimers(0);await h.exec('signedIn(qaArgs)',loginSession('self'));assert.equal(h.run('session'),null);
-  await h.login('self',true);assert.equal(h.run('session.user.id'),'self');assert.equal(h.run('sessionEnding'),false);assert.equal(h.run('sessionStartedAt'),h.getNow());
+test('A fresh interactive sign-in works after explicit sign-out',async()=>{
+ const h=sessionHarness();await h.login();await h.run('signOut()');await h.login('self',true);assert.equal(h.run('sessionEnding'),false);assert.equal(h.run('session.user.id'),'self');assert.equal(h.localItems.has('sb-qa-auth-token-space-signed-out'),false);
 });
-test('Expiry clears private UI before slow or failed server sign-out completes',async()=>{
-  const h=sessionHarness();await h.login();const pending=deferred();h.db.auth.signOut=()=>pending.promise;h.context.console={...console,error(){}};
-  h.run("cache.secret=['private']");h.setNow(h.getNow()+31*60000);h.run('checkSessionExpiry()');
-  assert.equal(h.run('session'),null);assert.equal(h.run('cache.secret'),undefined);assert(h.stats.renders>0);assert.equal(h.stats.prompts,1);
-  pending.resolve({error:{message:'offline'}});await h.run('sessionSignOutPromise');h.exec("handleAuthStateChange('SIGNED_IN',qaArgs)",loginSession('self'));h.fireTimers(0);assert.equal(h.run('session'),null);
+test('A pending profile read cannot restore an explicitly signed-out account',async()=>{
+ const h=sessionHarness(),profile=deferred();h.queued.push(profile.promise);const signing=h.exec('signedIn(qaArgs)',loginSession('self'));await h.run('signOut()');profile.resolve({data:loginProfile(),error:null});await signing;assert.equal(h.run('session'),null);assert.equal(h.run('me'),null);
 });
-test('Profile loads started before expiry cannot restore the old account',async()=>{
-  const h=sessionHarness(),profile=deferred();h.queued.push(profile.promise);const signing=h.exec('signedIn(qaArgs)',loginSession('self'));
-  h.setNow(h.getNow()+31*60000);h.run('checkSessionExpiry()');profile.resolve({data:loginProfile(),error:null});await signing;
-  assert.equal(h.run('session'),null);assert.equal(h.run('me'),null);assert.equal(h.run('clubAccess()'),false);
+test('Old editor submits cannot write after explicit sign-out',async()=>{
+ const h=sessionHarness();await h.login();await h.run('signOut()');const before=h.requests.length;let prevented=0;await h.exec('submit(qaArgs)',{target:{id:'editor',dataset:{kind:'projectEdit'}},preventDefault(){prevented++;}});assert.equal(prevented,1);assert.equal(h.requests.length,before);
 });
-test('Old editor submits and actions cannot run after local expiry',async()=>{
-  const h=sessionHarness();await h.login();h.setNow(h.getNow()+31*60000);h.run('checkSessionExpiry()');const before=h.requests.length;
-  let prevented=0;await h.exec('submit(qaArgs)',{target:{id:'editor',dataset:{kind:'projectEdit'}},preventDefault(){prevented++;}});action(h,{action:'taskDone',id:'old-task'});
-  assert.equal(prevented,1);assert.equal(h.requests.length,before);assert.equal(h.run('session'),null);
-});
-test('Page exit retains the tab clock, hides private content and checks expiry on restoration',()=>{
-  const source=fs.readFileSync(root+'/app.js','utf8');
-  assert(source.includes("window.addEventListener('pagehide',()=>{if(!session)return;persistSessionClock()"));assert(!source.includes("window.addEventListener('pagehide',()=>{expireSession('',false);})"));
-  assert(source.includes("window.addEventListener('focus',checkSessionExpiry)"));
-  assert.match(source,/document\.addEventListener\('visibilitychange',\(\)=>\{\s*if\(checkSessionExpiry\(\)\)return;/);
-  assert(fs.readFileSync(root+'/index.html','utf8').includes('app.js?v=space-advanced-20261015'));
+test('Page exit hides private content without discarding remembered authentication',()=>{
+ const source=fs.readFileSync(root+'/app.js','utf8');assert(source.includes("window.addEventListener('pagehide',()=>{if(!session)return;dismissLoginWelcome()"));assert(!source.includes('SESSION_IDLE_MS'));assert(!source.includes('persistSessionClock'));assert(source.includes('You stay signed in on this browser until you sign out.'));
 });
 
 function learningHarness(role='member'){
@@ -890,17 +867,11 @@ test('The startup recovery guard cannot replace a workspace that is already init
   vm.runInContext(startupGuardSource(),context);placeholder.isConnected=false;timeout();assert.equal(placeholder.innerHTML,'private workspace');
 });
 function officeHarness(role='member',positions=[]){const h=learningHarness(role);h.exec('officerReady=true;officerAccessChecked=true;ownOfficerRoles=qaArgs;financeAdminReady=true;financeReady=true;financeApprovalsReady=true;cache.officer_assignments=[];cache.officer_work_items=[];cache.officer_work_events=[];cache.finance_entries=[];cache.finance_reviews=[];cache.finance_receipts=[];',positions);return h;}
-test('A valid tab session survives startup while legacy durable tokens are removed',()=>{
- const now=Date.now(),key='sb-qa-auth-token',clock={userId:'self',startedAt:now-300000,lastActivity:now-60000},sessionItems=new Map([[key,'tab-token'],['space.auth.tab-clock.v1',JSON.stringify(clock)]]),localItems=new Map([[key,'durable-token']]);const h=harness({sessionItems,localItems});assert.equal(h.clientOptions.auth.storage.getItem(key),'tab-token');assert.equal(localItems.has(key),false);assert.equal(h.run('savedSessionClock().startedAt'),clock.startedAt);
+test('An explicit sign-out marker prevents credentials returning on reload',()=>{
+ const localItems=new Map([['sb-qa-auth-token','old'],['sb-qa-auth-token-space-signed-out','1']]),sessionItems=new Map([['sb-qa-auth-token','tab-old']]);harness({localItems,sessionItems});assert.equal(localItems.has('sb-qa-auth-token'),false);assert.equal(sessionItems.has('sb-qa-auth-token'),false);assert.equal(localItems.get('sb-qa-auth-token-space-signed-out'),'1');
 });
-test('Expired or malformed tab metadata clears stored authentication on startup',()=>{
- for(const clock of [{userId:'self',startedAt:Date.now()-9*3600000,lastActivity:Date.now()}, {userId:'self',startedAt:Date.now()-31*60000,lastActivity:Date.now()-31*60000}, {userId:'self',startedAt:0,lastActivity:Date.now()+5000}]){const sessionItems=new Map([['sb-qa-auth-token','expired'],['space.auth.tab-clock.v1',JSON.stringify(clock)]]);harness({sessionItems});assert.equal(sessionItems.has('sb-qa-auth-token'),false);assert.equal(sessionItems.has('space.auth.tab-clock.v1'),false);}
-});
-test('Restoring after refresh retains both the original start and last activity times',async()=>{
- const h=sessionHarness(),start=h.getNow()-600000,last=h.getNow()-120000;h.exec("authTabStorage.setItem(SESSION_CLOCK_KEY,JSON.stringify(qaArgs))",{userId:'self',startedAt:start,lastActivity:last});await h.login('self',false);assert.equal(h.run('sessionStartedAt'),start);assert.equal(h.run('lastSessionActivityAt'),last);assert.equal(h.run('session.user.id'),'self');
-});
-test('Interactive email verification starts a new tab clock and sign-out removes it immediately',async()=>{
- const h=sessionHarness();await h.login();assert(h.sessionItems.has('space.auth.tab-clock.v1'));h.setNow(h.getNow()+60000);const pending=deferred();h.db.auth.signOut=()=>pending.promise;const signingOut=h.run('signOut()');assert.equal(h.run('session'),null);assert.equal(h.sessionItems.has('space.auth.tab-clock.v1'),false);pending.resolve({error:null});await signingOut;
+test('Storage reads do not resurrect tokens deleted by another browser tab',()=>{
+ const h=harness();h.clientOptions.auth.storage.setItem('sb-qa-auth-token','value');h.localItems.delete('sb-qa-auth-token');assert.equal(h.clientOptions.auth.storage.getItem('sb-qa-auth-token'),null);
 });
 test('Assigned offices open workspaces without granting finance management or removing teaching',()=>{
  const h=officeHarness('teacher',['secretary','events_coordinator']);assert.equal(h.run('officerAccess()'),true);assert.equal(h.run('teacher()'),true);assert.equal(h.run('financeReportAccess()'),false);assert(h.run('officePage()').includes('Secretary'));assert(h.run('finance()').includes('Administrator access required'));assert(h.run('personalHome()').includes('#office'));
@@ -959,6 +930,33 @@ test('Missing advanced tables show setup guidance while existing learning and fi
 test('Scoped advanced queries use the selected course and paginate beyond the default row limit',async()=>{const h=advancedHarness();h.queued.push({data:[{id:'one'}],count:2,error:null},{data:[{id:'two'}],count:2,error:null});const rows=await h.run("readAdvancedRows('space_practical_grades',{eq:{course_id:'c1'}})");assert.equal(rows.length,2);for(const call of h.requests)assert(call.ops.some(op=>op[0]==='eq'&&op[1]==='course_id'&&op[2]==='c1'));assert(h.requests[1].ops.some(op=>op[0]==='range'&&op[1]===1));});
 
 test('File messages outside the shared-files preview keep a direct download control',()=>{const h=advancedHarness();h.run("activePeerId='a';dmAssets={peer:'a',pins:[],files:[],total:250}");const markup=h.exec('spaceDmFileMarkup(qaArgs)',{id:'older-file',has_document:true});assert(markup.includes('spaceDmMessageFile'));assert(markup.includes('older-file'));assert.equal(h.exec('spaceDmFileMarkup(qaArgs)',{id:'plain',has_document:false}),'');});
+test('The paginated member directory fetches 24 rows while retaining complete server counts',async()=>{
+ const h=directoryHarness();h.run("page='members';memberDirectoryPage=1;ensureMemberDirectory()");
+ const rows=Array.from({length:24},(_,n)=>({id:'row-'+n,full_name:'Remote '+n,role:'member',membership_status:'approved',skills:'Robotics'}));
+ h.rpcQueued.push({data:{rows,total:2505,offset:24,stats:{all:2505,online:20,new:30,shared:40,saved:2},skills:[{label:'Robotics',count:1800}]},error:null});await h.run('loadMemberDirectory()');
+ const call=h.rpcCalls.at(-1);assert.equal(call.name,'space_member_directory');assert.equal(call.args.p_limit,24);assert.equal(h.run('memberRemote.rows.length'),24);const html=h.run('members()');assert.equal((html.match(/data-member-id=/g)||[]).length,24);assert(html.includes('25–48 of 2505'));assert(html.includes('Page 2 of 105'));assert(!h.requests.some(r=>r.table==='profiles'&&r.ops.some(op=>op[0]==='range')));
+});
+test('Directory filters and bookmarks go to the server instead of filtering a partial page',async()=>{
+ const h=directoryHarness(),id='12345678-1234-1234-1234-123456789abc';h.exec("ensureMemberDirectory();memberDirectory.search='python robotics';memberDirectory.role='leads';memberDirectory.group='saved';memberDirectory.sort='shared';memberSavedIds.add(qaArgs);memberDirectoryPage=3",id);
+ h.rpcQueued.push({data:{rows:[],total:0,offset:0,stats:{},skills:[]},error:null});await h.run('loadMemberDirectory()');const a=h.rpcCalls.at(-1).args;assert.equal(a.p_search,'python robotics');assert.equal(a.p_role,'leads');assert.equal(a.p_group,'saved');assert.equal(a.p_offset,72);assert.deepEqual(Array.from(a.p_saved),[id]);
+});
+test('An old member search cannot overwrite a newer search or another account',async()=>{
+ const h=directoryHarness(),slow=deferred();h.rpcQueued.push(slow.promise);const old=h.run('loadMemberDirectory()');h.run("memberDirectory.search='new query'");h.rpcQueued.push({data:{rows:[],total:7,offset:0,stats:{all:100},skills:[]},error:null});await h.run('loadMemberDirectory()');slow.resolve({data:{rows:[],total:99,offset:0,stats:{},skills:[]},error:null});await old;assert.equal(h.run('memberRemote.total'),7);
+ const late=deferred();h.rpcQueued.push(late.promise);const loading=h.run('loadMemberDirectory()');h.run("authGeneration++;session={user:{id:'other'}};resetMemberDirectory()");late.resolve({data:{rows:[],total:300,offset:0,stats:{},skills:[]},error:null});await loading;assert.equal(h.run('memberRemote.ready'),false);
+});
+test('A missing directory function offers migration guidance without downloading all profiles',async()=>{
+ const h=directoryHarness();h.rpcQueued.push({error:{code:'PGRST202',message:'Could not find the function public.space_member_directory'}});await h.run('loadMemberDirectory()');assert(h.run('members()').includes('upgrade_directory_learning_performance.sql'));assert.equal(h.requests.length,0);
+});
+test('Student record reads include the learner filter while teacher and admin reads retain their scope',async()=>{
+ for(const role of ['member','teacher','admin']){const h=dataHarness('classroom',{role});for(const table of ['course_enrollments','course_submissions','course_completions','classroom_assignment_submissions'])await h.exec('readRecords(qaArgs)',table);for(const r of h.requests)assert.equal(r.ops.some(op=>op[0]==='eq'&&op[1]==='learner_id'&&op[2]==='self'),role==='member');}
+});
+test('Student classroom loading does not retrieve the complete member directory',async()=>{
+ const h=dataHarness('classroom',{tables:{courses:[{id:'course',instructor_id:'teacher'}]}});await h.run('refresh()');assert(!h.requests.some(r=>r.table==='profiles'&&r.ops.some(op=>op[0]==='range')));assert(h.requests.some(r=>r.table==='profiles'&&r.ops.some(op=>op[0]==='in'&&op[1]==='id')));
+});
+
+test('Signing out in another tab clears this tab immediately and ignores unrelated storage',async()=>{
+ const h=sessionHarness();await h.login();h.exec('handleAuthStorageChange(qaArgs)',{key:'other-app',newValue:'1'});assert.equal(h.run('session.user.id'),'self');h.exec('handleAuthStorageChange(qaArgs)',{key:'sb-qa-auth-token-space-signed-out',newValue:'1'});assert.equal(h.run('session'),null);assert.equal(h.run('sessionEnding'),true);
+});
 let failed=0;
 for(const t of tests){try{await t.fn();console.log('PASS',t.name);}catch(e){failed++;console.log('FAIL',t.name,'\n',e.stack);}}
 console.log(`${tests.length-failed}/${tests.length} checks passed`);

@@ -2,27 +2,38 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const cfg = window.INNOVATEX_CONFIG || {};
 const configured = /^https:\/\/.+\.supabase\.co\/?$/.test(cfg.supabaseUrl || '') && !!cfg.supabaseAnonKey;
-const SESSION_IDLE_MS=30*60*1000, SESSION_MAX_MS=8*60*60*1000;
-const SESSION_CLOCK_KEY='space.auth.tab-clock.v1',authMemory=new Map();
+const DRAFT_MAX_AGE_MS=8*60*60*1000;
+const authMemory=new Map(),authPersistentMemory=new Map();
+// Draft text is tab-scoped. Authentication persists on this browser until sign-out.
 const authTabStorage={
   getItem(key){try{return sessionStorage.getItem(key)??authMemory.get(key)??null;}catch{return authMemory.get(key)??null;}},
   setItem(key,value){authMemory.set(key,value);try{sessionStorage.setItem(key,value);}catch{}},
   removeItem(key){authMemory.delete(key);try{sessionStorage.removeItem(key);}catch{}}
 };
-function savedSessionClock(){try{return JSON.parse(authTabStorage.getItem(SESSION_CLOCK_KEY)||'null');}catch{return null;}}
-function validSessionClock(clock){const now=Date.now();return !!clock&&typeof clock.userId==='string'&&Number.isFinite(clock.startedAt)&&Number.isFinite(clock.lastActivity)&&clock.startedAt<=clock.lastActivity&&clock.lastActivity<=now+1000&&now-clock.lastActivity<SESSION_IDLE_MS&&now-clock.startedAt<SESSION_MAX_MS;}
-// Remove legacy durable credentials; retain only a valid, time-limited tab session.
-function clearSavedAuthTokens() {
-  if(!configured)return;
-  const key=`sb-${new URL(cfg.supabaseUrl).hostname.split('.')[0]}-auth-token`;
-  for(const getStorage of [()=>localStorage,...(validSessionClock(savedSessionClock())?[]:[()=>sessionStorage])]) {
-    try {const storage=getStorage();for(const suffix of ['', '-code-verifier', '-user'])storage.removeItem(key+suffix);} catch {}
-  }
-  if(!validSessionClock(savedSessionClock()))authTabStorage.removeItem(SESSION_CLOCK_KEY);
+const authPersistentStorage={
+  getItem(key){try{return localStorage.getItem(key);}catch{return authPersistentMemory.get(key)??null;}},
+  setItem(key,value){authPersistentMemory.set(key,value);try{localStorage.setItem(key,value);}catch{}},
+  removeItem(key){authPersistentMemory.delete(key);try{localStorage.removeItem(key);}catch{}}
+};
+const authStorageKey=configured?`sb-${new URL(cfg.supabaseUrl).hostname.split('.')[0]}-auth-token`:'';
+const SIGNED_OUT_KEY=authStorageKey?authStorageKey+'-space-signed-out':'';
+function clearSavedAuthTokens(){
+  if(!authStorageKey)return;
+  for(const suffix of ['', '-code-verifier', '-user']){authPersistentStorage.removeItem(authStorageKey+suffix);authTabStorage.removeItem(authStorageKey+suffix);}
 }
-clearSavedAuthTokens();
-const db = configured ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storage:authTabStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
-let sessionStartedAt=0,lastSessionActivityAt=0,lastClockWrite=0,sessionGuardTimer=null,sessionEnding=false,sessionSignOutPromise=null;
+function migrateSavedAuth(){
+  if(!authStorageKey)return;
+  if(authPersistentStorage.getItem(SIGNED_OUT_KEY))clearSavedAuthTokens();
+  else for(const suffix of ['', '-code-verifier', '-user']){
+    const key=authStorageKey+suffix,tab=authTabStorage.getItem(key);
+    if(!authPersistentStorage.getItem(key)&&tab)authPersistentStorage.setItem(key,tab);
+    authTabStorage.removeItem(key);
+  }
+  authTabStorage.removeItem('space.auth.tab-clock.v1');
+}
+migrateSavedAuth();
+const db = configured ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
+let sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cleanUrl = (s) => { try { const u = new URL(s); return u.protocol === 'https:' ? u.href : ''; } catch { return ''; } };
@@ -45,6 +56,7 @@ const memberPageSize=24;
 let memberDirectoryOwner=null,memberSearchTimer=null,memberLinkedProfile=null;
 let memberDirectory={search:'',role:'all',presence:'all',skill:'',group:'all',sort:'online',view:'grid',compact:false};
 let memberSavedIds=new Set();
+let memberRemote={enabled:false,ready:false,loading:false,error:'',rows:[],total:0,stats:{},skills:[]},memberDirectoryRequest=0;
 let applicationsPage = 0, approvedAccountsPage = 0, applicationsOwner = null, applicationsLoading = false, applicationsError = '';
 let applicationRows = [], approvedAccountRows = [], applicationTotal = 0, approvedAccountTotal = 0, applicationsRequest = 0;
 let applicationVerification = new Map(), applicationVerificationError = '';
@@ -580,6 +592,7 @@ async function readRecords(table){
   for(;;){
     let query=db.from(table).select('*',{count:'exact'});
     if(table==='member_learning_paths')query=query.eq('user_id',owner);
+    if(!teacher()&&['course_enrollments','course_submissions','course_completions','classroom_assignment_submissions'].includes(table))query=query.eq('learner_id',owner);
     for(const key of keys)query=query.order(key,{ascending:!!relationKeys[table]});
     const {data,error,count}=await query.range(rows.length,rows.length+499);
     if(error)throw error;
@@ -843,13 +856,13 @@ async function refreshUnreadCounts(){
 
 // Load the open page on demand. Exports fetch complete records independently.
 const pageRefreshDependencies={
-  classroom:['courses','course_enrollments','course_submissions','course_completions','profiles','classroom_assignments','classroom_assignment_submissions'],'meeting-room':['profiles'],'project-board':['projects','project_tasks','project_members','project_milestones','profiles','topics','replies','documents'],
+  classroom:['courses','course_enrollments','course_submissions','course_completions','classroom_assignments','classroom_assignment_submissions'],'meeting-room':['profiles'],'project-board':['projects','project_tasks','project_members','project_milestones','profiles','topics','replies','documents'],
   home:['project_tasks','courses','course_enrollments','course_submissions','course_completions','events','announcements','activity_posts','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions'],
   about:[],founders:['founders'],investors:['founders','investor_updates'],
   privacy:['privacy_requests','profiles'],application:[],
   admin:['profiles','projects','reports','privacy_requests','investor_inquiries','activity_posts','founder_meetings','events','channels','news_posts','documents','audit_events'],
   applications:['teaching_track_assignments','member_learning_paths','classroom_assignments','classroom_assignment_submissions'],moderation:['reports','audit_events','profiles'],
-  notifications:['events','founder_meetings','project_tasks'],members:['profiles','founder_invites'],
+  notifications:['events','founder_meetings','project_tasks'],members:['founder_invites'],
   messages:['profiles','direct_messages','direct_message_reads'],
   feed:['profiles','documents','announcements','news_posts','activity_posts'],
   channels:['profiles','channels','channel_reads','documents','channel_messages','message_reactions'],
@@ -945,6 +958,7 @@ async function refresh(mode='page',requestedPage=page) {
       needed.add('founder_meetings');if(admin()){needed.add('finance_entries');needed.add('finance_reviews');needed.add('finance_receipts');needed.add('finance_monthly_reviews');}
     }
     if(targetPage==='home'&&admin())needed.add('reports');
+    if(targetPage==='members'||targetPage==='classroom'||targetPage==='courses'&&!teacher())needed.delete('profiles');
     if(targetPage==='home'&&officerAccess())needed.add('officer_work_items');
     if(targetPage==='office'&&admin())needed.add('profiles');
     if(targetPage==='inventory'&&founder())needed.add('inventory_movements');
@@ -987,6 +1001,10 @@ async function refresh(mode='page',requestedPage=page) {
         if(!result.error){const people=new Map((cache.profiles||[]).map(p=>[p.id,p]));for(const person of result.data||[])people.set(person.id,person);cache.profiles=[...people.values()];}
       }catch(error){console.error('Post authors',error);}
     }
+  }
+  if(['classroom','courses'].includes(targetPage)&&!profilesComplete){
+    const ids=[...new Set((cache.courses||[]).map(c=>c.instructor_id).filter(Boolean))];
+    if(ids.length){const people=await db.from('profiles').select('*').in('id',ids);if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;if(!people.error){const known=new Map((cache.profiles||[]).map(p=>[p.id,p]));for(const p of people.data||[])known.set(p.id,p);cache.profiles=[...known.values()];}}
   }
   if(names.includes('founders'))await detectFounderPortraits();
   if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
@@ -1056,6 +1074,7 @@ async function refresh(mode='page',requestedPage=page) {
   if(targetPage==='channels'&&communityReady&&activeChannelId)await loadChannelHistory(false);
   if(dmReady&&!dmUpgradeChecked)await loadDmCapabilities();
   if(targetPage==='messages'&&dmReady){if(dmInboxReady)await loadDmInbox();if(activePeerId)await loadDmThread(false);}
+  if(targetPage==='members')await loadMemberDirectory();
   await loadAdvancedPage(targetPage,generation);
   if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
   await hydrateMedia();
@@ -1125,39 +1144,25 @@ function completeLoginWelcome(generation){
   if(generation!==authGeneration||!session||loginWelcomePendingOwner!==session.user.id)return;
   loginWelcomePendingOwner=null;showLoginWelcome();
 }
-function persistSessionClock(){if(!session)return;authTabStorage.setItem(SESSION_CLOCK_KEY,JSON.stringify({userId:session.user.id,startedAt:sessionStartedAt,lastActivity:lastSessionActivityAt}));lastClockWrite=Date.now();}
-function syncSessionGuard(previousOwner,fresh=false) {
-  if(!session){clearInterval(sessionGuardTimer);sessionGuardTimer=null;sessionStartedAt=0;lastSessionActivityAt=0;authTabStorage.removeItem(SESSION_CLOCK_KEY);return;}
-  if(fresh||previousOwner!==session.user.id||!sessionStartedAt){const saved=savedSessionClock();if(!fresh&&validSessionClock(saved)&&saved.userId===session.user.id){sessionStartedAt=saved.startedAt;lastSessionActivityAt=saved.lastActivity;}else{sessionStartedAt=Date.now();lastSessionActivityAt=sessionStartedAt;}}
-  persistSessionClock();
-  if(!sessionGuardTimer)sessionGuardTimer=setInterval(checkSessionExpiry,15000);
-}
-function checkSessionExpiry() {
-  if(sessionEnding)return true;
-  if(!session)return false;
-  const now=Date.now();
-  if(now-lastSessionActivityAt<SESSION_IDLE_MS&&now-sessionStartedAt<SESSION_MAX_MS)return false;
-  expireSession('Your session has ended. Sign in again with a new email code.');
-  return true;
-}
-function recordSessionActivity(event) {
-  if(!session||checkSessionExpiry()||document.hidden||!event.isTrusted)return;
-  lastSessionActivityAt=Date.now();
-  if(Date.now()-lastClockWrite>5000)persistSessionClock();
-}
+// Guard requests during explicit sign-out; there is no app-imposed idle timeout.
+function checkSessionExpiry(){return sessionEnding;}
 function expireSession(message,prompt=true) {
   if(!session||sessionEnding)return;
-  sessionEnding=true;authStateRequest++;
+  sessionEnding=true;authStateRequest++;authPersistentStorage.setItem(SIGNED_OUT_KEY,String(Date.now()));
   // Clear private UI and invalidate pending loads before waiting for any network.
   void touchPresence(false).catch(console.error);
   close();pendingProtectedPage='';page='home';history.replaceState(null,'','#home');
   void signedIn(null).catch(console.error);render();
   void db.auth.stopAutoRefresh().catch(console.error);
-  sessionSignOutPromise=db.auth.signOut({scope:'local'}).then(({error})=>{if(error)console.error('Session sign-out failed',error);}).catch(console.error);
+  sessionSignOutPromise=db.auth.signOut({scope:'local'}).then(({error})=>{if(error)console.error('Session sign-out failed',error);}).catch(console.error).finally(clearSavedAuthTokens);
   if(prompt){signInDialog('signin');show(message);}
 }
+function handleAuthStorageChange(event){
+  if(event.key!==SIGNED_OUT_KEY||!event.newValue||!session)return;
+  sessionEnding=true;authStateRequest++;close();void signedIn(null).catch(console.error);void db.auth.stopAutoRefresh().catch(console.error);
+}
 function handleAuthStateChange(_event,newSession){
-  // A delayed refresh must not reopen a workspace after local expiry.
+  // A delayed refresh must not reopen a workspace after explicit sign-out.
   if(sessionEnding&&newSession)return;
   const request=++authStateRequest;
   if(newSession?.user.id!==session?.user.id)setTimeout(()=>{
@@ -1167,12 +1172,10 @@ function handleAuthStateChange(_event,newSession){
 async function signedIn(newSession,showWelcome=false) {
   if(newSession&&sessionEnding&&!showWelcome)return;
   if(newSession&&!showWelcome&&newSession.user.id===session?.user.id&&checkSessionExpiry())return;
-  const saved=savedSessionClock();
-  if(newSession&&!showWelcome&&newSession.user.id!==session?.user.id&&saved?.userId===newSession.user.id&&!validSessionClock(saved)){session=newSession;sessionStartedAt=saved.startedAt;lastSessionActivityAt=saved.lastActivity;sessionEnding=false;expireSession('Your session has ended. Sign in again with a new email code.');return;}
   const previousOwner=session?.user.id;
   if(!newSession||previousOwner&&previousOwner!==newSession.user.id)spaceClearDrafts(previousOwner);
   advancedReady=false;advancedChecked=false;advancedPreferenceTask=null;advancedLoadError='';advancedPreferences={muted_categories:[],popups:true,sound:false,push_enabled:true};dmAssets={peer:null,pins:[],files:[],total:0};dmAssetsPage=0;spaceEventSummaries=new Map();activeMeetingId=null;advancedMeetingPage=0;advancedClassPage=0;advancedSessionPage=0;advancedProjectPage=0;advancedNotificationPage=0;advancedNotificationFilter='all';spaceEventPage=0;spaceEventRosterSearch='';spaceEventRosterPage=0;advancedBoardPages={};
-  if(newSession&&showWelcome){sessionEnding=false;void db.auth.startAutoRefresh().catch(console.error);}
+  if(newSession&&showWelcome){authPersistentStorage.removeItem(SIGNED_OUT_KEY);sessionEnding=false;void db.auth.startAutoRefresh().catch(console.error);}
   const generation=++authGeneration;
   clearWorkspaceLoads();
   if(!newSession||loginWelcomePendingOwner&&loginWelcomePendingOwner!==newSession.user.id)loginWelcomePendingOwner=null;
@@ -1181,7 +1184,6 @@ async function signedIn(newSession,showWelcome=false) {
   closeImageViewer(false);
   if($('#workspaceSearchInput'))close();
   session=newSession;
-  syncSessionGuard(previousOwner,showWelcome);
   officerReady=false;officerAccessChecked=false;ownOfficerRoles=[];financeAdminReady=false;financeReport=null;financeReportRows=[];financeReportError='';
   learningChoicesReady=false;learningHubReady=false;ownLearningTracks=[];teachingStudentSearch='';teachingStudentTrack='all';teachingStudentPage=0;
   resetMemberDirectory();
@@ -1368,10 +1370,10 @@ async function init() {
   });
   route();
   if(!db) return;
+  window.addEventListener('storage',handleAuthStorageChange);
   db.auth.onAuthStateChange(handleAuthStateChange);
   const {data,error}=await db.auth.getSession();
   if(error) fail(error); else await signedIn(data.session);
-  for(const name of ['pointerdown','keydown','touchstart','scroll'])document.addEventListener(name,recordSessionActivity,{capture:true,passive:true});
   window.addEventListener('focus',checkSessionExpiry);
   window.addEventListener('pageshow',event=>{if(sessionEnding&&!session)signInDialog('signin');else if(!checkSessionExpiry()&&event.persisted&&session)void signedIn(session);});
   document.addEventListener('visibilitychange',()=>{
@@ -1386,7 +1388,7 @@ async function init() {
     if(page==='channels')void refreshChat();
     if(admin())void refreshAdminAlerts();
   });
-  window.addEventListener('pagehide',()=>{if(!session)return;persistSessionClock();dismissLoginWelcome();closeImageViewer(false);close();workspaceLoading=true;$('#content').innerHTML=workspaceSkeleton(page,{account:true});});
+  window.addEventListener('pagehide',()=>{if(!session)return;dismissLoginWelcome();closeImageViewer(false);close();workspaceLoading=true;$('#content').innerHTML=workspaceSkeleton(page,{account:true});});
   window.addEventListener('offline',()=>{updateNetworkStatus();if(session&&!pageDataReady())render();});
   window.addEventListener('online',()=>{updateNetworkStatus();if(session)void refreshVisiblePage({force:true});});
 }
@@ -1715,6 +1717,7 @@ function investorPortal(){
 }
 // Directory preferences and bookmarks stay on this device, scoped to the account.
 function resetMemberDirectory(){
+  memberDirectoryRequest++;memberRemote={enabled:false,ready:false,loading:false,error:'',rows:[],total:0,stats:{},skills:[]};
   clearTimeout(memberSearchTimer);memberSearchTimer=null;memberDirectoryPage=0;memberDirectoryOwner=null;memberLinkedProfile=null;memberSavedIds=new Set();
   memberDirectory={search:'',role:'all',presence:'all',skill:'',group:'all',sort:'online',view:'grid',compact:false};
 }
@@ -1749,6 +1752,7 @@ function memberSharedSkills(p){const mine=new Set(memberSkills(me).map(memberTex
 function memberAvailability(p){return {available:'Available',busy:'Busy',away:'Away'}[p?.availability]||'Not set';}
 function directoryResults(){
   ensureMemberDirectory();
+  if(memberRemote.ready)return memberRemote.rows.filter(memberVisible);
   const terms=memberText(memberDirectory.search).split(/\s+/).filter(Boolean);
   const filtered=directoryPeople().filter(p=>{
     const text=memberText([memberDisplayName(p),p.handle?`@${p.handle}`:'',p.headline,p.programme,p.skills].join(' '));
@@ -1765,6 +1769,7 @@ function directoryResults(){
   });
 }
 function directorySkillCounts(people){
+  if(memberRemote.ready)return memberRemote.skills;
   const skills=new Map();for(const p of people)for(const label of memberSkills(p)){const key=memberText(label),item=skills.get(key)||{label,count:0};item.count++;skills.set(key,item);}
   return [...skills.values()].sort((a,b)=>b.count-a.count||a.label.localeCompare(b.label));
 }
@@ -1806,24 +1811,46 @@ function memberProfileCompletion(){
 function members(){
   if(!clubAccess())return empty('Member access required','Sign in with an approved club account to explore members.');
   ensureMemberDirectory();
-  const people=directoryPeople(),results=directoryResults(),skills=directorySkillCounts(people),online=people.filter(memberOnline).length,newCount=people.filter(memberNew).length,saved=people.filter(p=>memberSavedIds.has(p.id)).length,shared=people.filter(p=>memberSharedSkills(p).length).length,completion=memberProfileCompletion();
-  memberDirectoryPage=Math.min(memberDirectoryPage,Math.max(0,Math.ceil(results.length/memberPageSize)-1));
-  const start=memberDirectoryPage*memberPageSize,visible=results.slice(start,start+memberPageSize),invite=(cache.founder_invites||[]).find(i=>i.email===session?.user.email?.toLowerCase()&&!i.accepted_at);
-  const tabs=[['all','Everyone',people.length],['shared','Shared interests',shared],['new','New here',newCount],['saved','Saved',saved]];
+  if(memberRemote.error&&!memberRemote.ready)return head('COMMUNITY','People make SPACE.','Find a collaborator, meet a mentor, or start a good conversation.')+`<div class="notice" role="alert">${esc(memberRemote.error)} <button class="text-button" data-action="memberReload">Try again</button></div>`;
+  const people=directoryPeople(),results=directoryResults(),skills=directorySkillCounts(people),stats=memberRemote.ready?memberRemote.stats:null,peopleTotal=stats?.all??people.length,total=memberRemote.ready?memberRemote.total:results.length,online=stats?.online??people.filter(memberOnline).length,newCount=stats?.new??people.filter(memberNew).length,saved=stats?.saved??people.filter(p=>memberSavedIds.has(p.id)).length,shared=stats?.shared??people.filter(p=>memberSharedSkills(p).length).length,completion=memberProfileCompletion();
+  memberDirectoryPage=Math.min(memberDirectoryPage,Math.max(0,Math.ceil(total/memberPageSize)-1));
+  const start=memberDirectoryPage*memberPageSize,visible=memberRemote.ready?results:results.slice(start,start+memberPageSize),invite=(cache.founder_invites||[]).find(i=>i.email===session?.user.email?.toLowerCase()&&!i.accepted_at);
+  const tabs=[['all','Everyone',peopleTotal],['shared','Shared interests',shared],['new','New here',newCount],['saved','Saved',saved]];
   return `${head('COMMUNITY','People make SPACE.','Find a collaborator, meet a mentor, or start a good conversation.',`<div class="profile-buttons">${button('Edit my profile','profileForm','button-outline')}<a class="button button-outline" href="#privacy">Privacy</a></div>`)}
   ${invite?`<div class="founder-invite-banner"><div><span class="eyebrow">FOUNDER INVITATION</span><h3>You’ve been invited to the founding team.</h3><p>Accept with your verified account to open founder meetings and planning.</p></div>${button('Accept invitation','acceptFounder')}</div>`:''}
   <section class="member-directory" aria-label="Member directory">
-    <div class="member-directory-intro"><div><span class="eyebrow">YOUR COMMUNITY</span><h2>A little curiosity.<br>A great connection.</h2><p>Explore the people and interests behind the builds.</p><div class="member-intro-stats"><span><strong>${people.length}</strong> visible members</span><button type="button" data-action="memberPresence" data-presence="online"><i aria-hidden="true"></i><strong>${online}</strong> online now</button></div></div><div class="member-intro-actions"><span class="member-spark" aria-hidden="true">${memberDirectoryIcon('spark')}</span><strong>Make room for someone new.</strong><p>Discover a member from your current results.</p><button type="button" class="button" data-action="memberDiscover" ${results.some(p=>p.id!==session?.user.id)?'':'disabled'}>${memberDirectoryIcon('spark')} Meet a member</button></div></div>
+    <div class="member-directory-intro"><div><span class="eyebrow">YOUR COMMUNITY</span><h2>A little curiosity.<br>A great connection.</h2><p>Explore the people and interests behind the builds.</p><div class="member-intro-stats"><span><strong>${peopleTotal}</strong> visible members</span><button type="button" data-action="memberPresence" data-presence="online"><i aria-hidden="true"></i><strong>${online}</strong> online now</button></div></div><div class="member-intro-actions"><span class="member-spark" aria-hidden="true">${memberDirectoryIcon('spark')}</span><strong>Make room for someone new.</strong><p>Discover a member from your current results.</p><button type="button" class="button" data-action="memberDiscover" ${results.some(p=>p.id!==session?.user.id)?'':'disabled'}>${memberDirectoryIcon('spark')} Meet a member</button></div></div>
     ${completion.percent<100?`<aside class="member-completion"><div class="member-completion-ring" style="--completion:${completion.percent}%" aria-hidden="true"><span>${completion.percent}%</span></div><div><strong>Let your profile introduce you.</strong><p>Add ${completion.fields.filter(([,ready])=>!ready).map(([label])=>label.toLowerCase()).join(', ')} to help people find common ground.</p></div><button type="button" data-action="memberCompletion">Finish my profile ${memberDirectoryIcon('arrow')}</button></aside>`:''}
     <div class="member-discovery-tabs" role="group" aria-label="Member groups">${tabs.map(([group,label,count])=>`<button type="button" data-action="memberGroup" data-group="${group}" aria-pressed="${memberDirectory.group===group}">${group==='saved'?memberDirectoryIcon('save'):''}${label}<span>${count}</span></button>`).join('')}</div>
     <div class="member-directory-tools"><div class="member-search-wrap">${dmIcon('search')}<label class="sr-only" for="memberSearch">Search members by name, handle, background or skill</label><input id="memberSearch" type="search" maxlength="120" autocomplete="off" placeholder="Search people, @handles, skills…" value="${esc(memberDirectory.search)}"><kbd aria-hidden="true">/</kbd></div><div class="member-view-options" role="group" aria-label="Directory view"><button type="button" data-action="memberView" data-view="grid" aria-label="Grid view" aria-pressed="${memberDirectory.view==='grid'}">${memberDirectoryIcon('grid')}</button><button type="button" data-action="memberView" data-view="list" aria-label="List view" aria-pressed="${memberDirectory.view==='list'}">${memberDirectoryIcon('list')}</button><button type="button" class="member-density" data-action="memberDensity" aria-pressed="${memberDirectory.compact}">Compact</button></div></div>
-    <div class="member-filter-row"><label>Role<select data-member-setting="role">${memberDirectoryOptions([['all','All roles'],['member','Members'],['leads','Teaching leads'],['teacher','Teachers'],['founder','Founders'],['admin','Administrators']],memberDirectory.role)}</select></label><label>Status<select data-member-setting="presence">${memberDirectoryOptions([['all','Any status'],['online','Online now'],['available','Available'],['busy','Busy'],['away','Away']],memberDirectory.presence)}</select></label><label class="member-skill-select">Interest<select data-member-setting="skill">${memberDirectoryOptions([['','Any interest'],...skills.map(s=>[s.label,`${s.label} (${s.count})`])],memberDirectory.skill)}</select></label><label>Sort by<select data-member-setting="sort">${memberDirectoryOptions([['online','Online first'],['name','Name A–Z'],['newest','Newest members'],['shared','Shared interests']],memberDirectory.sort)}</select></label></div>
+    <div class="member-filter-row"><label>Role<select data-member-setting="role">${memberDirectoryOptions([['all','All roles'],['member','Members'],['leads','Teaching leads'],['teacher','Teachers'],['founder','Founders'],['admin','Administrators']],memberDirectory.role)}</select></label><label>Status<select data-member-setting="presence">${memberDirectoryOptions([['all','Any status'],['online','Online now'],['available','Available'],['busy','Busy'],['away','Away']],memberDirectory.presence)}</select></label><label class="member-skill-select">Interest<select data-member-setting="skill">${memberDirectoryOptions([['','Any interest'],...skills.map(s=>[s.label,`${s.label}${s.count==null?'':` (${s.count})`}`])],memberDirectory.skill)}</select></label><label>Sort by<select data-member-setting="sort">${memberDirectoryOptions([['online','Online first'],['name','Name A–Z'],['newest','Newest members'],['shared','Shared interests']],memberDirectory.sort)}</select></label></div>
     ${skills.length?`<div class="member-interest-strip"><span>Explore interests</span>${skills.slice(0,7).map(s=>`<button type="button" class="member-skill" data-action="memberSkill" data-skill="${esc(s.label)}" aria-pressed="${memberText(memberDirectory.skill)===memberText(s.label)}">${esc(s.label)} <span>${s.count}</span></button>`).join('')}</div>`:''}
     ${memberDirectoryFilters()}
-    <div class="member-results-heading"><h2 id="memberResultsTitle" tabindex="-1">${{all:'The community',shared:'Common ground',new:'Welcome the new faces',saved:'Your saved members'}[memberDirectory.group]}</h2><span id="memberResultsCount" role="status" aria-live="polite">${results.length?`${start+1}–${Math.min(start+memberPageSize,results.length)} of ${results.length}`:'0'} ${results.length===1?'member':'members'}</span></div>
-    <div class="member-grid view-${memberDirectory.view} ${memberDirectory.compact?'is-compact':''}" aria-labelledby="memberResultsTitle">${visible.length?visible.map(memberCard).join(''):`<div class="member-directory-empty">${memberDirectoryIcon('members')}<h3>${memberDirectory.group==='saved'?'Your people, a tap away':memberDirectory.group==='shared'&&!memberSkills(me).length?'Start with your interests':'No members match yet'}</h3><p>${memberDirectory.group==='saved'?'Tap a bookmark on a profile card to save a member here. Saved members are private to this account on this device.':memberDirectory.group==='shared'&&!memberSkills(me).length?'Add comma-separated skills or interests to your profile to discover common ground.':'Try another name, interest or status, or clear your filters.'}</p><button type="button" class="button button-outline" data-action="${memberDirectory.group==='shared'&&!memberSkills(me).length?'profileForm':'memberReset'}">${memberDirectory.group==='shared'&&!memberSkills(me).length?'Add my interests':'Show everyone'}</button></div>`}</div>
-    ${memberDirectoryPager(results.length)}<p class="member-directory-note">Online status is approximate. Only approved, visible club profiles appear. Bookmarks and display choices are saved for your account on this device.</p>
+    <div class="member-results-heading"><h2 id="memberResultsTitle" tabindex="-1">${{all:'The community',shared:'Common ground',new:'Welcome the new faces',saved:'Your saved members'}[memberDirectory.group]}</h2><span id="memberResultsCount" role="status" aria-live="polite">${total?`${start+1}–${Math.min(start+visible.length,total)} of ${total}`:'0'} ${total===1?'member':'members'}</span></div>
+    ${memberRemote.loading?'<p class="hint" role="status">Updating members…</p>':''}${memberRemote.error?`<p class="notice" role="alert">${esc(memberRemote.error)} <button class="text-button" data-action="memberReload">Try again</button></p>`:''}<div class="member-grid view-${memberDirectory.view} ${memberDirectory.compact?'is-compact':''}" aria-labelledby="memberResultsTitle">${visible.length?visible.map(memberCard).join(''):`<div class="member-directory-empty">${memberDirectoryIcon('members')}<h3>${memberDirectory.group==='saved'?'Your people, a tap away':memberDirectory.group==='shared'&&!memberSkills(me).length?'Start with your interests':'No members match yet'}</h3><p>${memberDirectory.group==='saved'?'Tap a bookmark on a profile card to save a member here. Saved members are private to this account on this device.':memberDirectory.group==='shared'&&!memberSkills(me).length?'Add comma-separated skills or interests to your profile to discover common ground.':'Try another name, interest or status, or clear your filters.'}</p><button type="button" class="button button-outline" data-action="${memberDirectory.group==='shared'&&!memberSkills(me).length?'profileForm':'memberReset'}">${memberDirectory.group==='shared'&&!memberSkills(me).length?'Add my interests':'Show everyone'}</button></div>`}</div>
+    ${memberDirectoryPager(total)}<p class="member-directory-note">Online status is approximate. Only approved, visible club profiles appear. Bookmarks and display choices are saved for your account on this device.</p>
   </section>`;
+}
+async function loadMemberDirectory(){
+  if(!clubAccess())return;
+  ensureMemberDirectory();const owner=session.user.id,generation=authGeneration,request=++memberDirectoryRequest;
+  const args={p_search:memberDirectory.search,p_role:memberDirectory.role,p_presence:memberDirectory.presence,p_skill:memberDirectory.skill,p_group:memberDirectory.group,p_sort:memberDirectory.sort,p_saved:[...memberSavedIds].filter(memberProfileId),p_offset:memberDirectoryPage*memberPageSize,p_limit:memberPageSize};
+  memberRemote.enabled=true;memberRemote.loading=true;memberRemote.error='';
+  try{
+    const result=await requestWithDeadline(()=>db.rpc('space_member_directory',args),10000,'Member search took too long. Try again.');
+    if(session?.user.id!==owner||authGeneration!==generation||memberDirectoryRequest!==request)return;
+    if(result.error)throw result.error;
+    const value=result.data;
+    if(!value||!Array.isArray(value.rows)||!Number.isSafeInteger(value.total)||value.rows.length>memberPageSize)throw Error('Member search could not load. Try again.');
+    memberRemote={enabled:true,ready:true,loading:false,error:'',rows:value.rows.filter(memberVisible),total:value.total,stats:value.stats||{},skills:Array.isArray(value.skills)?value.skills:[]};
+    if(args.p_skill&&!memberRemote.skills.some(s=>memberText(s.label)===memberText(args.p_skill)))memberRemote.skills.push({label:args.p_skill,count:null});
+    memberDirectoryPage=Math.floor(Number(value.offset||0)/memberPageSize);
+    const known=new Map((cache.profiles||[]).map(p=>[p.id,p]));for(const p of memberRemote.rows)known.set(p.id,p);cache.profiles=[...known.values()];
+  }catch(error){if(session?.user.id!==owner||authGeneration!==generation||memberDirectoryRequest!==request)return;memberRemote.loading=false;memberRemote.error=schemaUnavailable(error)?'Activate member search by running upgrade_directory_learning_performance.sql in Supabase.':error.message||'Member search could not load. Try again.';}
+}
+function refreshMemberDirectory(focusId='',selection=null){
+  if(!memberRemote.enabled){rerenderMemberDirectory(focusId,selection);return;}
+  const owner=session?.user.id;void loadMemberDirectory().then(()=>{if(page==='members'&&session?.user.id===owner)rerenderMemberDirectory(focusId,selection);});render();
 }
 function rerenderMemberDirectory(focusId='',selection=null){
   render();
@@ -1832,28 +1859,28 @@ function rerenderMemberDirectory(focusId='',selection=null){
 }
 function memberDirectorySearch(input){
   if(page!=='members'||!clubAccess())return;
-  ensureMemberDirectory();memberDirectory.search=String(input.value||'').slice(0,120);memberDirectoryPage=0;
+  ensureMemberDirectory();memberDirectory.search=String(input.value||'').slice(0,120);memberDirectoryPage=0;if(memberRemote.enabled)memberDirectoryRequest++;
   clearTimeout(memberSearchTimer);const owner=session.user.id;
-  memberSearchTimer=setTimeout(()=>{if(page!=='members'||!clubAccess()||session.user.id!==owner)return;const focused=document.activeElement?.id==='memberSearch',current=$('#memberSearch'),selection=current?[current.selectionStart,current.selectionEnd]:null;rerenderMemberDirectory(focused?'memberSearch':'',selection);},180);
+  memberSearchTimer=setTimeout(()=>{if(page!=='members'||!clubAccess()||session.user.id!==owner)return;const focused=document.activeElement?.id==='memberSearch',current=$('#memberSearch'),selection=current?[current.selectionStart,current.selectionEnd]:null;refreshMemberDirectory(focused?'memberSearch':'',selection);},250);
 }
 function memberDirectoryChange(input){
   if(page!=='members'||!clubAccess())return;
   ensureMemberDirectory();
   const key=input.dataset.memberSetting,value=input.value,allowed={role:['all','member','leads','teacher','founder','admin'],presence:['all','online','available','busy','away'],sort:['online','name','newest','shared']};
-  if(key==='skill'){if(value&&!directorySkillCounts(directoryPeople()).some(s=>s.label===value))return;}
+  if(key==='skill'){if(value.length>60)return;}
   else if(!allowed[key]?.includes(value))return;
-  memberDirectory[key]=value;memberDirectoryPage=0;render();
+  memberDirectory[key]=value;memberDirectoryPage=0;refreshMemberDirectory();
   document.querySelector(`[data-member-setting="${key}"]`)?.focus({preventScroll:true});
 }
 function memberDirectoryKeyboard(e){
   if(page!=='members'||!clubAccess()||e.ctrlKey||e.metaKey||e.altKey||e.isComposing||$('#modal')?.open||$('#imageViewer')?.open)return false;
-  if(e.key==='Escape'&&e.target.id==='memberSearch'){clearTimeout(memberSearchTimer);memberDirectory.search='';memberDirectoryPage=0;e.preventDefault();rerenderMemberDirectory('memberSearch');return true;}
+  if(e.key==='Escape'&&e.target.id==='memberSearch'){clearTimeout(memberSearchTimer);memberDirectory.search='';memberDirectoryPage=0;e.preventDefault();refreshMemberDirectory('memberSearch');return true;}
   if(e.key==='/'&&!e.target.closest?.('input,textarea,select,[contenteditable]')){e.preventDefault();$('#memberSearch')?.focus({preventScroll:true});return true;}
   return false;
 }
 function hydrateDirectoryPhotos(){
   if(!clubAccess()||!mediaReady||page!=='members')return;
-  const owner=session.user.id,paths=directoryResults().slice(memberDirectoryPage*memberPageSize,(memberDirectoryPage+1)*memberPageSize).map(p=>p.avatar_path).filter(Boolean);
+  const owner=session.user.id,paths=(memberRemote.ready?directoryResults():directoryResults().slice(memberDirectoryPage*memberPageSize,(memberDirectoryPage+1)*memberPageSize)).map(p=>p.avatar_path).filter(Boolean);
   void hydrateMedia(paths).then(changed=>{
     if(!changed||page!=='members'||session?.user.id!==owner)return;
     // Update photos in place without moving focus or replacing search controls.
@@ -1866,7 +1893,14 @@ function openLinkedMemberProfile(){
   const [route,id]=location.hash.slice(1).split('/');if(route!=='members'||!memberProfileId(id)){memberLinkedProfile=null;return;}
   const token=`${authGeneration}:${location.hash}`;if(memberLinkedProfile===token)return;
   if(directoryPeople().some(p=>p.id===id)){memberLinkedProfile=token;memberProfile(id);}
-  else if(!workspaceHydrating){memberLinkedProfile=token;show('This profile is unavailable or private.');}
+  else if(!workspaceHydrating){
+    memberLinkedProfile=token;
+    if(!memberRemote.ready){show('This profile is unavailable or private.');return;}
+    const owner=session.user.id;void db.from('profiles').select('*').eq('id',id).maybeSingle().then(({data,error})=>{
+      if(session?.user.id!==owner||token!==`${authGeneration}:${location.hash}`)return;
+      if(!error&&memberVisible(data)){cache.profiles=[...(cache.profiles||[]).filter(p=>p.id!==id),data];memberProfile(id);}else show('This profile is unavailable or private.');
+    }).catch(()=>{if(session?.user.id===owner)show('This profile could not load. Try again.');});
+  }
 }
 function memberCompletionDialog(){
   if(!clubAccess())return;
@@ -1874,16 +1908,17 @@ function memberCompletionDialog(){
   modal(`<span class="eyebrow">YOUR INTRODUCTION</span><h2>Make yourself easy to meet.</h2><p class="subtle">${done} of ${fields.length} profile details complete. You choose what to share; privacy settings stay in your control.</p><ul class="member-completion-list">${fields.map(([label,ready])=>`<li><span>${ready?'✓':'○'} ${label}</span><strong>${ready?'Added':'To add'}</strong></li>`).join('')}</ul><p class="subtle">Separate skills and interests with commas, for example: Python, robotics, automation.</p><div class="profile-buttons">${avatarReady?button('Update photo','avatarForm','button-outline'):''}${button('Edit profile','profileForm')}</div>`);
 }
 function memberDirectoryAction(action,el,id){
-  const supported=['memberSave','memberSkill','memberGroup','memberPresence','memberView','memberDensity','memberReset','memberClearFilter','memberDiscover','memberPage','memberCompletion','memberCopyLink'];
+  const supported=['memberReload','memberSave','memberSkill','memberGroup','memberPresence','memberView','memberDensity','memberReset','memberClearFilter','memberDiscover','memberPage','memberCompletion','memberCopyLink'];
   if(!supported.includes(action))return false;
   if(!clubAccess())return true;
   ensureMemberDirectory();clearTimeout(memberSearchTimer);
+  if(action==='memberReload'){const owner=session.user.id;void loadMemberDirectory().then(()=>{if(session?.user.id===owner&&page==='members')render();});return true;}
   if(action==='memberSave'){
     const profile=directoryPeople().find(p=>p.id===id);if(!profile||id===session.user.id)return true;
     if(memberSavedIds.has(id))memberSavedIds.delete(id);
     else if(memberSavedIds.size<500)memberSavedIds.add(id);
     else{show('You have saved 500 members. Remove a bookmark before adding another.');return true;}
-    saveMemberDirectory();
+    saveMemberDirectory();if(memberRemote.ready){refreshMemberDirectory();return true;}
     if(el.dataset.modal==='true'){el.setAttribute('aria-pressed',String(memberSavedIds.has(id)));el.innerHTML=`${memberDirectoryIcon('save')} ${memberSavedIds.has(id)?'Saved':'Save member'}`;if(page==='members')render();}
     else{render();[...document.querySelectorAll('.member-card')].find(card=>card.dataset.memberId===id)?.querySelector('[data-action="memberSave"]')?.focus({preventScroll:true});}
     return true;
@@ -1902,12 +1937,12 @@ function memberDirectoryAction(action,el,id){
     else show('Try clearing the filters to meet another member.');return true;
   }
   if(action==='memberPage'){
-    const next=Number(el.dataset.page),total=directoryResults().length;
+    const next=Number(el.dataset.page),total=memberRemote.ready?memberRemote.total:directoryResults().length;
     if(!Number.isInteger(next)||next<0||next*memberPageSize>=total)return true;
-    memberDirectoryPage=next;render();$('#memberResultsTitle')?.focus({preventScroll:true});$('#memberResultsTitle')?.scrollIntoView({block:'start',behavior:'auto'});return true;
+    memberDirectoryPage=next;refreshMemberDirectory('memberResultsTitle');$('#memberResultsTitle')?.focus({preventScroll:true});$('#memberResultsTitle')?.scrollIntoView({block:'start',behavior:'auto'});return true;
   }
   if(action==='memberSkill'){
-    const skill=directorySkillCounts(directoryPeople()).find(s=>memberText(s.label)===memberText(el.dataset.skill));if(!skill)return true;
+    const skill=directorySkillCounts(directoryPeople()).find(s=>memberText(s.label)===memberText(el.dataset.skill))||(memberRemote.ready&&el.dataset.skill?.length<=60?{label:el.dataset.skill}:null);if(!skill)return true;
     memberDirectory.skill=memberText(memberDirectory.skill)===memberText(skill.label)?'':skill.label;
     if($('#modal')?.open)close();
     memberDirectory.group='all';
@@ -1920,9 +1955,9 @@ function memberDirectoryAction(action,el,id){
   if(action==='memberClearFilter'){
     const key=el.dataset.filter;if(!['search','role','presence','skill','group'].includes(key))return true;memberDirectory[key]=['search','skill'].includes(key)?'':'all';
   }
-  memberDirectoryPage=0;
+  if(!['memberView','memberDensity'].includes(action))memberDirectoryPage=0;
   if(page!=='members'){location.hash='#members';return true;}
-  render();
+  if(['memberView','memberDensity'].includes(action))render();else refreshMemberDirectory();
   // Keep keyboard focus on the selected control after replacing the directory.
   if(action==='memberClearFilter'||action==='memberReset')$('#memberSearch')?.focus({preventScroll:true});
   else document.querySelector(`[data-action="${action}"]${action==='memberView'?`[data-view="${el.dataset.view}"]`:action==='memberGroup'?`[data-group="${el.dataset.group}"]`:''}`)?.focus({preventScroll:true});
@@ -3029,7 +3064,7 @@ function signInDialog(mode='signin') {
   if(pendingEmail) return codeDialog();
   pendingAuthMode=mode==='signup'?'signup':'signin';
   const destination=pendingProtectedPage?pendingProtectedPage.replace(/-/g,' '):'';
-  modal(`<span class="eyebrow">SPACE ENGINEERING CLUB</span><h2>${pendingAuthMode==='signup'?'Create your account':'Sign in'}</h2>${destination?`<div class="auth-access-note"><strong>${esc(destination[0].toUpperCase()+destination.slice(1))} is in the club workspace.</strong><span>Sign in to continue, or create an account for administrator approval.</span></div>`:''}<div class="auth-switch"><button type="button" class="${pendingAuthMode==='signin'?'selected':''}" data-action="signin">I have an account</button><button type="button" class="${pendingAuthMode==='signup'?'selected':''}" data-action="signup">Create an account</button></div><p class="muted">${pendingAuthMode==='signup'?'Choose the type of account you are applying for. Verify your email once to create the account; an administrator will review the application.':'Enter the email for your existing account. We’ll send a fresh one-time sign-in code.'}</p><form id="editor" data-kind="login" class="form-stack">${pendingAuthMode==='signup'?select('I am applying as','application_type',['member','teacher','founder','investor'],pendingType):''}${field('Email address','email','email')}<button class="button" type="submit">${pendingAuthMode==='signup'?'Create account and send code':'Send sign-in code'}</button></form><p class="hint">Refreshing this tab keeps you signed in. Sign in again after closing the tab or after 30 minutes without activity or 8 hours in total.</p>`);
+  modal(`<span class="eyebrow">SPACE ENGINEERING CLUB</span><h2>${pendingAuthMode==='signup'?'Create your account':'Sign in'}</h2>${destination?`<div class="auth-access-note"><strong>${esc(destination[0].toUpperCase()+destination.slice(1))} is in the club workspace.</strong><span>Sign in to continue, or create an account for administrator approval.</span></div>`:''}<div class="auth-switch"><button type="button" class="${pendingAuthMode==='signin'?'selected':''}" data-action="signin">I have an account</button><button type="button" class="${pendingAuthMode==='signup'?'selected':''}" data-action="signup">Create an account</button></div><p class="muted">${pendingAuthMode==='signup'?'Choose the type of account you are applying for. Verify your email once to create the account; an administrator will review the application.':'Enter the email for your existing account. We’ll send a fresh one-time sign-in code.'}</p><form id="editor" data-kind="login" class="form-stack">${pendingAuthMode==='signup'?select('I am applying as','application_type',['member','teacher','founder','investor'],pendingType):''}${field('Email address','email','email')}<button class="button" type="submit">${pendingAuthMode==='signup'?'Create account and send code':'Send sign-in code'}</button></form><p class="hint">You stay signed in on this browser until you sign out. Use Sign out when you finish on a shared device.</p>`);
 }
 function codeDialog() {
   modal(`<span class="eyebrow">SPACE ENGINEERING CLUB</span><h2>${pendingAuthMode==='signup'?'Verify your new account':'Enter your sign-in code'}</h2><p class="muted">Enter the one-time code sent to <strong>${esc(pendingEmail)}</strong>.</p><form id="editor" data-kind="verify" class="form-stack"><div class="field"><label for="code">One-time code</label><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" maxlength="10" placeholder="Your code" required></div><button class="button" type="submit">${pendingAuthMode==='signup'?'Verify account':'Sign in'}</button></form><div class="otp-actions"><button class="text-button" data-action="resendCode">Resend code</button><button class="text-button" data-action="changeEmail">Use another email</button></div><p class="hint">Only the latest code will work. Check your spam folder if you don't see the email.</p>`);
@@ -4520,7 +4555,7 @@ async function loadAdvancedPage(target,generation=authGeneration){
   if(target==='project-board')activeProject=(cache.projects||[]).find(p=>p.id===activeProject)?.id||(cache.projects||[])[0]?.id||null;
   const scopeCourse=activeCourseId,scopeProject=activeProject,rowsFor=async n=>{
    if(target==='classroom'&&['space_lesson_checkins','space_class_attendance'].includes(n))return null;
-   if(target==='classroom'&&n.startsWith('space_'))return scopeCourse?readAdvancedRows(n,{eq:{course_id:scopeCourse}}):[];
+   if(target==='classroom'&&n.startsWith('space_'))return scopeCourse?readAdvancedRows(n,{eq:{course_id:scopeCourse,...(!teacher()&&['space_practical_grades','space_grade_history','space_certificates'].includes(n)?{learner_id:owner}:{})}}):[];
    if(target==='project-board'&&n==='space_project_updates')return scopeProject?readAdvancedRows(n,{eq:{project_id:scopeProject}}):[];
    if(target==='home'&&n==='space_meeting_actions')return readAdvancedRows(n,{eq:{assignee_id:owner},neq:{status:'done'},limit:20,order:'due_at'});
    if(target==='home'&&n==='space_class_sessions')return readAdvancedRows(n,{gte:{ends_at:new Date().toISOString()},limit:20,order:'starts_at'});
@@ -4532,7 +4567,7 @@ async function loadAdvancedPage(target,generation=authGeneration){
   const failed=[];results.forEach((r,i)=>{if(r.status==='fulfilled'){if(r.value!==null)cache[tables[i]]=r.value;}else failed.push(tables[i]);});advancedLoadError=failed.length?'Some advanced records could not load. Use Reload workspace to retry.':'';
   if(target==='classroom'){
    const childTables=[['space_lesson_checkins','lesson_id',(cache.space_course_lessons||[]).filter(l=>l.course_id===scopeCourse).map(l=>l.id)],['space_class_attendance','session_id',(cache.space_class_sessions||[]).filter(l=>l.course_id===scopeCourse).map(l=>l.id)]];
-   const children=await settledMapLimit(childTables,2,async([table,key,ids])=>{const rows=[];for(let i=0;i<ids.length;i+=100)rows.push(...await requestWithDeadline(()=>readAdvancedRows(table,{in:{[key]:ids.slice(i,i+100)}}),8000,'Classroom progress could not load.'));return rows;});if(!valid()||activeCourseId!==scopeCourse)return;children.forEach((r,i)=>{if(r.status==='fulfilled')cache[childTables[i][0]]=r.value;else advancedLoadError='Some attendance or lesson progress could not load. Reload the workspace to retry.';});
+   const children=await settledMapLimit(childTables,2,async([table,key,ids])=>{const rows=[];for(let i=0;i<ids.length;i+=100)rows.push(...await requestWithDeadline(()=>readAdvancedRows(table,{in:{[key]:ids.slice(i,i+100)},...(!teacher()?{eq:{learner_id:owner}}:{})}),8000,'Classroom progress could not load.'));return rows;});if(!valid()||activeCourseId!==scopeCourse)return;children.forEach((r,i)=>{if(r.status==='fulfilled')cache[childTables[i][0]]=r.value;else advancedLoadError='Some attendance or lesson progress could not load. Reload the workspace to retry.';});
   }
   if(target==='messages'&&activePeerId)await loadAdvancedDmAssets(false);
   if(target==='events')await loadSpaceEventSummaries();
@@ -4632,9 +4667,9 @@ async function spaceDownloadDmFile(id){if(!clubAccess()||dmAssets.peer!==activeP
 async function spaceDownloadMessageFile(id){if(!clubAccess()||!advancedReady)return;const owner=session.user.id,generation=authGeneration;try{const {data,error}=await db.rpc('space_message_file',{p_message:id});if(error)throw error;if(!data)throw Error('This message has no available file.');if(session?.user.id!==owner||generation!==authGeneration)return;const result=await db.storage.from('club-direct-files').createSignedUrl(data.storage_path,90,{download:data.file_name});if(result.error)throw result.error;if(session?.user.id!==owner||generation!==authGeneration)return;const a=document.createElement('a');a.href=result.data.signedUrl;a.rel='noopener noreferrer';a.target='_blank';a.click();}catch(error){if(session?.user.id===owner)fail(error);}}
 function spaceDraftKey(form){if(!session||!form?.dataset?.kind?.startsWith('space'))return '';const values=[...new FormData(form)].filter(([key])=>['id','course','project','meeting','submission','review','event'].includes(key)).map(([k,v])=>k+'='+v).join('&');return 'space.draft.'+session.user.id+'.'+form.dataset.kind+'.'+values;}
 function spaceSaveFormDraft(form){const key=spaceDraftKey(form);if(!key)return;const values=[...new FormData(form)].filter(([,value])=>typeof value==='string');authTabStorage.setItem(key,JSON.stringify({at:Date.now(),values}));}
-function spaceRestoreFormDraft(){const form=$('#editor'),key=spaceDraftKey(form);if(!key)return;try{const saved=JSON.parse(authTabStorage.getItem(key)||'null');if(!saved||Date.now()-saved.at>SESSION_MAX_MS)return;for(const [name,value]of saved.values){const input=form.elements.namedItem?.(name)||form.elements[name];if(input&&input.type!=='hidden'&&input.type!=='file'&&input.type!=='checkbox'&&input.type!=='radio')input.value=value;}const hint=document.createElement('p');hint.className='hint';hint.textContent='Draft restored from this signed-in tab.';form.prepend(hint);}catch{}}
+function spaceRestoreFormDraft(){const form=$('#editor'),key=spaceDraftKey(form);if(!key)return;try{const saved=JSON.parse(authTabStorage.getItem(key)||'null');if(!saved||Date.now()-saved.at>DRAFT_MAX_AGE_MS)return;for(const [name,value]of saved.values){const input=form.elements.namedItem?.(name)||form.elements[name];if(input&&input.type!=='hidden'&&input.type!=='file'&&input.type!=='checkbox'&&input.type!=='radio')input.value=value;}const hint=document.createElement('p');hint.className='hint';hint.textContent='Draft restored from this signed-in tab.';form.prepend(hint);}catch{}}
 function spaceSaveDmDraft(peer,draft){if(!session)return;const key='space.draft.'+session.user.id+'.dm.'+peer;if(!draft.text&&!draft.reply){authTabStorage.removeItem(key);return;}authTabStorage.setItem(key,JSON.stringify({at:Date.now(),text:draft.text,reply:draft.reply?{id:draft.reply.id,body:String(draft.reply.body||'').slice(0,3000),sender_id:draft.reply.sender_id,recipient_id:draft.reply.recipient_id}:null,token:draft.token||null}));}
-function spaceReadDmDraft(peer){if(!session)return {};try{const data=JSON.parse(authTabStorage.getItem('space.draft.'+session.user.id+'.dm.'+peer)||'null');return data&&Date.now()-data.at<SESSION_MAX_MS?{text:String(data.text||'').slice(0,3000),reply:data.reply||null,token:data.token||null}:{};}catch{return {};}}
+function spaceReadDmDraft(peer){if(!session)return {};try{const data=JSON.parse(authTabStorage.getItem('space.draft.'+session.user.id+'.dm.'+peer)||'null');return data&&Date.now()-data.at<DRAFT_MAX_AGE_MS?{text:String(data.text||'').slice(0,3000),reply:data.reply||null,token:data.token||null}:{};}catch{return {};}}
 function spaceClearDrafts(owner){if(!owner)return;const prefix='space.draft.'+owner+'.';try{const keys=[];for(let i=0;i<sessionStorage.length;i++){const k=sessionStorage.key(i);if(k?.startsWith(prefix))keys.push(k);}keys.forEach(k=>authTabStorage.removeItem(k));}catch{}for(const key of [...authMemory.keys()])if(key.startsWith(prefix))authTabStorage.removeItem(key);}
 async function sendAdvancedDm(form){
  const peer=form.dataset.peer,input=form.elements.body,draft=dmDraftFor(peer),owner=session?.user.id,body=input.value.trim(),send=form.querySelector('[type=submit]');

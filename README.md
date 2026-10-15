@@ -5,6 +5,14 @@
 
 A responsive workspace for a practical engineering and technology club. The site is static and can be hosted on GitHub Pages. Supabase provides email sign-in and a database protected by row level security.
 
+## Faster directory, student queries and remembered sign-in — 15 October 2026
+
+Sign-in now stays active on this browser until Sign out; the tab-only storage and app idle/eight-hour timers have been removed. Student reads explicitly filter their own learning records, and classroom loading fetches instructor names rather than the complete member directory.
+
+For the new member directory, run the entire [`supabase/upgrade_directory_learning_performance.sql`](supabase/upgrade_directory_learning_performance.sql) in **Supabase → SQL Editor → New query → Run**, after the advanced platform migration. Then reload SPACE. Search, roles, status, interests, shared interests, bookmarks and ordering are applied on the server. Only 24 profile cards are transferred per page; complete visible counts and interest facets remain available. Profile links load the one requested visible profile. The migration preserves RLS, adds derived searchable profile fields, and caches caller-only permission checks once per statement. No real member, message or learning record is removed. Without the new function, Members shows activation guidance while the other pages remain usable.
+
+The fixture checks for the migration run with `SPACE_PGLITE_MODULE=/tmp/space-load-tools/node_modules/@electric-sql/pglite node scripts/check_directory_database.mjs`. The new workload measures the 24-row directory RPC and explicitly filtered student submissions against the same 2,000-account fixture and 10/50/100-client ramp. The prior full-directory baseline remains retained for comparison. Live Supabase migration activation and end-to-end capacity still require separate checks.
+
 ## Measured load testing — 15 October 2026
 
 A repeatable isolated PostgreSQL benchmark now seeds 2,000 synthetic accounts and production-like message/classroom row counts, then measures seven authenticated workloads at 10, 50 and 100 concurrent SQL clients. It records p50/p95/p99, throughput, errors and post-load permission/integrity checks. Run **Actions → SPACE measured database load test → Run workflow** and download its JSON artifact. See [`docs/load_testing.md`](docs/load_testing.md) for the method and the separate Supabase staging capacity gate. This does not contact the live database, establish 2,000 simultaneous user capacity, or require a production migration.
@@ -49,7 +57,7 @@ Student Home, teaching review summaries and the Calendar include classwork. Acce
 
 Open **Membership approvals → Approved accounts → Change role / teaching courses**. Choose **Member**, **Teacher**, **Founder**, **Investor** or **Administrator**. Teachers require at least one teaching course; a founder with no teaching courses retains leadership without teaching access. Administrators have the full management dashboard. Role changes keep the existing approved account, notify the person in-app and create an audit entry. Their sidebar and dashboard follow the role on the next access refresh or sign-in; database permissions apply immediately.
 
-The role tool cannot change the signed-in administrator's own access. Reassign every class before removing its instructor's teaching role or course responsibility, including past classes whose reviews must remain supported. Public founder biographies are managed separately. Roles apply only to approved, email-verified accounts and cannot be self-assigned. Existing notification subscriptions and the fresh-login/30-minute inactivity policy remain in place.
+The role tool cannot change the signed-in administrator's own access. Reassign every class before removing its instructor's teaching role or course responsibility, including past classes whose reviews must remain supported. Public founder biographies are managed separately. Roles apply only to approved, email-verified accounts and cannot be self-assigned. Existing notification subscriptions remain in place. Sign-in is remembered in this browser until explicit sign-out or server-side session invalidation.
 
 ### Verification
 
@@ -137,7 +145,7 @@ After email-code verification, sign-in awaits the profile/access check, opens th
 
 ## SPACE branding
 
-The segmented monochrome logo uses source frames from the club’s supplied recording. The matching animation appears in a small, nonmodal welcome after successful interactive email-code verification. It can be dismissed and does not cover or lock the workspace. Routine role/access refreshes do not replay it. Reopening the page requires a fresh sign-in code. Reduced motion, unsupported video playback and media errors use a still image.
+The segmented monochrome logo uses source frames from the club’s supplied recording. The matching animation appears in a small, nonmodal welcome after successful interactive email-code verification. It can be dismissed and does not cover or lock the workspace. Routine role/access refreshes do not replay it. Reopening the page restores the remembered sign-in. Reduced motion, unsupported video playback and media errors use a still image.
 
 The platform now displays **SPACE** on the website, public pages, installation prompt, offline screen, notifications and app icons. Its GitHub address and existing account/PWA identity stay the same. Existing installed apps may update their launcher name/icon after opening online; if yours keeps the old branding, remove that shortcut and install again.
 
@@ -147,7 +155,7 @@ No SQL migration is needed for the website rename. Email settings and deployed E
 2. Under **Authentication → SMTP Settings**, set **Sender name** to `SPACE`.
 3. Redeploy **send-approval-emails** using the updated [function source](supabase/functions/send-approval-emails/index.ts), with its existing secrets and verification settings. In the dashboard editor, replace all deployed code with this file and deploy.
 
-Internal preference keys, API globals, cron job names, calendar event UIDs and backup formats retain their established identifiers to preserve notification subscriptions, schedules and records. Legacy saved Auth tokens are removed under the fresh-login policy below.
+Internal preference keys, API globals, cron job names, calendar event UIDs and backup formats retain their established identifiers to preserve notification subscriptions, schedules and records. Existing tab-scoped Auth tokens are migrated to remembered sign-in as described below.
 
 ## October 1 workspace upgrade
 
@@ -271,11 +279,11 @@ The entry screen has separate **Create an account** and **I have an account** ch
 
 ### Sign-in sessions and refresh
 
-SPACE uses a custom Supabase Auth storage adapter backed by `sessionStorage`, with a memory fallback when browser storage is blocked. Refreshing the current tab retains a valid sign-in; it does not request another code after only a few minutes. Durable legacy Auth tokens for this project are removed from `localStorage`. Other preferences and projects are untouched. A new tab normally needs a new code; browser duplicate-tab or session restoration behavior can copy tab storage, so the elapsed-time limits below remain authoritative.
+SPACE remembers authentication in this browser using localStorage and Supabase refresh tokens. Refreshes, closing/reopening a tab and browser restarts retain a valid session. There is no app-imposed 30-minute inactivity limit or eight-hour maximum. Existing tab-scoped credentials are migrated without requesting another code, and old elapsed-time metadata is removed. The initial account/code and administrator-approval requirements remain unchanged. Clearing browser data, revoked/invalid refresh tokens or configured Supabase server limits can still require a new sign-in. If browser storage is blocked, only an in-memory session is possible.
 
-An open session ends after **30 minutes without user activity** or **8 hours total**, including time in the background and across refreshes. Only trusted visible user input extends the inactivity timer. Polling, token refresh and reloading do not reset the eight-hour clock. Expiry and explicit sign-out immediately clear private UI, stored session metadata, drafts and subscriptions, stop token refresh, and attempt local session revocation. Page exit hides private content; valid page restoration reloads it. These browser controls do not shorten already issued server token expiry or configure Supabase server session limits.
+Explicit Sign out immediately clears private UI, drafts and subscriptions, stops refresh and revokes the local Supabase session. A durable sign-out marker prevents reloads from restoring credentials while revocation is pending; credentials are cleared even if the request fails. Other tabs in the same browser clear their workspace immediately. Other projects and non-auth preferences remain intact. Private content is hidden on page exit and reloaded on restoration.
 
-Verify with `node scripts/check_workspace.mjs`, then use a test account: sign in with a fresh code, refresh within a few minutes and confirm the workspace returns, explicitly sign out and refresh, and verify the 30-minute idle and eight-hour total limits. No SQL migration is needed for the refresh fix.
+Verify with `node scripts/check_workspace.mjs`, then use a test account: sign in, refresh, close/reopen the site, explicitly sign out and reopen again. A remembered session must return in the first three cases and remain signed out in the last. The authentication change requires no database migration.
 
 ### Upgrade: club officers, receipts and monthly finance reviews
 

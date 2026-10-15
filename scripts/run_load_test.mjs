@@ -29,16 +29,16 @@ async function actor(db,n,fn){
  }catch(e){await db.query('rollback');throw e;}
 }
 const workloads=[
- {name:'directory_complete',weight:10,role:'member',run:async(db,n)=>{
-   let total=0,count=0;do {const r=await db.query('select *,count(*) over() as load_total from profiles order by created_at desc,id desc limit 500 offset $1',[total]);count=Number(r.rows[0]?.load_total||0);total+=r.rowCount;}while(total<count);
-   assert(total>=1800&&total<=2000);return total;
+ {name:'directory_page',weight:10,role:'member',run:async(db,n)=>{
+   const r=await db.query('select space_member_directory() data');const value=r.rows[0].data;
+   assert.equal(value.rows.length,24);assert(value.total>=1800&&value.total<=2000);assert(value.rows.every(p=>p.membership_status==='approved'&&p.role!=='investor'));return value.total;
  }},
  {name:'activity_feed',weight:20,role:'member',run:async db=>{const r=await db.query('select * from activity_posts order by created_at desc,id desc limit 50');assert.equal(r.rowCount,50);}},
  {name:'classroom_student',weight:20,role:'member',run:async(db,n)=>{
    const course=uuid(10001+(n%4)*4);await db.query('select * from courses where id=$1',[course]);
    assert.equal((await db.query('select * from space_course_lessons where course_id=$1 order by position',[course])).rowCount,8);
    await db.query('select * from classroom_assignments where course_id=$1 order by created_at desc,id desc limit 500',[course]);
-   const r=await db.query('select * from classroom_assignment_submissions order by created_at desc,id desc limit 500');assert(r.rows.every(x=>x.learner_id===uuid(n)));
+   const r=await db.query('select * from classroom_assignment_submissions where learner_id=$1 order by created_at desc,id desc limit 500',[uuid(n)]);assert(r.rows.every(x=>x.learner_id===uuid(n)));
  }},
  {name:'teacher_roster',weight:5,role:'teacher',run:async db=>{const r=await db.query('select * from teacher_course_roster() order by course_id,learner_id limit 500');assert(r.rowCount>0);}},
  {name:'dm_read',weight:15,role:'member',run:async(db,n)=>{const peer=uuid(n===2000?10:n+1);const r=await db.query('select * from direct_messages where sender_id=any($1::uuid[]) and recipient_id=any($1::uuid[]) order by created_at desc,id desc limit 50',[[uuid(n),peer]]);assert(r.rows.every(x=>[x.sender_id,x.recipient_id].includes(uuid(n))));await db.query('select * from club_dm_inbox(30,0)');}},
@@ -59,7 +59,7 @@ let service,created=false,admin,clients=[];const report={
   'Load generator and database share this machine. No network, PostgREST, Supabase compute, Auth, SMTP, Realtime, Storage, push or browser rendering is measured.',
   'Auth and Storage have SQL contract shims. All public application migrations are used; scheduled external workers are omitted.',
   'Concurrency means active SQL clients, not registered members or simultaneous signed-in browsers. Closed-loop load can hide latency under an open arrival rate.',
-  'Directory uses COUNT OVER plus 500-row offsets; PostgREST exact-count planning and JSON/network cost differ. Other operations model selected hot paths, not complete pages.'
+  'Directory measures one 24-row RPC page plus complete visible statistics; the earlier baseline fetched the full directory. HTTP/network cost is excluded. Other operations model selected hot paths, not complete pages.'
  ]};
 try{
  service=new Client(cfg);await service.connect();

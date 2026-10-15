@@ -4,9 +4,9 @@ const [input,output]=process.argv.slice(2);
 if(!input||!output)throw Error('Usage: node scripts/render_load_report.mjs INPUT.json OUTPUT.md');
 const r=JSON.parse(await fs.readFile(input,'utf8'));
 if(r.schema_version!==1||!Array.isArray(r.stages))throw Error('Unsupported report');
-const labels={directory_complete:'Complete directory',activity_feed:'Activity feed',classroom_student:'Student classroom',teacher_roster:'Teacher roster',dm_read:'DM history + inbox',notification_badge:'Notifications + unread counts',dm_send_retry:'DM send + identical retry'};
+const labels={directory_complete:'Complete directory',directory_page:'Directory page + statistics',activity_feed:'Activity feed',classroom_student:'Student classroom',teacher_roster:'Teacher roster',dm_read:'DM history + inbox',notification_badge:'Notifications + unread counts',dm_send_retry:'DM send + identical retry'};
 const rows=r.stages.map(s=>`| ${s.clients} | ${s.operations} | ${s.operations_per_second} | ${s.p50_ms} | ${s.p95_ms} | ${s.p99_ms} | ${s.errors} | ${s.passed?'Pass':'Fail'} |`).join('\n');
-const workloads=Object.entries(labels).map(([key,label])=>`| ${label} | ${r.stages.map(s=>{const w=s.by_workload[key];return w?`${w.p95_ms} (${w.samples} samples)`:'—';}).join(' | ')} |`).join('\n');
+const workloads=Object.entries(labels).filter(([key])=>r.stages.some(s=>s.by_workload[key])).map(([key,label])=>`| ${label} | ${r.stages.map(s=>{const w=s.by_workload[key];return w?`${w.p95_ms} (${w.samples} samples)`:'—';}).join(' | ')} |`).join('\n');
 const e=r.environment;
 const last=r.stages.at(-1),slowest=Object.entries(last.by_workload).sort((a,b)=>b[1].p95_ms-a[1].p95_ms).slice(0,2);
 const failed=r.stages.filter(s=>!s.passed).map(s=>s.clients),passed=r.stages.filter(s=>s.passed).map(s=>s.clients);
@@ -24,7 +24,7 @@ ${findings}
 
 At the final measured stage (${last.clients} clients), the two slowest operation p95 values were ${slowest.map(([key,w])=>`${labels[key]}: ${(w.p95_ms/1000).toFixed(2)} s`).join(' and ')}. The workload shares and counts below show their relative sample sizes.
 
-1. Move directory search and filtering to the server and retrieve only the visible member page. Keep complete CSV exports as a separate batched operation. The current benchmark deliberately measures the app's full-directory retrieval behavior.
+1. Move directory search and filtering to the server and retrieve only the visible member page. Keep complete CSV exports as a separate batched operation. The earlier baseline measured a full directory; the optimized workload measures one server-filtered 24-row page with visible counts and facets.
 2. Add explicit learner/course filters to student data requests, retaining RLS and separate teacher/admin scopes. The current classroom operation requests the RLS-visible submissions collection. Capture EXPLAIN ANALYZE with BUFFERS in staging to verify the effective scan and index behavior before choosing an index or policy change.
 3. Rerun the same fixture and workload after those changes, then run a sustained HTTP/browser test against separate Supabase staging. Do not treat a larger database connection limit as a fix for slow queries.
 
