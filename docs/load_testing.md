@@ -2,11 +2,17 @@
 
 This is a repeatable **isolated database benchmark**, not a claim about the capacity of the live Supabase project. No production URL, member credentials, service-role key, real email, uploaded file or financial record is used. There is no database migration for the club to run for this test.
 
+## Baseline measured on 15 October 2026
+
+The [full report](load-test-results/2026-10-15-postgres.md) and [original JSON](load-test-results/2026-10-15-postgres.json) are retained in the repository. [GitHub run 38718920167](https://github.com/Turkson225/Turk-Innovation-CLUB/actions/runs/38718920167) completed the workload and integrity checks. The job correctly failed its latency threshold: overall p95 was 592.53 ms at 10 clients, 2,896.18 ms at 50, and 5,576.04 ms at 100, with zero request errors. Complete-directory and student-classroom reads were the slowest operations. These results call for targeted query/loading improvements before a busy launch; they do not describe the actual Supabase service.
+
 ## Run it in GitHub
 
 Open **Actions → SPACE measured database load test → Run workflow → main**. The workflow also runs when its two test scripts or workflow are changed on main. It uses a fresh PostgreSQL 17 service, installs the pinned `pg@8.16.3` client, applies the repository's application migrations, and deletes its randomly named database when finished. The disposable service is destroyed after the job. Cron and external email/push delivery workers are not installed.
 
 Open the completed run and download **space-load-test-RUN_ID** under Artifacts. `postgres.json` contains the measured environment, schema/build revision, row counts, timing samples summarized by workload and stage, errors, thresholds and integrity checks. Artifacts are retained for 30 days. Failed thresholds cause a failed job, while the report is uploaded whenever it was produced. A setup/fixture failure is a test failure, not a capacity result.
+
+To produce the readable report after downloading its JSON: `node scripts/render_load_report.mjs postgres.json report.md`. The renderer summarizes the stored data; it sends no traffic and does not rerun the benchmark.
 
 ## Dataset and workloads
 

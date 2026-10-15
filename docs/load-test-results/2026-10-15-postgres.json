@@ -1,0 +1,354 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-15T10:15:26.234Z",
+  "scope": "isolated PostgreSQL only; not live Supabase capacity",
+  "source_commit": "ea4278b6dccbad118c4944dac35ff0658f22efdf",
+  "duration_per_stage_seconds": 30,
+  "workload_model": "closed loop, one outstanding operation per client, no think time; queueing included; warm cache",
+  "thresholds": {
+    "p95_ms": 2000,
+    "error_rate_below": 0.01
+  },
+  "migrations": [
+    "schema.sql",
+    "upgrade_community.sql",
+    "upgrade_membership_collaboration.sql",
+    "upgrade_activity_feed.sql",
+    "upgrade_direct_messages.sql",
+    "upgrade_media_threads.sql",
+    "upgrade_profile_images.sql",
+    "upgrade_roles_investors.sql",
+    "upgrade_teacher_materials.sql",
+    "fix_thread_reply_policies.sql",
+    "fix_reply_policy_recursion.sql",
+    "upgrade_course_journey.sql",
+    "upgrade_privacy_requests.sql",
+    "upgrade_founder_portraits.sql",
+    "upgrade_inventory_finance.sql",
+    "upgrade_inventory_finance_approvals.sql",
+    "upgrade_admin_application_alerts.sql",
+    "upgrade_admin_alert_inventory_edits.sql",
+    "upgrade_inventory_unit_changes.sql",
+    "upgrade_approval_emails.sql",
+    "upgrade_teacher_promotions.sql",
+    "upgrade_founder_teaching_roles.sql",
+    "upgrade_course_planning.sql",
+    "upgrade_private_applications.sql",
+    "upgrade_course_classroom_access.sql",
+    "upgrade_course_lifecycle_reviews.sql",
+    "upgrade_message_counts.sql",
+    "upgrade_dm_conversations.sql",
+    "upgrade_web_push.sql",
+    "upgrade_learning_dashboards.sql",
+    "upgrade_officer_workspaces_finance.sql",
+    "upgrade_advanced_platform.sql"
+  ],
+  "environment": {
+    "node": "v24.21.0",
+    "platform": "linux",
+    "arch": "x64",
+    "cpu_model": "AMD EPYC 7763 64-Core Processor",
+    "logical_cpu_count": 4,
+    "total_memory_bytes": 16766414848,
+    "postgresql": "PostgreSQL 17.11 (Debian 17.11-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+    "database_settings": [
+      {
+        "name": "fsync",
+        "setting": "on",
+        "unit": null
+      },
+      {
+        "name": "max_connections",
+        "setting": "150",
+        "unit": null
+      },
+      {
+        "name": "shared_buffers",
+        "setting": "16384",
+        "unit": "8kB"
+      },
+      {
+        "name": "synchronous_commit",
+        "setting": "on",
+        "unit": null
+      },
+      {
+        "name": "work_mem",
+        "setting": "4096",
+        "unit": "kB"
+      }
+    ],
+    "database_bytes": 114377231
+  },
+  "stages": [
+    {
+      "clients": 10,
+      "elapsed_seconds": 30.27,
+      "operations": 1980,
+      "operations_per_second": 65.42,
+      "samples": 1980,
+      "p50_ms": 18.97,
+      "p95_ms": 592.53,
+      "p99_ms": 675.37,
+      "max_ms": 780.87,
+      "errors": 0,
+      "error_rate": 0,
+      "by_workload": {
+        "directory_complete": {
+          "samples": 202,
+          "p50_ms": 568.23,
+          "p95_ms": 684.75,
+          "p99_ms": 740.16,
+          "max_ms": 780.87,
+          "errors": 0
+        },
+        "activity_feed": {
+          "samples": 394,
+          "p50_ms": 4.91,
+          "p95_ms": 11.4,
+          "p99_ms": 17.61,
+          "max_ms": 24.97,
+          "errors": 0
+        },
+        "classroom_student": {
+          "samples": 396,
+          "p50_ms": 476.44,
+          "p95_ms": 569.57,
+          "p99_ms": 626.39,
+          "max_ms": 657.66,
+          "errors": 0
+        },
+        "teacher_roster": {
+          "samples": 99,
+          "p50_ms": 14.96,
+          "p95_ms": 21.77,
+          "p99_ms": 27,
+          "max_ms": 27,
+          "errors": 0
+        },
+        "dm_read": {
+          "samples": 297,
+          "p50_ms": 11.74,
+          "p95_ms": 19.04,
+          "p99_ms": 23.69,
+          "max_ms": 29.62,
+          "errors": 0
+        },
+        "notification_badge": {
+          "samples": 393,
+          "p50_ms": 40.75,
+          "p95_ms": 58.89,
+          "p99_ms": 69.14,
+          "max_ms": 81.76,
+          "errors": 0
+        },
+        "dm_send_retry": {
+          "samples": 199,
+          "p50_ms": 5.54,
+          "p95_ms": 13.19,
+          "p99_ms": 28.24,
+          "max_ms": 28.56,
+          "errors": 0
+        }
+      },
+      "error_examples": [],
+      "load_generator_cpu_microseconds": {
+        "user": 5110229,
+        "system": 679062
+      },
+      "passed": true
+    },
+    {
+      "clients": 50,
+      "elapsed_seconds": 31.15,
+      "operations": 1979,
+      "operations_per_second": 63.52,
+      "samples": 1979,
+      "p50_ms": 94.1,
+      "p95_ms": 2896.18,
+      "p99_ms": 3248.94,
+      "max_ms": 3595.16,
+      "errors": 0,
+      "error_rate": 0,
+      "by_workload": {
+        "directory_complete": {
+          "samples": 210,
+          "p50_ms": 2760.06,
+          "p95_ms": 3325.19,
+          "p99_ms": 3441.14,
+          "max_ms": 3595.16,
+          "errors": 0
+        },
+        "activity_feed": {
+          "samples": 388,
+          "p50_ms": 23.14,
+          "p95_ms": 46.62,
+          "p99_ms": 89.15,
+          "max_ms": 124.35,
+          "errors": 0
+        },
+        "classroom_student": {
+          "samples": 397,
+          "p50_ms": 2332.38,
+          "p95_ms": 2851.93,
+          "p99_ms": 2942.81,
+          "max_ms": 3022.9,
+          "errors": 0
+        },
+        "teacher_roster": {
+          "samples": 97,
+          "p50_ms": 64.04,
+          "p95_ms": 110.78,
+          "p99_ms": 147.22,
+          "max_ms": 147.22,
+          "errors": 0
+        },
+        "dm_read": {
+          "samples": 303,
+          "p50_ms": 58.88,
+          "p95_ms": 91.15,
+          "p99_ms": 132.96,
+          "max_ms": 158.07,
+          "errors": 0
+        },
+        "notification_badge": {
+          "samples": 379,
+          "p50_ms": 213.95,
+          "p95_ms": 296.02,
+          "p99_ms": 463.22,
+          "max_ms": 487.82,
+          "errors": 0
+        },
+        "dm_send_retry": {
+          "samples": 205,
+          "p50_ms": 37.48,
+          "p95_ms": 113.66,
+          "p99_ms": 188.2,
+          "max_ms": 241.25,
+          "errors": 0
+        }
+      },
+      "error_examples": [],
+      "load_generator_cpu_microseconds": {
+        "user": 4960500,
+        "system": 532015
+      },
+      "passed": false
+    },
+    {
+      "clients": 100,
+      "elapsed_seconds": 32.06,
+      "operations": 2009,
+      "operations_per_second": 62.66,
+      "samples": 2009,
+      "p50_ms": 214.71,
+      "p95_ms": 5576.04,
+      "p99_ms": 6261.2,
+      "max_ms": 6888.28,
+      "errors": 0,
+      "error_rate": 0,
+      "by_workload": {
+        "directory_complete": {
+          "samples": 215,
+          "p50_ms": 5167.63,
+          "p95_ms": 6544.83,
+          "p99_ms": 6729.17,
+          "max_ms": 6888.28,
+          "errors": 0
+        },
+        "activity_feed": {
+          "samples": 389,
+          "p50_ms": 44.58,
+          "p95_ms": 120.24,
+          "p99_ms": 223.43,
+          "max_ms": 237.85,
+          "errors": 0
+        },
+        "classroom_student": {
+          "samples": 410,
+          "p50_ms": 4580.08,
+          "p95_ms": 5617.71,
+          "p99_ms": 5942.34,
+          "max_ms": 6195,
+          "errors": 0
+        },
+        "teacher_roster": {
+          "samples": 96,
+          "p50_ms": 136.49,
+          "p95_ms": 270.02,
+          "p99_ms": 449.75,
+          "max_ms": 449.75,
+          "errors": 0
+        },
+        "dm_read": {
+          "samples": 312,
+          "p50_ms": 123.27,
+          "p95_ms": 233.32,
+          "p99_ms": 297.29,
+          "max_ms": 318.38,
+          "errors": 0
+        },
+        "notification_badge": {
+          "samples": 374,
+          "p50_ms": 417.48,
+          "p95_ms": 628.16,
+          "p99_ms": 761.81,
+          "max_ms": 914.14,
+          "errors": 0
+        },
+        "dm_send_retry": {
+          "samples": 213,
+          "p50_ms": 100.33,
+          "p95_ms": 271.78,
+          "p99_ms": 369.34,
+          "max_ms": 629.32,
+          "errors": 0
+        }
+      },
+      "error_examples": [],
+      "load_generator_cpu_microseconds": {
+        "user": 4650079,
+        "system": 473788
+      },
+      "passed": false
+    }
+  ],
+  "integrity": {
+    "event_capacity": {
+      "confirmed": 25,
+      "waitlisted": 75,
+      "concurrent_clients": 25
+    },
+    "duplicate_retry_tokens": 0,
+    "member_application_answers_visible": 1,
+    "nonparticipant_dm_visible": 0
+  },
+  "limitations": [
+    "Load generator and database share this machine. No network, PostgREST, Supabase compute, Auth, SMTP, Realtime, Storage, push or browser rendering is measured.",
+    "Auth and Storage have SQL contract shims. All public application migrations are used; scheduled external workers are omitted.",
+    "Concurrency means active SQL clients, not registered members or simultaneous signed-in browsers. Closed-loop load can hide latency under an open arrival rate.",
+    "Directory uses COUNT OVER plus 500-row offsets; PostgREST exact-count planning and JSON/network cost differ. Other operations model selected hot paths, not complete pages."
+  ],
+  "dataset": {
+    "profiles": 2000,
+    "courses": 16,
+    "course_enrollments": 7964,
+    "classroom_assignments": 128,
+    "classroom_assignment_submissions": 7964,
+    "space_course_lessons": 128,
+    "direct_messages": 100000,
+    "channel_messages": 20000,
+    "activity_posts": 10000,
+    "notifications": 40000
+  },
+  "database_statistics": {
+    "xact_commit": "6653",
+    "xact_rollback": "0",
+    "deadlocks": "0",
+    "blks_read": "82",
+    "blks_hit": "67204538",
+    "temp_bytes": "1400000"
+  },
+  "finished_at": "2026-10-15T10:17:04.886Z",
+  "passed": false
+}

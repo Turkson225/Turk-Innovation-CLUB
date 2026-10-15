@@ -1,5 +1,11 @@
 # SPACE capacity and connection readiness
 
+## Measured baseline — 15 October 2026
+
+A fresh PostgreSQL 17 service with the repository migrations and 2,000 synthetic profiles completed a measured mixed workload at 10, 50 and 100 concurrent SQL clients. Overall p95 was **0.59 s**, **2.90 s** and **5.58 s** respectively. There were no request errors, duplicate retry tokens or observed private-message leaks, and 100 competing event registrations respected 25 available places. The 50- and 100-client stages **failed the two-second latency target**, with the complete directory and student classroom reads dominating the slow tail. Prioritize server-side directory pagination and explicitly scoped student queries, then compare actual query plans and repeat the workload. See the [complete measured report](load-test-results/2026-10-15-postgres.md) and [repeatable method](load_testing.md).
+
+This benchmark uses one isolated GitHub runner, with SQL shims for Auth and Storage. It does not measure production Supabase, HTTP/CDN delivery, browser rendering, Realtime, uploads or email. A separate Supabase staging workload remains necessary before a simultaneous-user capacity claim.
+
 ## What 2,000 members means
 
 2,000 registered accounts is a practical planning target for a PostgreSQL-backed club. It is not the same workload as 2,000 simultaneous chats, uploads or sign-ins. No live concurrency benchmark or restore was performed against this club's Supabase project. A member count alone cannot establish capacity or guarantee zero delay. Supabase compute, Realtime limits, disk, bandwidth, query plans and SMTP throughput must match peak activity.

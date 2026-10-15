@@ -5,6 +5,12 @@
 
 A responsive workspace for a practical engineering and technology club. The site is static and can be hosted on GitHub Pages. Supabase provides email sign-in and a database protected by row level security.
 
+## Measured load testing — 15 October 2026
+
+A repeatable isolated PostgreSQL benchmark now seeds 2,000 synthetic accounts and production-like message/classroom row counts, then measures seven authenticated workloads at 10, 50 and 100 concurrent SQL clients. It records p50/p95/p99, throughput, errors and post-load permission/integrity checks. Run **Actions → SPACE measured database load test → Run workflow** and download its JSON artifact. See [`docs/load_testing.md`](docs/load_testing.md) for the method and the separate Supabase staging capacity gate. This does not contact the live database, establish 2,000 simultaneous user capacity, or require a production migration.
+
+The [first measured report](docs/load-test-results/2026-10-15-postgres.md) records p95 of 0.59 s at 10 clients, 2.90 s at 50 and 5.58 s at 100, with zero request errors. The higher-concurrency stages failed the two-second latency target. Complete-directory and student-classroom reads need attention before calling the platform ready for a busy launch.
+
 ## Capacity and slow connections — 14 October 2026
 
 SPACE now loads the open page on demand, runs dataset reads in batches of up to six tasks, combines duplicate background refreshes, reuses a complete profile cache, and backs off after failed loads. Home fetches recent post authors instead of the whole member directory. Responsive skeletons cover startup, sign-in and first page visits; a slow-load message appears after three seconds, and failed page loads offer a retry after a 20-second deadline. Browser offline events pause automatic polling and show a connection banner; previously loaded records remain in the current session. No SQL migration is needed.
