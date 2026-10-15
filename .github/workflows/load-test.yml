@@ -1,0 +1,66 @@
+name: SPACE measured database load test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/load-test.yml'
+      - 'scripts/run_load_test.mjs'
+      - 'scripts/load_test_fixture.mjs'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: space-measured-load
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-ci-fixture
+          POSTGRES_DB: space_load_service
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install isolated test client
+        run: npm install --prefix "$RUNNER_TEMP/space-load-tools" --ignore-scripts --no-audit --no-fund pg@8.16.3
+      - name: Allow 100 test clients plus observers
+        run: |
+          docker exec ${{ job.services.postgres.id }} psql -U postgres -d space_load_service -c 'ALTER SYSTEM SET max_connections=150'
+          docker restart ${{ job.services.postgres.id }}
+          for attempt in $(seq 1 30); do
+            if docker exec ${{ job.services.postgres.id }} pg_isready -U postgres -d space_load_service; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Run 2,000-member workload at 10, 50 and 100 clients
+        env:
+          SPACE_LOAD_DISPOSABLE_SERVICE: '1'
+          SPACE_LOAD_PASSWORD: isolated-ci-fixture
+          SPACE_LOAD_PG_MODULE: ${{ runner.temp }}/space-load-tools/node_modules/pg
+        run: node scripts/run_load_test.mjs --seconds=30 --clients=10,50,100 --commit=${{ github.sha }} --out=load-test-results/postgres.json
+      - name: Preserve measured report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: space-load-test-${{ github.run_id }}
+          path: load-test-results/
+          if-no-files-found: warn
+          retention-days: 30
