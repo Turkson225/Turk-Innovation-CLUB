@@ -12,9 +12,9 @@ import { pipeline } from 'node:stream/promises';
 
 const BUCKETS = [
   'club-documents', 'club-media', 'club-learning', 'club-course-evidence',
-  'club-founder-portraits', 'club-finance-receipts', 'club-direct-files',
+  'club-founder-portraits', 'club-finance-receipts', 'club-direct-files', 'club-shop-images',
 ];
-const REQUIRED_BUCKETS = BUCKETS.filter((bucket) => !['club-founder-portraits','club-finance-receipts','club-direct-files'].includes(bucket));
+const REQUIRED_BUCKETS = BUCKETS.filter((bucket) => !['club-founder-portraits','club-finance-receipts','club-direct-files','club-shop-images'].includes(bucket));
 const PAGE_SIZE = 100;
 const MAX_ATTEMPTS = 4;
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -25,7 +25,7 @@ function usage() {
   BACKUP_DIR=/absolute/path/outside/the/repository/run-YYYY-MM-DD \\
   node scripts/backup_storage.mjs
 
-Downloads the four core buckets plus founder portraits, finance receipts and private DM files, if installed,
+Downloads the four core buckets plus founder portraits, finance receipts, private DM files and shop images, if installed,
 into a NEW directory. It writes objects/,
 files.jsonl (path, metadata, SHA-256), and manifest.json (bucket settings and counts).
 No files are changed on the server. Do not commit the resulting backup.`);

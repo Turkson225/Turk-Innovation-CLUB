@@ -33,6 +33,7 @@ function migrateSavedAuth(){
 }
 migrateSavedAuth();
 const db = configured ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
+let commerce=null;
 let sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -139,8 +140,13 @@ let pendingAuthMode = sessionStorage.getItem('innovatex.pendingAuthMode') === 's
 let pendingProtectedPage = '';
 let founderPortraitReady = false;
 let toastTimer;
-const pages = ['classroom','meeting-room','project-board','home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','finance-reports','officers','office','discussions','courses','teaching','events','calendar','announcements','founder-room'];
+const pages = ['shop','cart','orders','shop-admin','role-updates','classroom','meeting-room','project-board','home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','finance-reports','officers','office','discussions','courses','teaching','events','calendar','announcements','founder-room'];
 const workspacePageInfo={
+  shop:{title:'SPACE shop',section:'Club shop',aliases:'Buy merchandise T-shirts electronics kits'},
+  cart:{title:'Basket',section:'Club shop'},
+  orders:{title:'My orders',section:'Club shop',aliases:'Collection purchases order tracking'},
+  'shop-admin':{title:'Manage shop',section:'Administration',aliases:'Products sale stock prices orders'},
+  'role-updates':{title:'Role updates',section:'Your workspace',aliases:'Assignment notes acknowledge responsibilities'},
   classroom:{title:'Classroom tools',section:'Learning & projects',aliases:'Lessons attendance gradebook certificates'},
   'meeting-room':{title:'Meetings & actions',section:'Club activities',aliases:'Secretary minutes agenda attendance'},
   'project-board':{title:'Project workspace',section:'Learning & projects',aliases:'Kanban board progress evidence'},
@@ -198,6 +204,8 @@ function updateWorkspaceNavigation(){
   const nav=$('#nav');if(!nav)return;
   const links=[...nav.querySelectorAll('a[data-page]')];
   const allowed=target=>{
+    if(['role-updates','notifications'].includes(target))return approved();
+    if(target==='shop-admin')return admin();
     if(target==='application')return !!session&&!approved();
     if(target==='teaching')return teacher();
     if(target==='founder-room'||target==='investors')return founder();
@@ -256,9 +264,9 @@ function updateAdminAlertControls(){
 function dismissAdminAlert(){clearTimeout(adminAlertDismissTimer);adminDeferredAlert=null;$('#adminAlert').hidden=true;}
 function dismissMemberAlert(){clearTimeout(memberAlertTimer);memberAlertNotificationId=null;$('#memberAlert').hidden=true;}
 function updateInboxIndicators(){
-  const count=clubAccess()?(inboxUnreadCount??(cache.notifications||[]).filter(n=>!n.read_at).length):0;
+  const count=approved()?(inboxUnreadCount??(cache.notifications||[]).filter(n=>!n.read_at).length):0;
   const bell=$('#memberBell'),bubble=$('#memberBellCount');
-  bell.hidden=!clubAccess()||!enhancedReady;
+  bell.hidden=!approved()||!enhancedReady;
   bell.setAttribute('aria-label',`${count} unread club ${count===1?'update':'updates'}. Open Notifications`);
   bubble.textContent=count>99?'99+':String(count);
   bubble.hidden=!count;
@@ -269,7 +277,7 @@ function updateInboxIndicators(){
 async function refreshInboxUnreadCount(){
   if(networkOffline())return;
   const owner=session?.user.id,request=++inboxCountRequest;
-  if(!owner||!clubAccess()||!enhancedReady){inboxUnreadCount=null;updateInboxIndicators();return;}
+  if(!owner||!approved()||!enhancedReady){inboxUnreadCount=null;updateInboxIndicators();return;}
   const {count,error}=await db.from('notifications').select('id',{count:'exact',head:true}).eq('user_id',owner).is('read_at',null);
   if(request!==inboxCountRequest||session?.user.id!==owner)return;
   if(error)console.error('Inbox unread count',error);
@@ -282,7 +290,7 @@ function notificationTitle(notification){
     ?'Your SPACE application was approved':notification?.title||'';
 }
 function showMemberAlert(notification){
-  if(!clubAccess()||!advancedAlertAllowed(notification))return;
+  if(!approved()||!advancedAlertAllowed(notification))return;
   if(document.hidden){memberDeferredNotification=notification;return;}
   if(memberAlertNotificationId===notification.id&&!$('#memberAlert').hidden)return;
   memberDeferredNotification=null;
@@ -295,14 +303,14 @@ function showMemberAlert(notification){
   memberAlertTimer=setTimeout(dismissMemberAlert,11000);
 }
 function receiveMemberNotification(notification){
-  if(!clubAccess()||!session||notification?.user_id!==session.user.id)return;
+  if(!approved()||!session||notification?.user_id!==session.user.id)return;
   const known=(cache.notifications||[]).some(n=>n.id===notification.id);
   const byId=new Map((cache.notifications||[]).map(n=>[n.id,n]));
   byId.set(notification.id,notification);
   cache.notifications=[...byId.values()].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,1000);
   if(!known&&inboxUnreadCount!==null&&!notification.read_at)inboxUnreadCount++;
   updateInboxIndicators();void refreshInboxUnreadCount();
-  if(!known&&notification.kind==='role')void refreshVisiblePage({force:true}).then(()=>{if(page==='home'||page==='office')render();});
+  if(!known&&['role','role_assignment'].includes(notification.kind))void refreshVisiblePage({force:true}).then(()=>{if(page==='home'||page==='office')render();});
   if(page==='notifications')render();
   if(!known&&notification.kind==='direct_message'&&notification.target_type==='direct_message')void refreshDmAfterNotification(notification.target_id);
   if(!known&&!(page==='messages'&&activePeerId===notification.target_id&&!document.hidden&&notification.kind==='direct_message'))showMemberAlert(notification);
@@ -856,6 +864,7 @@ async function refreshUnreadCounts(){
 
 // Load the open page on demand. Exports fetch complete records independently.
 const pageRefreshDependencies={
+  shop:[],cart:[],orders:[],'shop-admin':[],'role-updates':[],
   classroom:['courses','course_enrollments','course_submissions','course_completions','classroom_assignments','classroom_assignment_submissions'],'meeting-room':['profiles'],'project-board':['projects','project_tasks','project_members','project_milestones','profiles','topics','replies','documents'],
   home:['project_tasks','courses','course_enrollments','course_submissions','course_completions','events','announcements','activity_posts','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions'],
   about:[],founders:['founders'],investors:['founders','investor_updates'],
@@ -942,7 +951,13 @@ async function refresh(mode='page',requestedPage=page) {
     await detectFounderPortraits();
     if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
     communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=results[2].status==='fulfilled';inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
-    if(previous!==accessSignature(me)||!['home','about','founders','investors','investor-portal','privacy'].includes(targetPage)) {route();return;}
+    if(previous!==accessSignature(me)||!['home','about','founders','investors','investor-portal','privacy','role-updates','notifications'].includes(targetPage)) {route();return;}
+    if(['role-updates','notifications','home'].includes(targetPage)){
+      const notices=await db.from('notifications').select('*').eq('user_id',owner).order('created_at',{ascending:false}).limit(100);
+      if(session?.user.id!==owner||generation!==authGeneration)return;
+      if(!notices.error){cache.notifications=notices.data||[];enhancedReady=true;}
+      await commerce?.load(targetPage);
+    }
     render();return {failures};
   }
   await detectWorkspaceCapabilities(generation);
@@ -1076,6 +1091,7 @@ async function refresh(mode='page',requestedPage=page) {
   if(targetPage==='messages'&&dmReady){if(dmInboxReady)await loadDmInbox();if(activePeerId)await loadDmThread(false);}
   if(targetPage==='members')await loadMemberDirectory();
   await loadAdvancedPage(targetPage,generation);
+  await commerce?.load(targetPage);
   if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
   await hydrateMedia();
   if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
@@ -1183,7 +1199,7 @@ async function signedIn(newSession,showWelcome=false) {
   if(showWelcome&&newSession?.user.id)loginWelcomePendingOwner=newSession.user.id;
   closeImageViewer(false);
   if($('#workspaceSearchInput'))close();
-  session=newSession;
+  session=newSession;commerce?.reset();
   officerReady=false;officerAccessChecked=false;ownOfficerRoles=[];financeAdminReady=false;financeReport=null;financeReportRows=[];financeReportError='';
   learningChoicesReady=false;learningHubReady=false;ownLearningTracks=[];teachingStudentSearch='';teachingStudentTrack='all';teachingStudentPage=0;
   resetMemberDirectory();
@@ -1229,7 +1245,7 @@ async function signedIn(newSession,showWelcome=false) {
     if(approved())void touchPresence().catch(console.error);
   } else { me=null;applicationAnswersReady=false;roleReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); await loadPublic(); }
   if(session&&!approved()&&!['about','founders','investors','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
-  if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
+  if(investor()&&!['home','about','founders','investors','investor-portal','privacy','role-updates','notifications'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='founder-room'&&!founder()) {page='founders';history.replaceState(null,'','#founders');}
   if(['finance','finance-review'].includes(page)&&!admin()){page='home';history.replaceState(null,'','#home');}
   if(page==='finance-review'&&admin()){page='finance';history.replaceState(null,'','#finance');}
@@ -1270,7 +1286,7 @@ async function finishWorkspaceSignIn(generation){
     }
     if(communityReady && clubAccess()) chatRealtime=db.channel('innovatex-chat')
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'channel_messages'},refreshChat).subscribe();
-    if(clubAccess()){
+    if(approved()){
       memberNoticeRealtime=db.channel(`innovatex-inbox-${session.user.id}`)
         .on('postgres_changes',{event:'INSERT',schema:'public',table:'notifications',filter:`user_id=eq.${session.user.id}`},payload=>{
           const notification=payload.new;
@@ -1351,6 +1367,7 @@ async function init() {
     if(e.target.id==='inventorySearch'){inventorySearchTerm=e.target.value;applyInventorySearch();}
   });
   document.addEventListener('change',e=>{
+    if(commerce?.change(e.target))return;
     if(advancedChange(e))return;
     if(e.target.name==='assignment'&&e.target.form?.dataset.kind==='officerWork'){const position=String(e.target.value).split('|')[1],kind=e.target.form.elements.kind;if(kind)kind.innerHTML=['task',officerPositions.find(p=>p[0]===position)?.[3]||'project_plan'].map(value=>`<option value="${value}">${value.replaceAll('_',' ')}</option>`).join('');}
     if(e.target.dataset.memberSetting){memberDirectoryChange(e.target);return;}
@@ -1428,7 +1445,7 @@ function setSidebarOpen(open){
 }
 function route() {
   const requested=location.hash.slice(1).split('/')[0] || 'home';page=pages.includes(requested)?requested:'home';
-  if(learningSelectionRequired()&&!['courses','privacy','application'].includes(page)){page='courses';history.replaceState(null,'','#courses');}
+  if(learningSelectionRequired()&&!['courses','privacy','application','role-updates','notifications'].includes(page)){page='courses';history.replaceState(null,'','#courses');}
   if(page==='classroom')activeCourseId=location.hash.slice(1).split('/')[1]||activeCourseId;
   if(page==='meeting-room')activeMeetingId=location.hash.slice(1).split('/')[1]||activeMeetingId;
   if(page==='project-board')activeProject=location.hash.slice(1).split('/')[1]||activeProject;
@@ -1442,17 +1459,17 @@ function route() {
     page='home';
     if(authReady||!configured){
       const [,date,view]=location.hash.slice(1).split('/');
-      pendingProtectedPage=requested==='calendar'&&calendarParseDay(date)?`calendar/${date}/${calendarViews.includes(view)?view:'month'}`:requested==='members'&&memberProfileId(date)?`members/${date}`:requested;
+      pendingProtectedPage=requested==='calendar'&&calendarParseDay(date)?`calendar/${date}/${calendarViews.includes(view)?view:'month'}`:['members','shop','orders'].includes(requested)&&memberProfileId(date)?`${requested}/${date}`:requested;
       history.replaceState(null,'','#home');
     }
   }else if(!session&&authReady)pendingProtectedPage='';
   if(session&&!approved()&&!['about','founders','investors','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
-  if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
+  if(investor()&&!['home','about','founders','investors','investor-portal','privacy','role-updates','notifications'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='investor-portal'&&authReady&&!investor()&&!admin()){page='investors';history.replaceState(null,'','#investors');}
   if(page==='teaching'&&authReady&&!teacher()){page=clubAccess()?'courses':'home';history.replaceState(null,'','#'+page);}
   if(['finance','finance-review'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   if(page==='finance-review'&&admin()){page='finance';history.replaceState(null,'','#finance');}
-  if(page==='officers'&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
+  if(['officers','shop-admin'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   if(officerAccessChecked&&(page==='office'&&!officerAccess()||page==='finance-reports'&&!financeReportAccess())){page='home';history.replaceState(null,'','#home');}
   if(page==='founder-room'&&authReady&&!founder()){page='founders';history.replaceState(null,'','#founders');show('Founder access required.');}
   if(['admin','applications','moderation'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
@@ -1500,9 +1517,10 @@ function render() {
   if(session&&approved()&&load&&!load.hadData&&['loading','offline','error'].includes(load.status)&&!learningSelectionRequired()){
     $('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
   }
-  const views={classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
+  const views={...Object.fromEntries(['shop','cart','orders','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
-  $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+views[page]();
+  $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'?commerce?.homeRoleBanner()||'':'')+views[page]();
+  commerce?.afterRender();
   if(page==='members'){hydrateDirectoryPhotos();openLinkedMemberProfile();}
   if(memberFocus&&page==='members'&&!$('#modal')?.open){const search=$('#memberSearch');search?.focus({preventScroll:true});search?.setSelectionRange?.(memberFocus.start,memberFocus.end);}
   if(page==='inventory')applyInventorySearch();
@@ -1522,11 +1540,13 @@ function workspaceSearchItems(){
   const result=[],add=(key,label,meta,page,action='',id='',text='')=>result.push({key,label,meta,page,action,id,text:label+' '+meta+' '+text});
   const destinations=[['home','Home','Your workspace'],['about','About the club','Our mission and vision'],['founders','Founders','Meet the founding team'],['privacy','Privacy & conduct','Profile choices and data requests']];
   if(session&&!approved())destinations.push(['application','My application','Check your membership request']);
-  if(clubAccess())destinations.push(['classroom','Classroom tools','Lessons attendance gradebook certificates'],['meeting-room','Meetings & actions','Club agendas minutes and follow-up'],['project-board','Project workspace','Task boards and build evidence'],['feed','Activity feed','Build updates and conversations'],['messages','Messages','Private conversations'],['channels','Team channels','Discuss and share files'],['members','Members','Find a collaborator'],['courses','Courses','Your practical learning plan'],['projects','Projects','Plans, tasks and progress'],['library','Document library','Shared resources'],['news','Technology news','Ideas worth exploring'],['calendar','Calendar','Workshops and deadlines'],['events','Events','Club meetups and sessions'],['notifications','Inbox','Your notifications'],['announcements','Alerts','Club announcements'],['discussions','Discussions','Questions and ideas'],['inventory','Inventory','Club tools and components']);
+  if(approved())destinations.push(['role-updates','Role updates','Assignment notes and acknowledgements']);
+  if(investor())destinations.push(['notifications','Notifications','Personal role and club updates']);
+  if(clubAccess())destinations.push(['shop','SPACE shop','Club merchandise components and kits'],['cart','Basket','Review items and collection'],['orders','My orders','Order tracking and messages'],['classroom','Classroom tools','Lessons attendance gradebook certificates'],['meeting-room','Meetings & actions','Club agendas minutes and follow-up'],['project-board','Project workspace','Task boards and build evidence'],['feed','Activity feed','Build updates and conversations'],['messages','Messages','Private conversations'],['channels','Team channels','Discuss and share files'],['members','Members','Find a collaborator'],['courses','Courses','Your practical learning plan'],['projects','Projects','Plans, tasks and progress'],['library','Document library','Shared resources'],['news','Technology news','Ideas worth exploring'],['calendar','Calendar','Workshops and deadlines'],['events','Events','Club meetups and sessions'],['notifications','Inbox','Your notifications'],['announcements','Alerts','Club announcements'],['discussions','Discussions','Questions and ideas'],['inventory','Inventory','Club tools and components']);
   if(teacher())destinations.push(['teaching','Teaching studio','Workshops, students and feedback']);
   if(founder())destinations.push(['founder-room','Founder room','Meetings and decisions'],['investors','Investors','Club partnerships']);
   if(officerAccess())destinations.push(['office','My office','Officer duties and work records']);
-  if(admin())destinations.push(['officers','Roles & offices','Assign club responsibilities']);
+  if(admin())destinations.push(['shop-admin','Manage shop','Products prices sale stock and orders'],['officers','Roles & offices','Assign club responsibilities']);
   if(financeReportAccess())destinations.push(['finance-reports','Finance reports','Approved monthly reports']);
   if(investor()||admin())destinations.push(['investor-portal','Investor portal','Approved investor updates']);
   if(admin())destinations.push(['admin','Admin dashboard','Club oversight'],['applications','Applications','Review new accounts'],['moderation','Moderation','Review reports'],['finance','Finance','Funds and records']);
@@ -2281,7 +2301,7 @@ async function loadFinanceMonthReport(generation=authGeneration){
 function officerRoleForm(id){
  if(!admin()||!officerReady)return;const person=(cache.profiles||[]).find(p=>p.id===id&&p.membership_status==='approved'&&p.role!=='investor');if(!person)return;
  const roles=(cache.officer_assignments||[]).filter(a=>a.user_id===id&&!a.revoked_at).map(a=>a.position);
- form('Assign club offices',esc(person.full_name)+' · These responsibilities are added to the existing '+esc(person.role)+' access.','officerRoles',`<input type="hidden" name="user_id" value="${esc(id)}"><fieldset class="learning-choice-fieldset"><legend>Officer responsibilities</legend><div class="officer-role-choices">${officerPositions.map(([key,label,detail])=>`<label><input type="checkbox" name="positions" value="${key}" ${roles.includes(key)?'checked':''}><span><strong>${label}</strong><small>${detail}</small></span></label>`).join('')}</div></fieldset>${area('Reason for assigning or removing offices','note')}`);
+ form('Assign club offices',esc(person.full_name)+' · These responsibilities are added to the existing '+esc(person.role)+' access.','officerRoles',`<input type="hidden" name="user_id" value="${esc(id)}"><fieldset class="learning-choice-fieldset"><legend>Officer responsibilities</legend><div class="officer-role-choices">${officerPositions.map(([key,label,detail])=>`<label><input type="checkbox" name="positions" value="${key}" ${roles.includes(key)?'checked':''}><span><strong>${label}</strong><small>${detail}</small></span></label>`).join('')}</div></fieldset>${area('Note to member / reason for this change','note')}`);
 }
 function officersPage(){
  if(!admin())return empty('Administrator access required','Only administrators assign club offices.');
@@ -2289,7 +2309,7 @@ function officersPage(){
  const people=(cache.profiles||[]).filter(p=>p.membership_status==='approved'&&p.role!=='investor'&&String(p.full_name||'').toLowerCase().includes(officerSearch.toLowerCase())).sort((a,b)=>a.full_name.localeCompare(b.full_name));
  officerMemberPage=Math.min(officerMemberPage,Math.max(0,Math.ceil(people.length/24)-1));
  const active=(cache.officer_assignments||[]).filter(a=>!a.revoked_at),history=(cache.officer_assignments||[]).filter(a=>a.revoked_at).sort((a,b)=>new Date(b.revoked_at)-new Date(a.revoked_at));
- return head('ADMINISTRATION','Roles & offices','Choose a verified, approved member. Each office opens a working dashboard.',`<a class="button button-outline" href="#applications">Member & teaching access</a>`)+`<div class="officer-position-grid">${officerPositions.map(([key,title,detail])=>`<article class="card"><span class="eyebrow">${active.filter(a=>a.position===key).length} ACTIVE</span><h3>${title}</h3><p>${detail}</p></article>`).join('')}</div><div class="section-heading"><h2>Assign a member</h2><a class="link" href="#office">Open office workspace →</a></div><form id="officerSearchForm" class="officer-toolbar"><label class="field">Find a member<input name="search" value="${esc(officerSearch)}" maxlength="120" placeholder="Search approved members"></label><button class="button button-outline" type="submit">Search</button></form><div class="officer-member-grid">${people.slice(officerMemberPage*24,(officerMemberPage+1)*24).map(p=>`<article class="card"><div class="row">${memberAvatar(p.id)}<div><strong>${esc(p.full_name)}</strong><small class="subtle">${esc(p.role)}</small></div></div><div class="officer-badges">${active.filter(a=>a.user_id===p.id).map(a=>`<span class="tag">${officerTitle(a.position)}</span>`).join('')||'<span class="subtle">No officer responsibilities assigned</span>'}</div><button class="button button-outline button-sm" data-action="officerRoleForm" data-id="${esc(p.id)}">Assign / remove offices</button></article>`).join('')||empty('No matching members','Try another name. Pending and investor accounts cannot be assigned club offices.')}</div><div class="records-pagination"><button class="text-button" data-action="officerMemberPage" data-page="${officerMemberPage-1}" ${officerMemberPage===0?'disabled':''}>Previous</button><span>${people.length} members · Page ${officerMemberPage+1}</span><button class="text-button" data-action="officerMemberPage" data-page="${officerMemberPage+1}" ${(officerMemberPage+1)*24>=people.length?'disabled':''}>Next</button></div><details class="card"><summary>Assignment history · ${history.length} past responsibilities${history.length>100?' · showing latest 100':''}</summary>${history.slice(0,100).map(a=>`<div class="list-item"><div><strong>${esc(memberName(a.user_id))} · ${officerTitle(a.position)}</strong><small>Removed ${dateTime(a.revoked_at)} · ${esc(a.note)}</small></div></div>`).join('')||'<p>No offices have been removed.</p>'}</details>`;
+ return head('ADMINISTRATION','Roles & offices','Choose a verified, approved member. Each office opens a working dashboard.',`<div class="profile-buttons"><a class="button button-outline" href="#role-updates">Role acknowledgements</a><a class="button button-outline" href="#applications">Member & teaching access</a></div>`)+`<div class="officer-position-grid">${officerPositions.map(([key,title,detail])=>`<article class="card"><span class="eyebrow">${active.filter(a=>a.position===key).length} ACTIVE</span><h3>${title}</h3><p>${detail}</p></article>`).join('')}</div><div class="section-heading"><h2>Assign a member</h2><a class="link" href="#office">Open office workspace →</a></div><form id="officerSearchForm" class="officer-toolbar"><label class="field">Find a member<input name="search" value="${esc(officerSearch)}" maxlength="120" placeholder="Search approved members"></label><button class="button button-outline" type="submit">Search</button></form><div class="officer-member-grid">${people.slice(officerMemberPage*24,(officerMemberPage+1)*24).map(p=>`<article class="card"><div class="row">${memberAvatar(p.id)}<div><strong>${esc(p.full_name)}</strong><small class="subtle">${esc(p.role)}</small></div></div><div class="officer-badges">${active.filter(a=>a.user_id===p.id).map(a=>`<span class="tag">${officerTitle(a.position)}</span>`).join('')||'<span class="subtle">No officer responsibilities assigned</span>'}</div><button class="button button-outline button-sm" data-action="officerRoleForm" data-id="${esc(p.id)}">Assign / remove offices</button></article>`).join('')||empty('No matching members','Try another name. Pending and investor accounts cannot be assigned club offices.')}</div><div class="records-pagination"><button class="text-button" data-action="officerMemberPage" data-page="${officerMemberPage-1}" ${officerMemberPage===0?'disabled':''}>Previous</button><span>${people.length} members · Page ${officerMemberPage+1}</span><button class="text-button" data-action="officerMemberPage" data-page="${officerMemberPage+1}" ${(officerMemberPage+1)*24>=people.length?'disabled':''}>Next</button></div><details class="card"><summary>Assignment history · ${history.length} past responsibilities${history.length>100?' · showing latest 100':''}</summary>${history.slice(0,100).map(a=>`<div class="list-item"><div><strong>${esc(memberName(a.user_id))} · ${officerTitle(a.position)}</strong><small>Removed ${dateTime(a.revoked_at)} · ${esc(a.note)}</small></div></div>`).join('')||'<p>No offices have been removed.</p>'}</details>`;
 }
 function officerWorkForm(id=''){
  if(!officerAccess()||!officerReady)return;const item=(cache.officer_work_items||[]).find(w=>w.id===id);
@@ -2370,7 +2390,7 @@ function accountRoleForm(id,preset=''){
   if(!admin()||!learningHubReady||id===session.user.id)return;
   const member=[...approvedAccountRows,...(cache.profiles||[])].find(p=>p.id===id&&p.membership_status==='approved');if(!member)return;
   const tracks=validLearningTracks((cache.teaching_track_assignments||[]).filter(t=>t.teacher_id===id).map(t=>t.track));
-  modal(`<span class="eyebrow">ACCOUNT ACCESS</span><h2>Role for ${esc(member.full_name)}</h2><p class="muted">The selected role controls this person's sidebar, dashboard and database permissions. Reassign their classes before removing teaching access.</p><form id="editor" data-kind="accountRole" class="form-stack"><input type="hidden" name="user_id" value="${esc(id)}">${select('Account role','next_role',['member','teacher','founder','investor','admin'],preset||member.role)}${learningTrackCheckboxes(tracks,'Teaching courses','For a Teacher, select at least one. A Founder with no teaching courses keeps leadership access only. Other roles ignore these choices.','teaching_tracks')}<div class="notice">Member: student dashboard. Teacher: teaching studio and assigned courses. Founder: meetings and leadership, with optional teaching. Investor: investor portal. Administrator: full club administration, finance and role management.</div><button class="button" type="submit">Save role and teaching courses</button></form>`);
+  modal(`<span class="eyebrow">ACCOUNT ACCESS</span><h2>Role for ${esc(member.full_name)}</h2><p class="muted">The selected role controls this person's sidebar, dashboard and database permissions. Reassign their classes before removing teaching access.</p><form id="editor" data-kind="accountRole" class="form-stack"><input type="hidden" name="user_id" value="${esc(id)}">${select('Account role','next_role',['member','teacher','founder','investor','admin'],preset||member.role)}${learningTrackCheckboxes(tracks,'Teaching courses','For a Teacher, select at least one. A Founder with no teaching courses keeps leadership access only. Other roles ignore these choices.','teaching_tracks')}${area('Note to member about this role','note')}<div class="notice">Member: student dashboard. Teacher: teaching studio and assigned courses. Founder: meetings and leadership, with optional teaching. Investor: investor portal. Administrator: full club administration, finance and role management.</div><button class="button" type="submit">Save role and teaching courses</button></form>`);
 }
 function courses() {
   if(learningSelectionRequired())return head('STUDENT DASHBOARD','Choose your courses','Select as many courses as you want. Your teachers and classes will follow these choices.')+learningPathForm(true);
@@ -2975,7 +2995,7 @@ function notifications() {
   return `${head('CLUB INBOX','Notifications','Mentions, replies, assignments and upcoming meetings.')}
     ${pushSettingsCard()}
     ${(soon.length||founderSoon.length||tasksSoon.length)?`<div class="notice"><strong>Coming up in the next 48 hours:</strong> ${[...soon,...founderSoon].map(e=>esc(e.title)+' · '+dateTime(e.starts_at)).concat(tasksSoon.map(t=>esc(t.title)+' · due '+dateTime(t.due_at))).join(' / ')}</div>`:''}
-    <div class="grid notification-list">${list.length?list.map(n=>`<div class="card notification-item ${n.read_at?'':'unread'}"><div class="notification-copy"><div class="notification-meta"><span class="tag">${esc(n.kind)}</span><time datetime="${esc(n.created_at)}">${dateTime(n.created_at)}</time></div><h3>${esc(notificationTitle(n))}</h3></div><div class="notification-actions"><button class="text-button" data-action="openNotification" data-id="${esc(n.id)}">Open →</button>${!n.read_at?`<button class="text-button" data-action="readNotification" data-id="${esc(n.id)}">Mark read</button>`:''}</div></div>`).join(''):empty('All caught up','Messages, club alerts and your updates will show here.')}</div>`;
+    <div class="grid notification-list">${list.length?list.map(n=>`<div class="card notification-item ${n.read_at?'':'unread'}"><div class="notification-copy"><div class="notification-meta"><span class="tag">${esc(n.kind)}</span><time datetime="${esc(n.created_at)}">${dateTime(n.created_at)}</time></div><h3>${esc(notificationTitle(n))}</h3>${commerce?.notificationExtra(n)||''}</div><div class="notification-actions"><button class="text-button" data-action="openNotification" data-id="${esc(n.id)}">Open →</button>${!n.read_at?`<button class="text-button" data-action="readNotification" data-id="${esc(n.id)}">Mark read</button>`:''}</div></div>`).join(''):empty('All caught up','Messages, club alerts and your updates will show here.')}</div>`;
 }
 function moderation() {
   if(!admin())return '';
@@ -3115,6 +3135,7 @@ async function deleteAnnouncement(id){
 function actions(e) {
   if(session&&checkSessionExpiry()){e.preventDefault();return;}
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
+  if(commerce?.action(action,id,el))return;
   if(advancedActions(action,id,el))return;
   if(action==='officerRoleForm')return officerRoleForm(id);
   if(action==='officerWorkForm')return officerWorkForm(id);
@@ -3505,7 +3526,7 @@ function actions(e) {
     return modal(`<span class="eyebrow">PUBLIC PROFILE</span><h2>Remove ${esc(card.name)} from the Founders page?</h2><p class="muted">This removes the published card. It does not change anyone's account access or delete their posts and records.</p><form id="editor" data-kind="removeFounderCard" class="form-stack"><input type="hidden" name="card_id" value="${esc(id)}"><button class="button" type="submit">Remove public profile</button></form>`);
   }
   if(action==='readNotification')return markNotification(id);
-  if(action==='openNotification')return openNotification(id);
+  if(action==='openNotification')return openNotification(id,el);
   if(action==='resolveReport')return resolveReport(id);
   if(action==='moderateContent')return moderateReportedContent(id);
   if(action==='exportData')return exportClubContent();
@@ -3661,17 +3682,30 @@ async function removeFounderCard(id) {
   }catch(error){fail(error);}
 }
 async function markNotification(id) {
-  try {const {error}=await db.from('notifications').update({read_at:new Date().toISOString()}).eq('id',id);if(error)throw error;await refresh();void refreshInboxUnreadCount();}catch(e){fail(e);}
+  const owner=session?.user.id,generation=authGeneration;if(!owner)return;
+  const notice=(cache.notifications||[]).find(n=>n.id===id),previous=notice?.read_at,at=new Date().toISOString();
+  if(notice)notice.read_at=at;updateInboxIndicators();
+  try{const {error}=await requestWithDeadline(()=>db.from('notifications').update({read_at:at}).eq('id',id).eq('user_id',owner),8000,'The read status could not save.');if(error)throw error;
+    if(owner===session?.user.id&&generation===authGeneration)void refreshInboxUnreadCount();
+  }catch(error){if(owner===session?.user.id&&generation===authGeneration){if(notice)notice.read_at=previous;updateInboxIndicators();console.error('Notification read status',error);}}
 }
+
 async function openWorkspaceDestination(target){
   if(!session||!authReady||!approved())return false;
   const generation=authGeneration;
   location.hash='#'+target;route();await refreshVisiblePage({force:true});
   return generation===authGeneration&&!!session&&page===target&&workspacePageLoads.get(target)?.status==='ready';
 }
-async function openNotification(id) {
+async function openNotification(id,button) {
+  if(button?.disabled)return;const text=button?.textContent;
+  if(button){button.disabled=true;button.textContent='Opening…';button.setAttribute('aria-busy','true');}
+  try{
   const n=(cache.notifications||[]).find(x=>x.id===id);if(!n)return;
-  if(!n.read_at)await markNotification(id);
+  if(!n.read_at)void markNotification(id);
+  setSidebarOpen(false);
+  if(n.target_type==='role_change'){if(!commerce)throw Error('Reload SPACE to open role updates.');await commerce.openRole(n.target_id);return;}
+  if(n.target_type==='shop_order'){close();location.hash='#orders/'+n.target_id;route();return;}
+  if(n.kind==='membership'&&/^Your account role is now /i.test(n.title||'')){await refreshCurrentAccess();location.hash='#'+(commerce?.roleDestination()||'home');route();return;}
   if(n.target_type==='channel'){activeChannelId=n.target_id;location.hash='#channels';}
   else if(n.target_type==='project'){if(await openWorkspaceDestination('projects'))projectDetail(n.target_id);}
   else if(n.target_type==='course'){
@@ -3689,7 +3723,7 @@ async function openNotification(id) {
   else if(n.target_type==='event')location.hash='#events';
   else if(n.target_type==='announcement')location.hash='#announcements';
   else if(n.target_type==='application')location.hash=admin()?'#applications':'#application';
-  else if(n.target_type==='officer'){location.hash='#office';}
+  else if(n.target_type==='officer'){await refreshCurrentAccess();location.hash=officerAccess()?'#office':'#role-updates';route();}
   else if(n.target_type==='teacher'){
     const isClasswork=n.kind==='course'&&/^Classwork ready for review:/i.test(n.title||'');
     const isReview=n.kind==='course'&&/^Project ready for review:/i.test(n.title||'');
@@ -3707,6 +3741,8 @@ async function openNotification(id) {
     if(location.hash===hash){render();void loadDmThread();}
     else location.hash=hash;
   }
+  else modal(`<span class="eyebrow">NOTIFICATION</span><h2>${esc(notificationTitle(n))}</h2><p>${dateTime(n.created_at)}</p><a class="button button-outline" href="#notifications" data-action="close">All notifications</a>`);
+  }catch(error){fail(error);}finally{if(button?.isConnected){button.disabled=false;button.textContent=text;button.removeAttribute('aria-busy');}}
 }
 async function resolveReport(id) {
   if(!admin())return;
@@ -3889,6 +3925,7 @@ function uploadRevisionDialog(id) {
 async function submit(e) {
   if(session&&checkSessionExpiry()){e.preventDefault();return;}
   if(sessionEnding&&!session&&!['login','verify'].includes(e.target.dataset.kind)){e.preventDefault();signInDialog('signin');return;}
+  if(commerce?.handleSubmit(e))return;
   if(e.target.id==='dmComposer'&&advancedReady&&dmReady||['spaceCoursePicker','spaceProjectPicker','spaceLibrarySearch','spaceNotificationPreferences','spaceEventSearch'].includes(e.target.id)||e.target.id==='editor'&&e.target.dataset.kind?.startsWith('space')){await advancedSubmit(e);return;}
   if(e.target.id==='officerSearchForm'){e.preventDefault();if(!admin())return;officerSearch=String(e.target.elements.search.value||'').slice(0,120).trim();officerMemberPage=0;render();return;}
   if(e.target.id==='financeMonthForm'){e.preventDefault();if(!financeReportAccess())return;const month=String(e.target.elements.month.value||'');if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))return show('Choose a valid report month.');financeMonth=month;financeReportPage=0;financeReport=null;financeReportRows=[];await loadFinanceMonthReport();render();return;}
@@ -3985,7 +4022,7 @@ async function submit(e) {
     if(kind==='officerRoles'){
       if(!admin()||!officerReady)throw Error('Administrator access required');
       const roles=[...new FormData(formEl)].filter(([key])=>key==='positions').map(([,value])=>String(value));
-      const {error}=await db.rpc('set_club_officer_roles',{p_user:String(values.user_id),p_roles:roles,p_note:String(values.note||'').trim()});if(error)throw error;close();await refresh();show('Club offices updated. The member’s workspace follows the new responsibilities.');return;
+      const {error}=await db.rpc('space_set_officer_roles',{p_user:String(values.user_id),p_roles:roles,p_note:String(values.note||'').trim()});if(error)throw error;close();await refresh();show('Club offices updated. The member’s workspace follows the new responsibilities.');return;
     }
     if(kind==='officerWork'){
       if(!officerAccess()||!officerReady)throw Error('Officer access required');
@@ -4013,8 +4050,9 @@ async function submit(e) {
       const tracks=['teacher','founder'].includes(next)?[...new FormData(formEl)].filter(([name])=>name==='teaching_tracks').map(([,value])=>String(value)):[];
       if(next==='teacher'&&!tracks.length)throw Error('Select at least one teaching course.');
       if(validLearningTracks(tracks).length!==tracks.length)throw Error('Select valid teaching courses.');
-      const {error}=await db.rpc('assign_account_role',{p_user:id,p_role:next,p_tracks:tracks});if(error)throw error;
-      close();await refresh();await loadAdminApplicationPages();show('Role and teaching courses updated. Their dashboard follows the new access.');return;
+      if(String(values.note||'').trim().length<3||String(values.note||'').trim().length>1000)throw Error('Write an assignment note of 3 to 1000 characters.');
+      const {error}=await db.rpc('space_assign_account_role',{p_user:id,p_role:next,p_tracks:tracks,p_note:String(values.note||'').trim()});if(error)throw error;
+      close();await refresh();await loadAdminApplicationPages();show('Role and teaching courses updated. They will receive your note and an acknowledgement request.');return;
     }
     if(kind==='classwork'){
       if(!teacher()||!learningHubReady)throw Error('Teaching access required.');
@@ -4619,7 +4657,7 @@ function advancedProjectWorkspace(){
 function advancedNotificationSettings(){return !advancedReady?'':`<details class="card space-preferences"><summary>Notification preferences</summary><form id="spaceNotificationPreferences" class="form-stack"><p class="subtle">All updates remain in your inbox. Choose which categories can interrupt you with popups or push alerts.</p><fieldset class="space-checks"><legend>Alert me about</legend>${['messages','learning','projects','events','office','club'].map(c=>`<label><input type="checkbox" name="category" value="${c}" ${advancedPreferences.muted_categories.includes(c)?'':'checked'}> ${c[0].toUpperCase()+c.slice(1)}</label>`).join('')}</fieldset><label><input type="checkbox" name="popups" ${advancedPreferences.popups?'checked':''}> Show in-app popups</label><label><input type="checkbox" name="sound" ${advancedPreferences.sound?'checked':''}> Play a short sound for in-app updates</label><label><input type="checkbox" name="push" ${advancedPreferences.push_enabled?'checked':''}> Allow push delivery on devices already subscribed</label><button class="button button-sm" type="submit">Save preferences</button></form></details>`;}
 function advancedNotifications(){
  if(!enhancedReady)return head('CLUB INBOX','Notifications','Updates for your workspaces.')+communityNotice();const categories=['all','unread','messages','learning','projects','events','office','club'],all=cache.notifications||[],rows=all.filter(n=>advancedNotificationFilter==='all'||advancedNotificationFilter==='unread'&&!n.read_at||notificationCategory(n)===advancedNotificationFilter);advancedNotificationPage=Math.min(advancedNotificationPage,Math.max(0,Math.ceil(rows.length/30)-1));
- return head('YOUR INBOX','Notifications','Open the work that needs your attention.')+pushSettingsCard()+advancedNotificationSettings()+`<div class="records-tabs" role="group" aria-label="Notification category">${categories.map(c=>`<button class="${c===advancedNotificationFilter?'active':''}" data-action="spaceNotificationFilter" data-filter="${c}">${c[0].toUpperCase()+c.slice(1)}${c==='unread'?' ('+all.filter(n=>!n.read_at).length+')':''}</button>`).join('')}</div><div class="grid notification-list">${rows.slice(advancedNotificationPage*30,(advancedNotificationPage+1)*30).map(n=>`<article class="card notification-item ${n.read_at?'':'unread'}"><div class="notification-copy"><div class="notification-meta"><span class="tag">${notificationCategory(n)}</span><time datetime="${esc(n.created_at)}">${dateTime(n.created_at)}</time></div><h3>${esc(notificationTitle(n))}</h3></div><div class="notification-actions"><button class="text-button" data-action="openNotification" data-id="${esc(n.id)}">Open →</button>${!n.read_at?`<button class="text-button" data-action="readNotification" data-id="${esc(n.id)}">Mark read</button>`:''}</div></article>`).join('')||empty('You’re caught up','Updates in this category will appear here.')}</div>${advancedPageButtons('spaceNotificationPage',advancedNotificationPage,rows.length,30)}`;
+ return head('YOUR INBOX','Notifications','Open the work that needs your attention.')+pushSettingsCard()+advancedNotificationSettings()+`<div class="records-tabs" role="group" aria-label="Notification category">${categories.map(c=>`<button class="${c===advancedNotificationFilter?'active':''}" data-action="spaceNotificationFilter" data-filter="${c}">${c[0].toUpperCase()+c.slice(1)}${c==='unread'?' ('+all.filter(n=>!n.read_at).length+')':''}</button>`).join('')}</div><div class="grid notification-list">${rows.slice(advancedNotificationPage*30,(advancedNotificationPage+1)*30).map(n=>`<article class="card notification-item ${n.read_at?'':'unread'}"><div class="notification-copy"><div class="notification-meta"><span class="tag">${notificationCategory(n)}</span><time datetime="${esc(n.created_at)}">${dateTime(n.created_at)}</time></div><h3>${esc(notificationTitle(n))}</h3>${commerce?.notificationExtra(n)||''}</div><div class="notification-actions"><button class="text-button" data-action="openNotification" data-id="${esc(n.id)}">Open →</button>${!n.read_at?`<button class="text-button" data-action="readNotification" data-id="${esc(n.id)}">Mark read</button>`:''}</div></article>`).join('')||empty('You’re caught up','Updates in this category will appear here.')}</div>${advancedPageButtons('spaceNotificationPage',advancedNotificationPage,rows.length,30)}`;
 }
 function advancedLibrary(){
  if(!communityReady)return head('FILES','Shared files','Files for the club.')+communityNotice();const all=cache.documents||[],rows=all.filter(d=>(!advancedFileSearch||[d.title,memberName(d.author_id),d.file_type].join(' ').toLowerCase().includes(advancedFileSearch.toLowerCase()))&&(advancedFileType==='all'||(d.file_type||'').includes(advancedFileType)));advancedFilePage=Math.min(advancedFilePage,Math.max(0,Math.ceil(rows.length/24)-1));
@@ -4747,5 +4785,15 @@ function advancedChange(e){if(e.target.dataset.spaceTask){const select=e.target;
 function advancedInput(e){if(e.target.form?.dataset.kind?.startsWith('space'))spaceSaveFormDraft(e.target.form);if(e.target.id==='dmBody'&&activePeerId){const d=dmDraftFor(activePeerId);d.text=e.target.value;d.token=null;spaceSaveDmDraft(activePeerId,d);}}
 async function spacePlayNotificationSound(){if(!advancedReady||!advancedPreferences.sound||document.hidden)return;try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;const ctx=new C(),osc=ctx.createOscillator(),gain=ctx.createGain();osc.connect(gain);gain.connect(ctx.destination);gain.gain.setValueAtTime(.035,ctx.currentTime);gain.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.12);osc.frequency.value=660;osc.start();osc.stop(ctx.currentTime+.12);osc.onended=()=>void ctx.close();}catch{}}
 
+async function refreshCurrentAccess(){
+  const currentSession=session;if(!currentSession)return;
+  await signedIn(currentSession);
+  if(session?.user.id!==currentSession.user.id)return;
+  await loadOwnOfficerAccess(authGeneration);updateWorkspaceNavigation();render();
+}
+commerce=window.SpaceClubShop?.create({db,esc,deadline:requestWithDeadline,modal,close,show,fail,render,
+ get:()=>({session,me,page,admin:admin(),approved:approved(),club:clubAccess(),offices:ownOfficerRoles}),
+ go:target=>{setSidebarOpen(false);location.hash='#'+target;route();},refreshAccess:refreshCurrentAccess
+})||null;
 init();
 

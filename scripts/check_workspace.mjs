@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 function deferred(){let resolve; const promise=new Promise(r=>resolve=r); return {promise,resolve};}
-function node(overrides={}){return {id:'',dataset:{},style:{},isConnected:true,hidden:false,textContent:'',innerHTML:'',value:'',scrollHeight:400,scrollTop:400,clientHeight:300,classList:{add(){},remove(){},toggle(){},contains(){return false;}},querySelector(){return null;},querySelectorAll(){return [];},closest(){return null;},setAttribute(){},getAttribute(){return null;},focus(){},remove(){},close(){this.open=false;},showModal(){this.open=true;},setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;},...overrides};}
+function node(overrides={}){return {id:'',dataset:{},style:{},isConnected:true,hidden:false,textContent:'',innerHTML:'',value:'',scrollHeight:400,scrollTop:400,clientHeight:300,classList:{add(){},remove(){},toggle(){},contains(){return false;}},querySelector(){return null;},querySelectorAll(){return [];},closest(){return null;},setAttribute(){},getAttribute(){return null;},removeAttribute(){},focus(){},remove(){},close(){this.open=false;},showModal(){this.open=true;},setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;},...overrides};}
 function harness({localItems=new Map(),sessionItems=new Map()}={}){
   const requests=[],queued=[],elements=new Map(),timers=new Map();let timerId=0;
   function from(table){
@@ -744,7 +744,7 @@ test('Role management is administrator-only and uses the approved account direct
   const h=learningHarness('teacher');h.run("approvedAccountRows=[{id:'target',full_name:'Another account',role:'member',membership_status:'approved'}];accountRoleForm('target')");assert.equal(h.elements.get('#modal').open,false);h.run("me.role='admin';accountRoleForm('target')");assert(h.elements.get('#modalContent').innerHTML.includes('name="next_role"'));assert(h.elements.get('#modalContent').innerHTML.includes('Teaching courses'));h.elements.get('#modal').open=false;h.run("accountRoleForm('self')");assert.equal(h.elements.get('#modal').open,false);
 });
 test('Administrators assign multiple teaching courses with a role change',async()=>{
-  const h=learningHarness('admin'),form=learningForm('accountRole',[['user_id','learner'],['next_role','teacher'],['teaching_tracks','Controls and Automation'],['teaching_tracks','AI & Machine Learning']]);await h.exec('submit(qaArgs)',form.event);assert.equal(h.rpcCalls[0].name,'assign_account_role');assert.deepEqual(Array.from(h.rpcCalls[0].args.p_tracks),['Controls and Automation','AI & Machine Learning']);
+  const h=learningHarness('admin'),form=learningForm('accountRole',[['user_id','learner'],['next_role','teacher'],['note','Please lead the practical workshops.'],['teaching_tracks','Controls and Automation'],['teaching_tracks','AI & Machine Learning']]);await h.exec('submit(qaArgs)',form.event);assert.equal(h.rpcCalls[0].name,'space_assign_account_role');assert.deepEqual(Array.from(h.rpcCalls[0].args.p_tracks),['Controls and Automation','AI & Machine Learning']);
 });
 test('Teaching-course authorization controls publishing choices independently of profile interests',()=>{
   const h=learningHarness('teacher');assert.deepEqual(Array.from(h.run('allowedTeachingTracks()')),['Controls and Automation']);h.run("teacherProfile={track:'AI & Machine Learning'}");assert.deepEqual(Array.from(h.run('allowedTeachingTracks()')),['Controls and Automation']);h.run("cache.teaching_track_assignments=[]");action(h,{action:'courseForm'});assert(h.elements.get('#toast').textContent.includes('administrator'));
@@ -880,7 +880,7 @@ test('Treasurers see approved reports with no recording, approval or month-close
  const h=officeHarness('member',['treasurer']);h.run("financeReport={month:'2026-09-01',opening_balance:0,income:100,expense:20,closing_balance:80,approved_count:0,categories:[],review:null};");const markup=h.run('financeReportsPage()');assert(markup.includes('read-only access'));assert(!markup.includes('data-action="closeFinanceMonthForm"'));assert(!markup.includes('data-action="reviewFinance"'));assert(!markup.includes('Record transaction'));assert(h.run('finance()').includes('Administrator access required'));
 });
 test('Only administrators can open the role editor and all offices can be removed',async()=>{
- const h=officeHarness('admin');h.run("officerRoleForm('learner')");assert.equal((h.elements.get('#modalContent').innerHTML.match(/name="positions"/g)||[]).length,7);assert(h.elements.get('#modalContent').innerHTML.includes('existing member access'));await h.exec('submit(qaArgs)',learningForm('officerRoles',[['user_id','learner'],['note','Handing over responsibilities']]).event);assert.equal(h.rpcCalls[0].name,'set_club_officer_roles');assert.deepEqual(Array.from(h.rpcCalls[0].args.p_roles),[]);const member=officeHarness();member.run("officerRoleForm('learner')");assert.equal(member.elements.get('#modalContent').innerHTML,'');
+ const h=officeHarness('admin');h.run("officerRoleForm('learner')");assert.equal((h.elements.get('#modalContent').innerHTML.match(/name="positions"/g)||[]).length,7);assert(h.elements.get('#modalContent').innerHTML.includes('existing member access'));await h.exec('submit(qaArgs)',learningForm('officerRoles',[['user_id','learner'],['note','Handing over responsibilities']]).event);assert.equal(h.rpcCalls[0].name,'space_set_officer_roles');assert.deepEqual(Array.from(h.rpcCalls[0].args.p_roles),[]);const member=officeHarness();member.run("officerRoleForm('learner')");assert.equal(member.elements.get('#modalContent').innerHTML,'');
 });
 test('Multiple officer selections are sent as additive roles to the database RPC',async()=>{
  const h=officeHarness('admin');await h.exec('submit(qaArgs)',learningForm('officerRoles',[['user_id','learner'],['positions','secretary'],['positions','treasurer'],['note','First club committee']]).event);assert.deepEqual(Array.from(h.rpcCalls[0].args.p_roles),['secretary','treasurer']);assert.equal(h.requests.filter(r=>r.ops.some(o=>o[0]==='update')).length,0);
@@ -956,6 +956,13 @@ test('Student classroom loading does not retrieve the complete member directory'
 
 test('Signing out in another tab clears this tab immediately and ignores unrelated storage',async()=>{
  const h=sessionHarness();await h.login();h.exec('handleAuthStorageChange(qaArgs)',{key:'other-app',newValue:'1'});assert.equal(h.run('session.user.id'),'self');h.exec('handleAuthStorageChange(qaArgs)',{key:'sb-qa-auth-token-space-signed-out',newValue:'1'});assert.equal(h.run('session'),null);assert.equal(h.run('sessionEnding'),true);
+});
+test('Opening a role notification does not wait for a slow read-status write',async()=>{
+ const h=harness(),slow=deferred();h.queued.push(slow.promise);h.run("let openedRole=null;updateInboxIndicators=()=>{};setSidebarOpen=()=>{};commerce={openRole:async id=>{openedRole=id;}};cache.notifications=[{id:'notice',target_type:'role_change',target_id:'role-note',title:'Role updated',read_at:null}];");
+ const button=node();await h.exec("openNotification('notice',qaArgs)",button);assert.equal(h.run('openedRole'),'role-note');assert.equal(button.disabled,false);assert.equal(h.requests.length,1);assert(h.requests[0].ops.some(x=>x[0]==='eq'&&x[1]==='user_id'&&x[2]==='self'));slow.resolve({error:null});
+});
+test('An unavailable notification destination restores its Open button and reports the failure',async()=>{
+ const h=harness();h.context.console={...console,error(){}};h.run("setSidebarOpen=()=>{};commerce={openRole:async()=>{throw Error('Role notice unavailable');}};cache.notifications=[{id:'notice',target_type:'role_change',target_id:'role-note',read_at:'already'}];");const button=node({textContent:'Open →'});await h.exec("openNotification('notice',qaArgs)",button);assert.equal(button.disabled,false);assert.equal(button.textContent,'Open →');assert.equal(h.elements.get('#toast').textContent,'Role notice unavailable');
 });
 let failed=0;
 for(const t of tests){try{await t.fn();console.log('PASS',t.name);}catch(e){failed++;console.log('FAIL',t.name,'\n',e.stack);}}

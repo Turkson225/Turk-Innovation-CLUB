@@ -425,3 +425,38 @@ This update adds three focused destinations: **Classroom tools**, **Meetings & a
 **Validation and recovery**
 
 Run `node scripts/check_workspace.mjs`, `node scripts/check_certificate_verification.mjs`, and `SPACE_PGLITE_MODULE=/absolute/path/to/node_modules/@electric-sql/pglite node scripts/check_advanced_database.mjs`. The database suite applies the actual SQL in isolated PostgreSQL with synthetic accounts. It tests access boundaries, privacy, certificate revocation, event waiting-list behavior, duplicate-safe messaging and finance follow-ups. These checks are not a live 2,000-user load test or a live restore rehearsal. Keep using the [database and file backup procedure](docs/backup_restore.md); the updated tools include private DM documents in `club-direct-files` alongside the other club buckets.
+
+
+## Club shop and role acknowledgements — 15 October 2026
+
+Run these **whole files** in Supabase **SQL Editor → New query → Run**, in order, after the existing learning dashboards, officer/finance and advanced-platform upgrades:
+
+1. [`supabase/upgrade_role_acknowledgements.sql`](supabase/upgrade_role_acknowledgements.sql)
+2. [`supabase/upgrade_club_shop.sql`](supabase/upgrade_club_shop.sql)
+
+Both are transactional and safe to rerun. They create empty feature tables, indexes, fixed-search-path functions, explicit permissions, owner/admin read policies and a private `club-shop-images` bucket. They do not publish products, change existing roles or apply themselves to your hosted database. No new API secret or Edge Function is needed. Existing push setup can deliver these in-app notifications through the existing notification pipeline; OS delivery still depends on browser permission and the deployed push worker.
+
+### Assign a role with a note
+
+Use **Administration → Membership approvals → Account role**, or **Roles & offices → Assign / remove offices**. Write a useful note explaining the role and next steps. The person receives a bell notification and a **Role updates** page. **Open → Acknowledge & open my workspace** records receipt and refreshes the sidebar/current dashboard. An administrator can use **Role updates → Review all acknowledgements** to see who acknowledged and when. The Home banner keeps unacknowledged updates visible.
+
+Assignments grant access immediately; acknowledgement records receipt and does not grant permissions. Old notices retain their assignment snapshot and note. Opening one uses current database permissions, so acknowledging an old founder/teacher/officer notice cannot restore revoked access. Past notifications are preserved; only future assignments produce the new detailed acknowledgement record. Role notes are private to the recipient and administrators. Investors can read and acknowledge their own role changes without receiving member-only shop access.
+
+### Set up selling
+
+1. Sign in as administrator. Open **Administration → Manage shop → Collection & policy** and enter the actual collection location/process, contact details and cancellation/support policy.
+2. Choose **Add product**. Add the real product name, category and description; optionally upload a JPG/PNG/WebP photo up to 5 MB. Save it as a draft while preparing it.
+3. Add one or more **stock options**. Each T-shirt size/colour or kit option has a unique SKU, GHS price, unit, quantity on hand and low-stock level. A stock note/recount reason is required. No example products or prices are seeded.
+4. Edit the product and select **Publish for approved members**. Members can then browse/search/filter **SPACE shop**, select options, add quantities to their **Basket**, review the total and place an order using their collection name and phone.
+5. Under **Manage shop → Orders**, filter the queue, confirm an order, add a collection note, and mark it ready. Buyer and administrator can exchange messages on the order. Members see updates under **My orders** and their notification bell.
+6. After receiving the full payment and handing over the items, choose **Collected**, confirm payment/handover and enter the actual receipt/payment reference. This deducts the reserved stock and creates one **pending income** entry in Finance. Open **Finance**, attach the real receipt and approve that entry through the existing controls. Existing monthly closure rules also apply; a failed Finance insert rolls back collection and stock changes together.
+
+Initial fulfilment is **collection**, currency **GHS**, payment **on collection**. There is no card/mobile-money charging API, shipping calculator, automated tax calculation or automatic refund. Administrators handle any refund/support request after collection through the existing Finance process. The printable payment record is an order/payment record, not an automatically issued statutory tax invoice.
+
+Sale stock is separate from loan Inventory. Stock is reserved atomically only on successful checkout, released exactly once on pre-collection cancellation and physically deducted exactly once on collection. Checkout checks prices server-side, requires review if a price changed and uses an idempotency token for same-page retries. After an interrupted request followed by a reload, check **My orders** before creating a new checkout. Archives preserve all orders and stock history. Direct table writes are denied to clients, including administrators; write functions enforce the relevant account permissions. Administrators can export complete matching product/stock or order CSVs across pages; CSV cells are escaped against spreadsheet formula execution. Customer contact details and order messages are owner/admin only.
+
+### Checks and backup
+
+`node scripts/check_commerce_ui.mjs` checks card rendering, role acknowledgement routing, quantity checks, checkout retries, stale requests and bundle integration. `scripts/check_commerce_database.mjs` applies the real migrations to 2,000 synthetic accounts and checks privacy, owner/admin permissions, stock reservations, price snapshots, idempotence, collection/Finance and acknowledgement history. Locally it accepts `SPACE_PGLITE_MODULE`; `.github/workflows/shop-check.yml` runs it against a fresh disposable PostgreSQL 17 service and additionally races simultaneous buyers, duplicate requests and cancellation versus collection. It never connects to hosted Supabase or uses member records.
+
+The Storage backup/verification scripts now include private `club-shop-images` when installed and accept older backups where the shop bucket was not yet present. Keep the separate database-and-Storage restore process documented above; database backups do not contain uploaded image bytes. These automated tests use an isolated SQL Auth/Storage contract; actual hosted Storage uploads, push delivery and live authenticated journeys must still be checked after applying the migrations.
