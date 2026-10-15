@@ -13,8 +13,9 @@ const EXPECTED_BUCKETS = new Map([
   ['club-learning', false],
   ['club-course-evidence', false],
   ['club-founder-portraits', true],
+  ['club-finance-receipts', false],
 ]);
-const REQUIRED_BUCKETS = [...EXPECTED_BUCKETS.keys()].filter((id) => id !== 'club-founder-portraits');
+const REQUIRED_BUCKETS = [...EXPECTED_BUCKETS.keys()].filter((id) => !['club-founder-portraits','club-finance-receipts'].includes(id));
 
 function check(condition, message) {
   if (!condition) throw new Error(message);
@@ -132,3 +133,4 @@ async function main() {
 }
 
 main().catch((error) => { console.error(`Verification failed: ${error.message}`); process.exitCode = 1; });
+

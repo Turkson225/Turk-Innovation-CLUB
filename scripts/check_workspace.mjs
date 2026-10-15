@@ -204,7 +204,7 @@ test('When multiple account events are queued only the latest account is hydrate
 test('Starting sign out cancels an older queued account event before auth cleanup completes',async()=>{
   const h=loginHarness(),slow=deferred();h.queued.push({data:loginProfile(),error:null});await h.exec('signedIn(qaArgs)',loginSession('self'));
   h.exec("handleAuthStateChange('SIGNED_IN',qaArgs)",loginSession('other'));h.db.auth.signOut=()=>slow.promise;const leaving=h.run('signOut()');h.fireTimers(0);
-  assert.equal(h.run('session.user.id'),'self');assert.equal(h.requests.filter(r=>r.table==='profiles').length,1);slow.resolve({error:null});await leaving;assert.equal(h.run('session'),null);
+  assert.equal(h.run('session'),null);assert.equal(h.requests.filter(r=>r.table==='profiles').length,1);slow.resolve({error:null});await leaving;assert.equal(h.run('session'),null);
 });
 
 test('Conversation rows escape user content and order messages chronologically',()=>{
@@ -330,7 +330,7 @@ for(const role of ['guest','pending','member','teacher','founder','investor','ad
   const keys=Array.from(h.run('workspaceSearchItems().map(r=>r.key)'));
   assert(keys.includes('page:home'));assert(keys.includes('page:privacy'));assert(!keys.includes('member:pending-member'));assert(!keys.includes('member:investor-member'));assert(!keys.includes('news:pending-news'));
   const club=['member','teacher','founder','admin'].includes(role);assert.equal(keys.includes('page:messages'),club);assert.equal(keys.includes('course:workshop'),club);assert.equal(keys.includes('project:build'),club);assert.equal(keys.includes('member:a'),club);
-  assert.equal(keys.includes('page:teaching'),['teacher','admin'].includes(role));assert.equal(keys.includes('page:founder-room'),['founder','admin'].includes(role));assert.equal(keys.includes('page:finance'),role==='admin');assert.equal(keys.includes('page:finance-review'),role==='founder');assert.equal(keys.includes('page:investor-portal'),['investor','admin'].includes(role));assert.equal(keys.includes('page:application'),role==='pending');
+  assert.equal(keys.includes('page:teaching'),['teacher','admin'].includes(role));assert.equal(keys.includes('page:founder-room'),['founder','admin'].includes(role));assert.equal(keys.includes('page:finance'),role==='admin');assert.equal(keys.includes('page:finance-review'),false);assert.equal(keys.includes('page:investor-portal'),['investor','admin'].includes(role));assert.equal(keys.includes('page:application'),role==='pending');
   if(club)assert(keys.includes('news:published'),'Published technology news must be searchable');
 });
 test('Workspace search matches terms across record content and bounds result count',()=>{
@@ -415,7 +415,7 @@ for(const role of ['guest','pending','member','teacher','founder','investor','ad
   assert.deepEqual(actual,expected);
   assert.equal(h.links.get('finance').hidden,role!=='admin');
   assert.equal(h.links.get('investors').hidden,!['admin','founder'].includes(role));
-  assert.equal(h.links.get('finance-review').hidden,role!=='founder');
+  assert.equal(h.links.has('finance-review'),false);assert.equal(h.links.get('officers').hidden,role!=='admin');
   for(const section of h.sections.values())assert.equal(section.hidden,!section.querySelectorAll().some(link=>!link.hidden));
   assert.equal(h.links.get('home').getAttribute('aria-current'),'page');
 });
@@ -544,7 +544,7 @@ test('Failed profile checks show a retry state without giving approved account a
   const h=loginHarness();h.context.console={...console,error(){}};h.queued.push({data:null,error:{message:'Offline'}});await h.exec('signedIn(qaArgs,true)',loginSession('self'));assert.equal(h.run('approved()'),false);assert.equal(h.run('workspaceLoading'),false);assert(h.run('workspaceLoadError'));assert.equal(h.stats.opens,0);
 });
 test('A late course capability response cannot restore flags after an account changes',async()=>{
-  const h=harness(),probe=deferred();h.run("page='courses';courseReady=true;detectWorkspaceCapabilities=async()=>{};hydrateOwnApplicationReason=async()=>{};readRecords=async()=>[];detectFounderPortraits=async()=>{};hydrateMedia=async()=>{};refreshUnreadCounts=async()=>{};");h.queued.push({data:{id:'self',role:'member',membership_status:'approved'},error:null},{data:[],error:null},probe.promise,probe.promise,probe.promise);const loading=h.run('refresh()');for(let i=0;i<100;i++)await Promise.resolve();assert(h.requests.some(call=>call.ops.some(op=>op[0]==='select'&&op[1]==='submission_due_at')));h.run("authGeneration++;session={user:{id:'other'}};me={id:'other',role:'member',membership_status:'approved'};cache={};courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false");probe.resolve({error:null});await loading;assert.equal(h.run('coursePlanningReady'),false);assert.equal(h.run('courseLifecycleReady'),false);assert.equal(h.run('courseSeenReady'),false);assert.equal(h.run('Object.keys(cache).length'),0);
+  const h=harness(),probe=deferred();h.run("page='courses';courseReady=true;loadOwnOfficerAccess=async()=>{};detectWorkspaceCapabilities=async()=>{};hydrateOwnApplicationReason=async()=>{};readRecords=async()=>[];detectFounderPortraits=async()=>{};hydrateMedia=async()=>{};refreshUnreadCounts=async()=>{};");h.queued.push({data:{id:'self',role:'member',membership_status:'approved'},error:null},{data:[],error:null},probe.promise,probe.promise,probe.promise);const loading=h.run('refresh()');for(let i=0;i<100;i++)await Promise.resolve();assert(h.requests.some(call=>call.ops.some(op=>op[0]==='select'&&op[1]==='submission_due_at')));h.run("authGeneration++;session={user:{id:'other'}};me={id:'other',role:'member',membership_status:'approved'};cache={};courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false");probe.resolve({error:null});await loading;assert.equal(h.run('coursePlanningReady'),false);assert.equal(h.run('courseLifecycleReady'),false);assert.equal(h.run('courseSeenReady'),false);assert.equal(h.run('Object.keys(cache).length'),0);
 });
 
 test('Signed media URLs from an old account do not repopulate a new account cache',async()=>{
@@ -645,11 +645,11 @@ test('Auth starts without durable credentials and removes only this project lega
   const h=harness({localItems,sessionItems});
   for(const key of legacy){assert.equal(localItems.has(key),false);assert.equal(sessionItems.has(key),false);}
   assert.equal(localItems.get('sb-other-auth-token'),'other app');assert.equal(localItems.get('innovatex.theme'),'dark');assert.equal(localItems.get('space.members.self'),'preferences');assert.equal(sessionItems.get('innovatex.pendingEmail'),'self@example.test');
-  assert.equal(h.clientOptions.auth.persistSession,false);assert.equal(h.clientOptions.auth.autoRefreshToken,true);assert.equal(h.clientOptions.auth.detectSessionInUrl,true);
+  assert.equal(h.clientOptions.auth.persistSession,true);assert(h.clientOptions.auth.storage);assert.equal(h.clientOptions.auth.autoRefreshToken,true);assert.equal(h.clientOptions.auth.detectSessionInUrl,true);
 });
-test('Unavailable browser storage cannot enable persistent authentication',()=>{
+test('Unavailable browser storage keeps authentication in the memory fallback',()=>{
   const h=harness();h.context.localStorage={removeItem(){throw Error('blocked');}};h.context.sessionStorage={removeItem(){throw Error('blocked');}};
-  assert.doesNotThrow(()=>h.run('clearSavedAuthTokens()'));assert.equal(h.clientOptions.auth.persistSession,false);
+  assert.doesNotThrow(()=>h.run('clearSavedAuthTokens()'));h.clientOptions.auth.storage.setItem('test','temporary');assert.equal(h.clientOptions.auth.storage.getItem('test'),'temporary');assert.equal(h.clientOptions.auth.persistSession,true);
 });
 function sessionHarness(){
   const h=loginHarness(),stats={stopped:0,started:0,signouts:[],prompts:0,renders:0};let now=1000000;
@@ -698,12 +698,12 @@ test('Old editor submits and actions cannot run after local expiry',async()=>{
   let prevented=0;await h.exec('submit(qaArgs)',{target:{id:'editor',dataset:{kind:'projectEdit'}},preventDefault(){prevented++;}});action(h,{action:'taskDone',id:'old-task'});
   assert.equal(prevented,1);assert.equal(h.requests.length,before);assert.equal(h.run('session'),null);
 });
-test('Page exit clears authentication and page restoration checks expiry before refresh',()=>{
+test('Page exit retains the tab clock, hides private content and checks expiry on restoration',()=>{
   const source=fs.readFileSync(root+'/app.js','utf8');
-  assert(source.includes("window.addEventListener('pagehide',()=>{expireSession('',false);})"));
+  assert(source.includes("window.addEventListener('pagehide',()=>{if(!session)return;persistSessionClock()"));assert(!source.includes("window.addEventListener('pagehide',()=>{expireSession('',false);})"));
   assert(source.includes("window.addEventListener('focus',checkSessionExpiry)"));
   assert.match(source,/document\.addEventListener\('visibilitychange',\(\)=>\{\s*if\(checkSessionExpiry\(\)\)return;/);
-  assert(fs.readFileSync(root+'/index.html','utf8').includes('app.js?v=space-resilient-loading-20261014'));
+  assert(fs.readFileSync(root+'/index.html','utf8').includes('app.js?v=space-club-offices-20261015'));
 });
 
 function learningHarness(role='member'){
@@ -889,6 +889,53 @@ test('The startup recovery guard cannot replace a workspace that is already init
   const context=vm.createContext({document:{querySelector:()=>placeholder,addEventListener(){}},location:{},setTimeout(fn){timeout=fn;}});
   vm.runInContext(startupGuardSource(),context);placeholder.isConnected=false;timeout();assert.equal(placeholder.innerHTML,'private workspace');
 });
+function officeHarness(role='member',positions=[]){const h=learningHarness(role);h.exec('officerReady=true;officerAccessChecked=true;ownOfficerRoles=qaArgs;financeAdminReady=true;financeReady=true;financeApprovalsReady=true;cache.officer_assignments=[];cache.officer_work_items=[];cache.officer_work_events=[];cache.finance_entries=[];cache.finance_reviews=[];cache.finance_receipts=[];',positions);return h;}
+test('A valid tab session survives startup while legacy durable tokens are removed',()=>{
+ const now=Date.now(),key='sb-qa-auth-token',clock={userId:'self',startedAt:now-300000,lastActivity:now-60000},sessionItems=new Map([[key,'tab-token'],['space.auth.tab-clock.v1',JSON.stringify(clock)]]),localItems=new Map([[key,'durable-token']]);const h=harness({sessionItems,localItems});assert.equal(h.clientOptions.auth.storage.getItem(key),'tab-token');assert.equal(localItems.has(key),false);assert.equal(h.run('savedSessionClock().startedAt'),clock.startedAt);
+});
+test('Expired or malformed tab metadata clears stored authentication on startup',()=>{
+ for(const clock of [{userId:'self',startedAt:Date.now()-9*3600000,lastActivity:Date.now()}, {userId:'self',startedAt:Date.now()-31*60000,lastActivity:Date.now()-31*60000}, {userId:'self',startedAt:0,lastActivity:Date.now()+5000}]){const sessionItems=new Map([['sb-qa-auth-token','expired'],['space.auth.tab-clock.v1',JSON.stringify(clock)]]);harness({sessionItems});assert.equal(sessionItems.has('sb-qa-auth-token'),false);assert.equal(sessionItems.has('space.auth.tab-clock.v1'),false);}
+});
+test('Restoring after refresh retains both the original start and last activity times',async()=>{
+ const h=sessionHarness(),start=h.getNow()-600000,last=h.getNow()-120000;h.exec("authTabStorage.setItem(SESSION_CLOCK_KEY,JSON.stringify(qaArgs))",{userId:'self',startedAt:start,lastActivity:last});await h.login('self',false);assert.equal(h.run('sessionStartedAt'),start);assert.equal(h.run('lastSessionActivityAt'),last);assert.equal(h.run('session.user.id'),'self');
+});
+test('Interactive email verification starts a new tab clock and sign-out removes it immediately',async()=>{
+ const h=sessionHarness();await h.login();assert(h.sessionItems.has('space.auth.tab-clock.v1'));h.setNow(h.getNow()+60000);const pending=deferred();h.db.auth.signOut=()=>pending.promise;const signingOut=h.run('signOut()');assert.equal(h.run('session'),null);assert.equal(h.sessionItems.has('space.auth.tab-clock.v1'),false);pending.resolve({error:null});await signingOut;
+});
+test('Assigned offices open workspaces without granting finance management or removing teaching',()=>{
+ const h=officeHarness('teacher',['secretary','events_coordinator']);assert.equal(h.run('officerAccess()'),true);assert.equal(h.run('teacher()'),true);assert.equal(h.run('financeReportAccess()'),false);assert(h.run('officePage()').includes('Secretary'));assert(h.run('finance()').includes('Administrator access required'));assert(h.run('personalHome()').includes('#office'));
+});
+test('Treasurers see approved reports with no recording, approval or month-close controls',()=>{
+ const h=officeHarness('member',['treasurer']);h.run("financeReport={month:'2026-09-01',opening_balance:0,income:100,expense:20,closing_balance:80,approved_count:0,categories:[],review:null};");const markup=h.run('financeReportsPage()');assert(markup.includes('read-only access'));assert(!markup.includes('data-action="closeFinanceMonthForm"'));assert(!markup.includes('data-action="reviewFinance"'));assert(!markup.includes('Record transaction'));assert(h.run('finance()').includes('Administrator access required'));
+});
+test('Only administrators can open the role editor and all offices can be removed',async()=>{
+ const h=officeHarness('admin');h.run("officerRoleForm('learner')");assert.equal((h.elements.get('#modalContent').innerHTML.match(/name="positions"/g)||[]).length,7);assert(h.elements.get('#modalContent').innerHTML.includes('existing member access'));await h.exec('submit(qaArgs)',learningForm('officerRoles',[['user_id','learner'],['note','Handing over responsibilities']]).event);assert.equal(h.rpcCalls[0].name,'set_club_officer_roles');assert.deepEqual(Array.from(h.rpcCalls[0].args.p_roles),[]);const member=officeHarness();member.run("officerRoleForm('learner')");assert.equal(member.elements.get('#modalContent').innerHTML,'');
+});
+test('Multiple officer selections are sent as additive roles to the database RPC',async()=>{
+ const h=officeHarness('admin');await h.exec('submit(qaArgs)',learningForm('officerRoles',[['user_id','learner'],['positions','secretary'],['positions','treasurer'],['note','First club committee']]).event);assert.deepEqual(Array.from(h.rpcCalls[0].args.p_roles),['secretary','treasurer']);assert.equal(h.requests.filter(r=>r.ops.some(o=>o[0]==='update')).length,0);
+});
+test('Officers save work through the permission-checked RPC and cannot submit admin feedback',async()=>{
+ const h=officeHarness('member',['secretary']);await h.exec('submit(qaArgs)',learningForm('officerWork',[['assignment','self|secretary'],['kind','minutes'],['title','Club decisions'],['body','Owners and workshop dates agreed.'],['status','submitted'],['feedback','Attempted self review']]).event);assert.equal(h.rpcCalls[0].name,'save_officer_work');assert.equal(h.rpcCalls[0].args.p_feedback,'');assert.equal(h.rpcCalls[0].args.p_assignee,'self');
+});
+test('Office cards only show the current officer work and escape all user-authored text',()=>{
+ const h=officeHarness('member',['secretary']);h.exec('cache.officer_work_items=qaArgs',[{id:'mine',assignee_id:'self',position:'secretary',title:'<script>bad()</script>',body:'Safe notes <img src=x>',status:'submitted',updated_at:'2026-10-01'},{id:'other',assignee_id:'learner',position:'secretary',title:'Private other work',body:'Confidential work',status:'todo',updated_at:'2026-10-01'}]);const markup=h.run('officePage()');assert(markup.includes('&lt;script&gt;'));assert(markup.includes('&lt;img'));assert(!markup.includes('Private other work'));assert(!markup.includes('<script>bad'));
+});
+test('Removing all officer assignments clears cached work and approved reports',async()=>{
+ const h=officeHarness('member',['treasurer']);h.run("cache.officer_work_items=[{id:'private'}];cache.officer_work_events=[{id:'private'}];financeReport={closing_balance:10};financeReportRows=[{id:'private'}]");h.queued.push({data:[],error:null});await h.run('loadOwnOfficerAccess()');assert.equal(h.run('officerAccess()'),false);assert.equal(h.run('financeReportAccess()'),false);assert.equal(h.run('cache.officer_work_items'),undefined);assert.equal(h.run('financeReport'),null);assert.equal(h.run('financeReportRows.length'),0);
+});
+test('A late finance report from an older month cannot overwrite the selected report',async()=>{
+ const h=officeHarness('member',['treasurer']),slow=deferred();h.rpcQueued.push(slow.promise,{data:[],error:null});const loading=h.run('loadFinanceMonthReport()');h.run("financeMonth='2025-01';financeReport={month:'2025-01-01'}");slow.resolve({data:{month:'2026-09-01'},error:null});await loading;assert.equal(h.run('financeReport.month'),'2025-01-01');
+});
+test('Finance report requests only use approved report RPCs with bounded pages',async()=>{
+ const h=officeHarness('member',['treasurer']);h.rpcQueued.push({data:{approved_count:0},error:null},{data:[],error:null});await h.run('loadFinanceMonthReport()');assert.deepEqual(h.rpcCalls.map(c=>c.name),['finance_month_report','finance_report_entries']);assert.equal(h.rpcCalls[1].args.p_limit,50);assert.equal(h.requests.length,0);
+});
+test('Pending financial entries cannot be approved from the UI before a receipt is attached',()=>{
+ const h=officeHarness('admin');h.exec('cache.finance_entries=qaArgs',[{id:'entry',entry_type:'income',category:'Gift',amount:10,description:'Test gift',occurred_on:'2026-09-01',created_at:'2026-09-01',created_by:'self',voucher_number:3}]);let markup=h.run('financeEntryRow(cache.finance_entries[0])');assert(/data-decision="approved"[^>]*disabled/.test(markup));h.run("cache.finance_receipts=[{id:'receipt',entry_id:'entry',file_name:'receipt.pdf'}]");markup=h.run('financeEntryRow(cache.finance_entries[0])');assert(!/data-decision="approved"[^>]*disabled/.test(markup));assert(markup.includes('1 receipt(s)')); 
+});
+test('Invalid receipt types and oversized files never reach private storage',async()=>{
+ const h=officeHarness('admin');for(const file of [{name:'bad.html',type:'text/html',size:10},{name:'large.pdf',type:'application/pdf',size:10485761}])await assert.rejects(()=>h.exec("uploadFinanceReceipt('entry',qaArgs)",file));assert.equal(h.requests.length,0);
+});
+
 let failed=0;
 for(const t of tests){try{await t.fn();console.log('PASS',t.name);}catch(e){failed++;console.log('FAIL',t.name,'\n',e.stack);}}
 console.log(`${tests.length-failed}/${tests.length} checks passed`);

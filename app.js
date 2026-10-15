@@ -2,19 +2,27 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const cfg = window.INNOVATEX_CONFIG || {};
 const configured = /^https:\/\/.+\.supabase\.co\/?$/.test(cfg.supabaseUrl || '') && !!cfg.supabaseAnonKey;
-// Remove this project's old durable credentials before Auth can restore them.
+const SESSION_IDLE_MS=30*60*1000, SESSION_MAX_MS=8*60*60*1000;
+const SESSION_CLOCK_KEY='space.auth.tab-clock.v1',authMemory=new Map();
+const authTabStorage={
+  getItem(key){try{return sessionStorage.getItem(key)??authMemory.get(key)??null;}catch{return authMemory.get(key)??null;}},
+  setItem(key,value){authMemory.set(key,value);try{sessionStorage.setItem(key,value);}catch{}},
+  removeItem(key){authMemory.delete(key);try{sessionStorage.removeItem(key);}catch{}}
+};
+function savedSessionClock(){try{return JSON.parse(authTabStorage.getItem(SESSION_CLOCK_KEY)||'null');}catch{return null;}}
+function validSessionClock(clock){const now=Date.now();return !!clock&&typeof clock.userId==='string'&&Number.isFinite(clock.startedAt)&&Number.isFinite(clock.lastActivity)&&clock.startedAt<=clock.lastActivity&&clock.lastActivity<=now+1000&&now-clock.lastActivity<SESSION_IDLE_MS&&now-clock.startedAt<SESSION_MAX_MS;}
+// Remove legacy durable credentials; retain only a valid, time-limited tab session.
 function clearSavedAuthTokens() {
   if(!configured)return;
   const key=`sb-${new URL(cfg.supabaseUrl).hostname.split('.')[0]}-auth-token`;
-  for(const getStorage of [()=>localStorage,()=>sessionStorage]) {
+  for(const getStorage of [()=>localStorage,...(validSessionClock(savedSessionClock())?[]:[()=>sessionStorage])]) {
     try {const storage=getStorage();for(const suffix of ['', '-code-verifier', '-user'])storage.removeItem(key+suffix);} catch {}
   }
+  if(!validSessionClock(savedSessionClock()))authTabStorage.removeItem(SESSION_CLOCK_KEY);
 }
 clearSavedAuthTokens();
-// Tokens live only in this page. A new tab, reload or app launch needs a new code.
-const db = configured ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: false, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
-const SESSION_IDLE_MS=30*60*1000, SESSION_MAX_MS=8*60*60*1000;
-let sessionStartedAt=0,lastSessionActivityAt=0,sessionGuardTimer=null,sessionEnding=false,sessionSignOutPromise=null;
+const db = configured ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storage:authTabStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
+let sessionStartedAt=0,lastSessionActivityAt=0,lastClockWrite=0,sessionGuardTimer=null,sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cleanUrl = (s) => { try { const u = new URL(s); return u.protocol === 'https:' ? u.href : ''; } catch { return ''; } };
@@ -58,6 +66,12 @@ let unreadCounts = {channels:{},direct_messages:{},direct_peers:[],direct_total:
 let calendarMonth = new Date(new Date().getFullYear(),new Date().getMonth(),1), calendarSelected = new Date();
 let calendarView='month',calendarSearch='',calendarAgendaPage=0,calendarPreferences={weekStart:1,compact:false,kinds:['event','course','course_due','task','meeting'],mine:false,track:'all',response:'all',online:false,hidePast:false};
 let workspaceLoading=false,workspaceHydrating=false,workspaceLoadError='';
+let officerReady=false,officerAccessChecked=false,ownOfficerRoles=[],officerSearch='',officerMemberPage=0,officeFilter='all',officeWorkPage=0,financeAdminReady=false;
+let financeMonth=new Date(Date.UTC(new Date().getUTCFullYear(),new Date().getUTCMonth()-1,1)).toISOString().slice(0,7),financeReport=null,financeReportRows=[],financeReportPage=0,financeReportError='';
+const officerPositions=[['president','President','Set priorities and follow up on club delivery.','project_plan'],['vice_president','Vice president','Coordinate leads and track agreed actions.','project_plan'],['secretary','Secretary','Keep meeting minutes, decisions and action records.','minutes'],['treasurer','Treasurer','Read approved reports and prepare budget notes.','budget_note'],['project_lead','Project lead','Track build milestones, owners and project updates.','project_plan'],['events_coordinator','Events coordinator','Prepare event plans, dates and logistics.','event_plan'],['communications_officer','Communications officer','Prepare announcements, campaigns and outreach.','communication']];
+const officerTitle=position=>officerPositions.find(p=>p[0]===position)?.[1]||'Officer';
+const officerAccess=()=>clubAccess()&&(admin()||ownOfficerRoles.length>0);
+const financeReportAccess=()=>clubAccess()&&(admin()||ownOfficerRoles.includes('treasurer'));
 const workspacePageLoads=new Map(),workspacePageRequests=new Map(),workspacePageVersions=new Map();
 let workspaceCapabilityTask=null,profilesComplete=false;
 let courseTrack = 'all', courseView = 'mine', activeCourseId = null, courseDetailView = 'overview';
@@ -113,7 +127,7 @@ let pendingAuthMode = sessionStorage.getItem('innovatex.pendingAuthMode') === 's
 let pendingProtectedPage = '';
 let founderPortraitReady = false;
 let toastTimer;
-const pages = ['home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','discussions','courses','teaching','events','calendar','announcements','founder-room'];
+const pages = ['home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','finance-reports','officers','office','discussions','courses','teaching','events','calendar','announcements','founder-room'];
 const workspacePageInfo={
   home:{title:'Home',section:'Your workspace'},
   about:{title:'About the club',section:'About SPACE'},
@@ -135,6 +149,9 @@ const workspacePageInfo={
   projects:{title:'Projects',section:'Learning & projects'},
   inventory:{title:'Inventory',section:'Club activities'},
   finance:{title:'Finance',section:'Administration'},
+  officers:{title:'Roles & offices',section:'Administration',aliases:'Assign officers secretary treasurer leadership'},
+  office:{title:'My office',section:'Your workspace',aliases:'Officer duties tasks minutes secretary treasurer'},
+  'finance-reports':{title:'Finance reports',section:'Club activities',aliases:'Treasurer monthly reports'},
   'finance-review':{title:'Finance approvals',section:'Leadership & partners',aliases:'Finance review'},
   discussions:{title:'Discussion forum',section:'Community',aliases:'Discussions questions ideas'},
   courses:{title:'My learning',section:'Learning & projects',aliases:'Courses workshops enrolled classes'},
@@ -169,7 +186,10 @@ function updateWorkspaceNavigation(){
     if(target==='application')return !!session&&!approved();
     if(target==='teaching')return teacher();
     if(target==='founder-room'||target==='investors')return founder();
-    if(target==='finance-review')return founderOnly();
+    if(target==='finance-review')return false;
+    if(target==='office')return officerAccess();
+    if(target==='officers')return admin();
+    if(target==='finance-reports')return financeReportAccess();
     if(target==='investor-portal')return investor()||admin();
     if(['admin','applications','moderation','finance'].includes(target))return admin();
     if(['home','about','founders','privacy'].includes(target))return true;
@@ -180,7 +200,7 @@ function updateWorkspaceNavigation(){
     link.hidden=!allowed(link.dataset.page);link.classList.toggle('active',active);
     if(active&&!link.hidden)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
   }
-  const context=`${session?.user.id||'guest'}:${me?.membership_status||''}:${me?.role||''}:${me?.founder_teaching_enabled===true}`;
+  const context=`${session?.user.id||'guest'}:${me?.membership_status||''}:${me?.role||''}:${me?.founder_teaching_enabled===true}:${ownOfficerRoles.join(',')}`;
   const changed=context!==sidebarContext;
   for(const section of nav.querySelectorAll('details[data-nav-group]')){
     const children=[...section.querySelectorAll('a[data-page]')];
@@ -266,6 +286,7 @@ function receiveMemberNotification(notification){
   cache.notifications=[...byId.values()].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,1000);
   if(!known&&inboxUnreadCount!==null&&!notification.read_at)inboxUnreadCount++;
   updateInboxIndicators();void refreshInboxUnreadCount();
+  if(!known&&notification.kind==='role')void refreshVisiblePage({force:true}).then(()=>{if(page==='home'||page==='office')render();});
   if(page==='notifications')render();
   if(!known&&notification.kind==='direct_message'&&notification.target_type==='direct_message')void refreshDmAfterNotification(notification.target_id);
   if(!known&&!(page==='messages'&&activePeerId===notification.target_id&&!document.hidden&&notification.kind==='direct_message'))showMemberAlert(notification);
@@ -829,8 +850,9 @@ const pageRefreshDependencies={
   channels:['profiles','channels','channel_reads','documents','channel_messages','message_reactions'],
   library:['documents','document_versions','channels','profiles'],news:['news_posts','profiles'],
   projects:['projects','project_tasks','project_members','project_milestones','profiles'],
-  inventory:['inventory_items','profiles'],finance:['finance_entries','finance_reviews','profiles'],
-  'finance-review':['finance_entries','finance_reviews','profiles'],
+  inventory:['inventory_items','profiles'],finance:['finance_entries','finance_reviews','finance_receipts','finance_monthly_reviews','profiles'],
+  'finance-review':['finance_entries','finance_reviews','finance_receipts','finance_monthly_reviews','profiles'],
+  officers:['officer_assignments','profiles'],office:['officer_assignments','officer_work_items','officer_work_events'],'finance-reports':['finance_monthly_reviews'],
   discussions:['topics','replies','projects','profiles'],
   courses:['courses','learning_materials','course_enrollments','course_submissions','course_completions','profiles','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions'],
   teaching:['courses','learning_materials','course_enrollments','course_submissions','course_completions','profiles','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions'],
@@ -889,6 +911,8 @@ async function refresh(mode='page',requestedPage=page) {
     if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
     communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();if(!document.activeElement?.closest('form[data-kind="application"]'))route();return;
   }
+  await loadOwnOfficerAccess(generation);
+  if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
   if(investor()){
     const investorTables=['investor_updates','investor_inquiries','privacy_requests','founders'];
     const results=await settledMapLimit(investorTables,4,n=>requestWithDeadline(()=>readRecords(n),16000,'These records took too long to load.'));
@@ -905,20 +929,24 @@ async function refresh(mode='page',requestedPage=page) {
   }
   await detectWorkspaceCapabilities(generation);
   if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
-  const names=['profiles','projects','project_tasks','topics','replies','courses','learning_materials','course_enrollments','course_submissions','course_completions','privacy_requests','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes','direct_messages','direct_message_reads','investor_updates','investor_inquiries','inventory_items','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions'];
-  if(founder())names.push('inventory_movements','finance_entries','finance_reviews');
+  const names=['profiles','projects','project_tasks','topics','replies','courses','learning_materials','course_enrollments','course_submissions','course_completions','privacy_requests','events','announcements','founders','channels','documents','channel_messages','news_posts','founder_invites','founder_meetings','message_reactions','channel_reads','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','activity_posts','activity_comments','activity_likes','direct_messages','direct_message_reads','investor_updates','investor_inquiries','inventory_items','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions','officer_assignments','officer_work_items','officer_work_events'];
+  if(founder())names.push('inventory_movements');
+  if(admin())names.push('finance_entries','finance_reviews','finance_receipts','finance_monthly_reviews');
+  else if(financeReportAccess())names.push('finance_monthly_reviews');
   if(scoped){
     const needed=new Set(['notifications',...(pageRefreshDependencies[targetPage]||[])]);
     for(const table of ['channels','channel_reads'])if(!Object.hasOwn(cache,table))needed.add(table);
     if(targetPage==='home'&&founder()){
-      needed.add('founder_meetings');needed.add('finance_entries');needed.add('finance_reviews');
+      needed.add('founder_meetings');if(admin()){needed.add('finance_entries');needed.add('finance_reviews');needed.add('finance_receipts');needed.add('finance_monthly_reviews');}
     }
     if(targetPage==='home'&&admin())needed.add('reports');
+    if(targetPage==='home'&&officerAccess())needed.add('officer_work_items');
+    if(targetPage==='office'&&admin())needed.add('profiles');
     if(targetPage==='inventory'&&founder())needed.add('inventory_movements');
     if(profilesComplete&&targetPage!=='members'&&Date.now()-lastProfileRefreshAt<120000)needed.delete('profiles');
     for(let i=names.length-1;i>=0;i--)if(!needed.has(names[i]))names.splice(i,1);
   }
-  const records=new Set(['profiles','projects','project_tasks','topics','replies','courses','learning_materials','events','announcements','founders','channels','documents','news_posts','founder_invites','founder_meetings','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','investor_updates','investor_inquiries','course_enrollments','course_submissions','course_completions','privacy_requests','inventory_items','inventory_movements','finance_entries','finance_reviews','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions']);
+  const records=new Set(['profiles','projects','project_tasks','topics','replies','courses','learning_materials','events','announcements','founders','channels','documents','news_posts','founder_invites','founder_meetings','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','investor_updates','investor_inquiries','course_enrollments','course_submissions','course_completions','privacy_requests','inventory_items','inventory_movements','finance_entries','finance_reviews','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions','officer_assignments','officer_work_items','officer_work_events','finance_receipts','finance_monthly_reviews']);
   const previews={channel_messages:120,direct_messages:120,activity_posts:50,activity_comments:1,activity_likes:1,message_reactions:1,notifications:100};
   const checkTeacherProfile=teacher()&&!admin()&&(!scoped||targetPage==='teaching');
   const [results,teachingProfileResult]=await Promise.all([
@@ -1013,8 +1041,10 @@ async function refresh(mode='page',requestedPage=page) {
     if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
     inventoryCatalogReady=!catalogError;
   }
-  if(names.includes('finance_entries'))financeReady=founder()&&succeeded('finance_entries');
+  if(names.includes('finance_entries'))financeReady=admin()&&succeeded('finance_entries');
   if(names.includes('finance_reviews'))financeApprovalsReady=financeReady&&succeeded('finance_reviews');
+  if(names.includes('finance_receipts'))financeAdminReady=officerReady&&succeeded('finance_receipts')&&succeeded('finance_monthly_reviews');
+  if(['finance','finance-reports'].includes(targetPage)&&financeReportAccess())await loadFinanceMonthReport(generation);
   await refreshUnreadCounts();
   if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
   if(targetPage==='feed'&&feedReady)await loadFeedPage(false);
@@ -1089,9 +1119,11 @@ function completeLoginWelcome(generation){
   if(generation!==authGeneration||!session||loginWelcomePendingOwner!==session.user.id)return;
   loginWelcomePendingOwner=null;showLoginWelcome();
 }
-function syncSessionGuard(previousOwner) {
-  if(!session){clearInterval(sessionGuardTimer);sessionGuardTimer=null;sessionStartedAt=0;lastSessionActivityAt=0;return;}
-  if(previousOwner!==session.user.id||!sessionStartedAt){sessionStartedAt=Date.now();lastSessionActivityAt=sessionStartedAt;}
+function persistSessionClock(){if(!session)return;authTabStorage.setItem(SESSION_CLOCK_KEY,JSON.stringify({userId:session.user.id,startedAt:sessionStartedAt,lastActivity:lastSessionActivityAt}));lastClockWrite=Date.now();}
+function syncSessionGuard(previousOwner,fresh=false) {
+  if(!session){clearInterval(sessionGuardTimer);sessionGuardTimer=null;sessionStartedAt=0;lastSessionActivityAt=0;authTabStorage.removeItem(SESSION_CLOCK_KEY);return;}
+  if(fresh||previousOwner!==session.user.id||!sessionStartedAt){const saved=savedSessionClock();if(!fresh&&validSessionClock(saved)&&saved.userId===session.user.id){sessionStartedAt=saved.startedAt;lastSessionActivityAt=saved.lastActivity;}else{sessionStartedAt=Date.now();lastSessionActivityAt=sessionStartedAt;}}
+  persistSessionClock();
   if(!sessionGuardTimer)sessionGuardTimer=setInterval(checkSessionExpiry,15000);
 }
 function checkSessionExpiry() {
@@ -1105,6 +1137,7 @@ function checkSessionExpiry() {
 function recordSessionActivity(event) {
   if(!session||checkSessionExpiry()||document.hidden||!event.isTrusted)return;
   lastSessionActivityAt=Date.now();
+  if(Date.now()-lastClockWrite>5000)persistSessionClock();
 }
 function expireSession(message,prompt=true) {
   if(!session||sessionEnding)return;
@@ -1127,6 +1160,9 @@ function handleAuthStateChange(_event,newSession){
 }
 async function signedIn(newSession,showWelcome=false) {
   if(newSession&&sessionEnding&&!showWelcome)return;
+  if(newSession&&!showWelcome&&newSession.user.id===session?.user.id&&checkSessionExpiry())return;
+  const saved=savedSessionClock();
+  if(newSession&&!showWelcome&&newSession.user.id!==session?.user.id&&saved?.userId===newSession.user.id&&!validSessionClock(saved)){session=newSession;sessionStartedAt=saved.startedAt;lastSessionActivityAt=saved.lastActivity;sessionEnding=false;expireSession('Your session has ended. Sign in again with a new email code.');return;}
   const previousOwner=session?.user.id;
   if(newSession&&showWelcome){sessionEnding=false;void db.auth.startAutoRefresh().catch(console.error);}
   const generation=++authGeneration;
@@ -1137,7 +1173,8 @@ async function signedIn(newSession,showWelcome=false) {
   closeImageViewer(false);
   if($('#workspaceSearchInput'))close();
   session=newSession;
-  syncSessionGuard(previousOwner);
+  syncSessionGuard(previousOwner,showWelcome);
+  officerReady=false;officerAccessChecked=false;ownOfficerRoles=[];financeAdminReady=false;financeReport=null;financeReportRows=[];financeReportError='';
   learningChoicesReady=false;learningHubReady=false;ownLearningTracks=[];teachingStudentSearch='';teachingStudentTrack='all';teachingStudentPage=0;
   resetMemberDirectory();
   me=null;cache={};applicationAnswersReady=false;workspaceLoading=!!session;workspaceHydrating=!!session;workspaceLoadError='';
@@ -1184,8 +1221,8 @@ async function signedIn(newSession,showWelcome=false) {
   if(session&&!approved()&&!['about','founders','investors','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
   if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='founder-room'&&!founder()) {page='founders';history.replaceState(null,'','#founders');}
-  if(page==='finance'&&!admin()){page=founderOnly()?'finance-review':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
-  if(page==='finance-review'&&!founderOnly()){page=admin()?'finance':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
+  if(['finance','finance-review'].includes(page)&&!admin()){page='home';history.replaceState(null,'','#home');}
+  if(page==='finance-review'&&admin()){page='finance';history.replaceState(null,'','#finance');}
   if(pendingProtectedPage&&clubAccess()){
     history.replaceState(null,'','#'+pendingProtectedPage);
     pendingProtectedPage='';
@@ -1266,7 +1303,7 @@ async function init() {
   window.visualViewport?.addEventListener('resize',updateDmViewport);
   window.visualViewport?.addEventListener('scroll',updateDmViewport);
   window.addEventListener('beforeprint',prepareCalendarPrint);
-  window.addEventListener('afterprint',()=>{const list=$('#calendarPrintList');if(list)list.innerHTML='';});
+  window.addEventListener('afterprint',()=>{document.body.classList.remove('finance-printing');const list=$('#calendarPrintList');if(list)list.innerHTML='';});
   window.addEventListener('hashchange',route);
   $('#authButton').onclick=()=>session ? signOut() : signInDialog();
   $('#loginWelcomeSkip')?.addEventListener('click',dismissLoginWelcome);
@@ -1304,6 +1341,7 @@ async function init() {
     if(e.target.id==='inventorySearch'){inventorySearchTerm=e.target.value;applyInventorySearch();}
   });
   document.addEventListener('change',e=>{
+    if(e.target.name==='assignment'&&e.target.form?.dataset.kind==='officerWork'){const position=String(e.target.value).split('|')[1],kind=e.target.form.elements.kind;if(kind)kind.innerHTML=['task',officerPositions.find(p=>p[0]===position)?.[3]||'project_plan'].map(value=>`<option value="${value}">${value.replaceAll('_',' ')}</option>`).join('');}
     if(e.target.dataset.memberSetting){memberDirectoryChange(e.target);return;}
     if(e.target.id?.startsWith('calendar')&&(e.target.dataset.calendarSetting||['calendarJump','calendarMonthJump','calendarYearJump'].includes(e.target.id))){calendarChange(e.target);return;}
     if(e.target.name==='dm_image'&&activePeerId&&e.target.form?.dataset.peer===activePeerId){
@@ -1326,7 +1364,7 @@ async function init() {
   if(error) fail(error); else await signedIn(data.session);
   for(const name of ['pointerdown','keydown','touchstart','scroll'])document.addEventListener(name,recordSessionActivity,{capture:true,passive:true});
   window.addEventListener('focus',checkSessionExpiry);
-  window.addEventListener('pageshow',()=>{if(sessionEnding&&!session)signInDialog('signin');else checkSessionExpiry();});
+  window.addEventListener('pageshow',event=>{if(sessionEnding&&!session)signInDialog('signin');else if(!checkSessionExpiry()&&event.persisted&&session)void signedIn(session);});
   document.addEventListener('visibilitychange',()=>{
     if(checkSessionExpiry())return;
     if(!session)return;
@@ -1339,7 +1377,7 @@ async function init() {
     if(page==='channels')void refreshChat();
     if(admin())void refreshAdminAlerts();
   });
-  window.addEventListener('pagehide',()=>{expireSession('',false);});
+  window.addEventListener('pagehide',()=>{if(!session)return;persistSessionClock();dismissLoginWelcome();closeImageViewer(false);close();workspaceLoading=true;$('#content').innerHTML=workspaceSkeleton(page,{account:true});});
   window.addEventListener('offline',()=>{updateNetworkStatus();if(session&&!pageDataReady())render();});
   window.addEventListener('online',()=>{updateNetworkStatus();if(session)void refreshVisiblePage({force:true});});
 }
@@ -1398,8 +1436,10 @@ function route() {
   if(investor()&&!['home','about','founders','investors','investor-portal','privacy'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='investor-portal'&&authReady&&!investor()&&!admin()){page='investors';history.replaceState(null,'','#investors');}
   if(page==='teaching'&&authReady&&!teacher()){page=clubAccess()?'courses':'home';history.replaceState(null,'','#'+page);}
-  if(page==='finance'&&authReady&&!admin()){page=founderOnly()?'finance-review':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
-  if(page==='finance-review'&&authReady&&!founderOnly()){page=admin()?'finance':clubAccess()?'inventory':'home';history.replaceState(null,'','#'+page);}
+  if(['finance','finance-review'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
+  if(page==='finance-review'&&admin()){page='finance';history.replaceState(null,'','#finance');}
+  if(page==='officers'&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
+  if(officerAccessChecked&&(page==='office'&&!officerAccess()||page==='finance-reports'&&!financeReportAccess())){page='home';history.replaceState(null,'','#home');}
   if(page==='founder-room'&&authReady&&!founder()){page='founders';history.replaceState(null,'','#founders');show('Founder access required.');}
   if(['admin','applications','moderation'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   if(page==='messages'){const peer=location.hash.slice(1).split('/')[1]||'';const next=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(peer)?peer:null;if(next!==activePeerId){activePeerId=next;dmRequest++;dmSearchRequest++;dmThreadLoading=false;dmEarlierLoading=false;dmSearchOpen=false;dmSearchBusy=false;dmReactionTarget=null;dmEmojiOpen=false;}}
@@ -1432,7 +1472,7 @@ function render() {
   $('#onlineBadge').textContent=profilesComplete?online:'—';
   updateInboxIndicators();
   updateAdminAlertControls();
-  const pendingFinance=founderOnly()&&financeApprovalsReady?(cache.finance_entries||[]).filter(x=>financeStatus(x)==='pending').length:0;
+  const pendingFinance=admin()&&financeApprovalsReady?(cache.finance_entries||[]).filter(x=>financeStatus(x)==='pending').length:0;
   const financeBadge=$('#financeReviewBadge');if(financeBadge){financeBadge.textContent=pendingFinance;financeBadge.hidden=!pendingFinance;}
   const unreadDm=unreadCountsReady?unreadCounts.direct_total:(cache.direct_messages||[]).filter(m=>m.recipient_id===session?.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;
   $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
@@ -1446,7 +1486,7 @@ function render() {
   if(session&&approved()&&load&&!load.hadData&&['loading','offline','error'].includes(load.status)&&!learningSelectionRequired()){
     $('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
   }
-  const views={home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
+  const views={home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
   $('#content').innerHTML=views[page]();
   if(page==='members'){hydrateDirectoryPhotos();openLinkedMemberProfile();}
@@ -1471,7 +1511,9 @@ function workspaceSearchItems(){
   if(clubAccess())destinations.push(['feed','Activity feed','Build updates and conversations'],['messages','Messages','Private conversations'],['channels','Team channels','Discuss and share files'],['members','Members','Find a collaborator'],['courses','Courses','Your practical learning plan'],['projects','Projects','Plans, tasks and progress'],['library','Document library','Shared resources'],['news','Technology news','Ideas worth exploring'],['calendar','Calendar','Workshops and deadlines'],['events','Events','Club meetups and sessions'],['notifications','Inbox','Your notifications'],['announcements','Alerts','Club announcements'],['discussions','Discussions','Questions and ideas'],['inventory','Inventory','Club tools and components']);
   if(teacher())destinations.push(['teaching','Teaching studio','Workshops, students and feedback']);
   if(founder())destinations.push(['founder-room','Founder room','Meetings and decisions'],['investors','Investors','Club partnerships']);
-  if(founderOnly())destinations.push(['finance-review','Finance review','Review club transactions']);
+  if(officerAccess())destinations.push(['office','My office','Officer duties and work records']);
+  if(admin())destinations.push(['officers','Roles & offices','Assign club responsibilities']);
+  if(financeReportAccess())destinations.push(['finance-reports','Finance reports','Approved monthly reports']);
   if(investor()||admin())destinations.push(['investor-portal','Investor portal','Approved investor updates']);
   if(admin())destinations.push(['admin','Admin dashboard','Club oversight'],['applications','Applications','Review new accounts'],['moderation','Moderation','Review reports'],['finance','Finance','Funds and records']);
   for(const [id,label,meta] of destinations)add('page:'+id,workspacePageInfo[id]?.title||label,meta,id,'','',label+' '+(workspacePageInfo[id]?.aliases||''));
@@ -1545,14 +1587,13 @@ function personalHome(){
   const reviews=courseReady?[...(cache.course_submissions||[]).filter(s=>assignedIds.has(s.course_id)&&s.review_status==='submitted'),...(learningHubReady?(cache.classroom_assignment_submissions||[]).filter(s=>assignedWorkIds.has(s.assignment_id)&&s.review_status==='submitted'&&s.learner_id!==userId):[])]:[];
   const teachingDate=assigned.flatMap(c=>[{title:c.title,at:c.starts_at,label:'Workshop starts'},{title:c.title,at:coursePlanningReady?c.submission_due_at:null,label:'Project deadline'}]).filter(x=>x.at&&new Date(x.at).getTime()>=now).sort((a,b)=>new Date(a.at)-new Date(b.at))[0];
   const meeting=founder()?(cache.founder_meetings||[]).filter(m=>new Date(m.starts_at).getTime()>=now).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at))[0]:null;
-  const financePending=founderOnly()&&financeApprovalsReady?(cache.finance_entries||[]).filter(e=>financeStatus(e)==='pending').length:0;
+  const financePending=admin()&&financeApprovalsReady?(cache.finance_entries||[]).filter(e=>financeStatus(e)==='pending').length:0;
   const reports=admin()?(cache.reports||[]).filter(r=>r.status==='open').length:0;
   const queue=admin()?[
     homeFocusCard('applications','ADMINISTRATOR · APPLICATIONS',`${adminPendingCount} waiting for review`,adminPendingCount?'Check verification and application details before deciding.':'New applications will appear here.','#applications','Review applications',adminPendingCount>0),
     homeFocusCard('moderation','ADMINISTRATOR · REPORTS',`${reports} open ${reports===1?'report':'reports'}`,reports?'Review reported posts, messages and shared content.':'Your moderation queue is clear.','#moderation','Open moderation',reports>0)
   ]:founderOnly()?[
     homeFocusCard('founder-room','FOUNDER · NEXT MEETING',meeting?.title||'No meeting scheduled',meeting?dateTime(meeting.starts_at):'Plan the next founder discussion.','#founder-room','Open founder room',false,soon(meeting?.starts_at)),
-    homeFocusCard('finance','FOUNDER · FINANCE',financeApprovalsReady?`${financePending} ${financePending===1?'entry':'entries'} to review`:'Finance review',financeApprovalsReady?'Check the purpose and evidence before a decision.':'Open the finance review page for setup details.','#finance-review','Review finance',financePending>0)
   ]:teacher()?[
     homeFocusCard('teaching','TEACHER · PROJECT REVIEWS',courseReady?`${reviews.length} ${reviews.length===1?'submission':'submissions'} awaiting feedback`:'Project reviews',courseReady?'Give learners a clear next step on their builds.':'Open Teaching studio for setup details.','#teaching','Review projects',reviews.length>0),
     homeFocusCard('calendar','TEACHER · COMING UP',teachingDate?.title||'No session scheduled',teachingDate?`${teachingDate.label} · ${dateTime(teachingDate.at)}`:'Set a date or deadline for your next workshop.','#teaching','Plan teaching',false,soon(teachingDate?.at))
@@ -1566,8 +1607,8 @@ function personalHome(){
     feedback&&homeFocusCard('courses','TEACHER FEEDBACK',feedbackCourse?.title||'Latest project review',`${feedback.review_status==='revision_requested'?'Revision requested':'Project accepted'} · ${feedback.teacher_feedback.slice(0,130)}${feedback.teacher_feedback.length>130?'…':''}`,'#courses',feedbackClassroom?'Read teacher feedback':'Open My learning',feedback.review_status==='revision_requested',false,feedbackClassroom?.id,'feedback'),
     tasks.length>0&&homeFocusCard('projects','ASSIGNED PROJECT TASKS',tasks.length?`${tasks.length} ${tasks.length===1?'task':'tasks'} in progress`:'No tasks assigned',tasks.length?`${tasks[0].title}${tasks[0].due_at?' · due '+dateTime(tasks[0].due_at):''}`:'Join a project or start one with your team.','#projects','View projects',!!tasks[0]?.due_at&&new Date(tasks[0].due_at).getTime()<now,soon(tasks[0]?.due_at))
   ].filter(Boolean);
-  const orientation=admin()?'Start with membership approvals and reports, then check club activity.':founderOnly()?'Start with founder meetings and finance approvals. Your learning and project work is below.':teacher()?'Review student builds in Teaching studio. Use My learning for workshops you have joined.':'Follow your workshops and project tasks below. Direct messages are private; Team chat is for groups.';
-  return `<section class="home-personal-intro"><div><span class="eyebrow">YOUR SPACE WORKSPACE</span><h1>Welcome back, ${esc(name)}.</h1><p>${esc(orientation)}</p></div><a class="button button-outline" href="#calendar">Open calendar ↗</a></section>
+  const orientation=admin()?'Start with membership approvals and reports, then check club activity.':founderOnly()?'Start with founder meetings and club projects. Your teaching and learning work is below.':teacher()?'Review student builds in Teaching studio. Use My learning for workshops you have joined.':'Follow your workshops and project tasks below. Direct messages are private; Team chat is for groups.';
+  return `${officerAccess()?`<section class="officer-home-banner"><div><span class="eyebrow">CLUB RESPONSIBILITIES</span><strong>${admin()?'Club offices & work reviews':ownOfficerRoles.map(officerTitle).join(' · ')}</strong><p>Keep plans, minutes and progress in your office workspace.</p></div><a class="button button-outline button-sm" href="#office">Open my office →</a>${admin()?'<a class="link" href="#officers">Assign offices →</a>':''}</section>`:''}<section class="home-personal-intro"><div><span class="eyebrow">YOUR SPACE WORKSPACE</span><h1>Welcome back, ${esc(name)}.</h1><p>${esc(orientation)}</p></div><a class="button button-outline" href="#calendar">Open calendar ↗</a></section>
   <div class="home-glance"><a href="#courses"><small>My workshops</small><strong>${courseReady?enrollments.length:'—'}</strong><span>Open My learning →</span></a><a href="#events"><small>Next club event</small><strong class="home-glance-date">${esc(event?date(event.starts_at):'To be announced')}</strong><span>${esc(event?.title||'See the calendar')} →</span></a><a href="#notifications"><small>Unread notifications</small><strong>${notifications}</strong><span>Open Notifications →</span></a><a href="#messages"><small>Unread direct messages</small><strong>${unreadMessages??'—'}</strong><span>${'Open Direct messages'} →</span></a></div>
   ${queue.length?`<div class="section-heading"><div><span class="eyebrow">YOUR ROLE</span><h2>${priority}</h2></div></div><div class="home-focus-grid home-role-grid">${queue.join('')}</div>`:''}
   <div class="section-heading"><div><span class="eyebrow">YOUR NEXT MOVES</span><h2>Learning and projects</h2></div><a class="link" href="#calendar">See full calendar →</a></div>${focus.length?`<div class="home-focus-grid">${focus.join('')}</div>`:`<div class="home-start"><div><strong>Start with a practical workshop</strong><p>Open My learning, browse the four tracks and choose your first build. Your next workshop, feedback and assigned tasks will appear here.</p></div><a class="button button-sm" href="#courses">Open My learning →</a></div>`}
@@ -2172,6 +2213,53 @@ async function loadOwnLearningPath(generation=authGeneration){
   const {data,error}=result;
   learningChoicesReady=!error;ownLearningTracks=error?[]:validLearningTracks(data?.tracks);
 }
+async function loadOwnOfficerAccess(generation=authGeneration){
+ const owner=session?.user.id;if(!owner)return;
+ let result;try{result=await requestWithDeadline(()=>db.from('officer_assignments').select('position').eq('user_id',owner).is('revoked_at',null),8000,'Officer access could not be checked.');}catch(error){result={error};}
+ if(generation!==authGeneration||session?.user.id!==owner)return;
+ const previous=ownOfficerRoles.join(',');officerAccessChecked=true;officerReady=!result.error;
+ ownOfficerRoles=result.error?[]:[...new Set((result.data||[]).map(r=>r.position).filter(p=>officerPositions.some(x=>x[0]===p)))].sort();
+ if(previous!==ownOfficerRoles.join(',')){delete cache.officer_work_items;delete cache.officer_work_events;financeReport=null;financeReportRows=[];}
+}
+async function loadFinanceMonthReport(generation=authGeneration){
+ if(!financeReportAccess()||!officerReady)return;
+ const owner=session.user.id,month=financeMonth,pageIndex=financeReportPage;
+ try{
+  const [report,entries]=await requestWithDeadline(()=>Promise.all([db.rpc('finance_month_report',{p_month:month+'-01'}),db.rpc('finance_report_entries',{p_month:month+'-01',p_offset:pageIndex*50,p_limit:50})]),12000,'The finance report took too long. Please retry.');
+  if(generation!==authGeneration||session?.user.id!==owner||financeMonth!==month||financeReportPage!==pageIndex)return;
+  if(report.error||entries.error)throw report.error||entries.error;
+  financeReport=report.data;financeReportRows=entries.data||[];financeReportError='';
+ }catch(error){if(generation!==authGeneration||session?.user.id!==owner||financeMonth!==month||financeReportPage!==pageIndex)return;financeReport=null;financeReportRows=[];financeReportError='The approved report could not be loaded. Please retry.';}
+}
+function officerRoleForm(id){
+ if(!admin()||!officerReady)return;const person=(cache.profiles||[]).find(p=>p.id===id&&p.membership_status==='approved'&&p.role!=='investor');if(!person)return;
+ const roles=(cache.officer_assignments||[]).filter(a=>a.user_id===id&&!a.revoked_at).map(a=>a.position);
+ form('Assign club offices',esc(person.full_name)+' · These responsibilities are added to the existing '+esc(person.role)+' access.','officerRoles',`<input type="hidden" name="user_id" value="${esc(id)}"><fieldset class="learning-choice-fieldset"><legend>Officer responsibilities</legend><div class="officer-role-choices">${officerPositions.map(([key,label,detail])=>`<label><input type="checkbox" name="positions" value="${key}" ${roles.includes(key)?'checked':''}><span><strong>${label}</strong><small>${detail}</small></span></label>`).join('')}</div></fieldset>${area('Reason for assigning or removing offices','note')}`);
+}
+function officersPage(){
+ if(!admin())return empty('Administrator access required','Only administrators assign club offices.');
+ if(!officerReady)return head('ADMINISTRATION','Roles & offices','Assign responsibilities without replacing membership or teaching roles.')+'<div class="notice">Run upgrade_officer_workspaces_finance.sql to activate officer workspaces and the new finance permissions.</div>';
+ const people=(cache.profiles||[]).filter(p=>p.membership_status==='approved'&&p.role!=='investor'&&String(p.full_name||'').toLowerCase().includes(officerSearch.toLowerCase())).sort((a,b)=>a.full_name.localeCompare(b.full_name));
+ officerMemberPage=Math.min(officerMemberPage,Math.max(0,Math.ceil(people.length/24)-1));
+ const active=(cache.officer_assignments||[]).filter(a=>!a.revoked_at),history=(cache.officer_assignments||[]).filter(a=>a.revoked_at).sort((a,b)=>new Date(b.revoked_at)-new Date(a.revoked_at));
+ return head('ADMINISTRATION','Roles & offices','Choose a verified, approved member. Each office opens a working dashboard.',`<a class="button button-outline" href="#applications">Member & teaching access</a>`)+`<div class="officer-position-grid">${officerPositions.map(([key,title,detail])=>`<article class="card"><span class="eyebrow">${active.filter(a=>a.position===key).length} ACTIVE</span><h3>${title}</h3><p>${detail}</p></article>`).join('')}</div><div class="section-heading"><h2>Assign a member</h2><a class="link" href="#office">Open office workspace →</a></div><form id="officerSearchForm" class="officer-toolbar"><label class="field">Find a member<input name="search" value="${esc(officerSearch)}" maxlength="120" placeholder="Search approved members"></label><button class="button button-outline" type="submit">Search</button></form><div class="officer-member-grid">${people.slice(officerMemberPage*24,(officerMemberPage+1)*24).map(p=>`<article class="card"><div class="row">${memberAvatar(p.id)}<div><strong>${esc(p.full_name)}</strong><small class="subtle">${esc(p.role)}</small></div></div><div class="officer-badges">${active.filter(a=>a.user_id===p.id).map(a=>`<span class="tag">${officerTitle(a.position)}</span>`).join('')||'<span class="subtle">No officer responsibilities assigned</span>'}</div><button class="button button-outline button-sm" data-action="officerRoleForm" data-id="${esc(p.id)}">Assign / remove offices</button></article>`).join('')||empty('No matching members','Try another name. Pending and investor accounts cannot be assigned club offices.')}</div><div class="records-pagination"><button class="text-button" data-action="officerMemberPage" data-page="${officerMemberPage-1}" ${officerMemberPage===0?'disabled':''}>Previous</button><span>${people.length} members · Page ${officerMemberPage+1}</span><button class="text-button" data-action="officerMemberPage" data-page="${officerMemberPage+1}" ${(officerMemberPage+1)*24>=people.length?'disabled':''}>Next</button></div><details class="card"><summary>Assignment history · ${history.length} past responsibilities${history.length>100?' · showing latest 100':''}</summary>${history.slice(0,100).map(a=>`<div class="list-item"><div><strong>${esc(memberName(a.user_id))} · ${officerTitle(a.position)}</strong><small>Removed ${dateTime(a.revoked_at)} · ${esc(a.note)}</small></div></div>`).join('')||'<p>No offices have been removed.</p>'}</details>`;
+}
+function officerWorkForm(id=''){
+ if(!officerAccess()||!officerReady)return;const item=(cache.officer_work_items||[]).find(w=>w.id===id);
+ if(item&&!admin()&&(item.assignee_id!==session.user.id||!ownOfficerRoles.includes(item.position)||item.status==='done'))return;
+ const assignments=admin()?(cache.officer_assignments||[]).filter(a=>!a.revoked_at):ownOfficerRoles.map(position=>({user_id:session.user.id,position}));
+ const options=assignments.filter((a,i,all)=>all.findIndex(x=>x.user_id===a.user_id&&x.position===a.position)===i),position=item?.position||options[0]?.position,kinds=['task',officerPositions.find(p=>p[0]===position)?.[3]||'project_plan'];
+ if(!options.length){show('Assign an officer in Roles & offices before creating office work.');return;}
+ form(item?'Update office work':'Create office work','Record the brief, meeting minutes or work plan. Submit it for administrator review.','officerWork',`<input type="hidden" name="item_id" value="${esc(id)}"><label class="field">Office / assigned member<select name="assignment" ${item?'disabled':''}>${options.map(a=>`<option value="${esc(a.user_id+'|'+a.position)}" ${item?.assignee_id===a.user_id&&item?.position===a.position?'selected':''}>${officerTitle(a.position)} · ${esc(memberName(a.user_id))}</option>`).join('')}</select></label>${item?`<input type="hidden" name="assignment" value="${esc(item.assignee_id+'|'+item.position)}">`:''}${field('Title','title','text',item?.title||'')}${select('Work type','kind',kinds,item?.kind||'task')}${area('Brief, notes or plan (at least 10 characters)','body',item?.body||'')}${field('Meeting date or deadline (optional)','due_at','date',item?.due_at||'',false)}${select('Progress','status',admin()?['todo','in_progress','submitted','done']:['todo','in_progress','submitted'],item?.status||'todo')}${admin()?`<label class="field">Administrator feedback (optional)<textarea name="feedback" maxlength="2000">${esc(item?.feedback||'')}</textarea></label>`:''}`);
+}
+function officeWorkHistory(id){const item=(cache.officer_work_items||[]).find(w=>w.id===id);if(!officerAccess()||!item)return;const history=(cache.officer_work_events||[]).filter(e=>e.item_id===id).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));modal(`<span class="eyebrow">OFFICE RECORD</span><h2>${esc(item.title)}</h2><p class="profile-bio">${esc(item.body)}</p>${item.feedback?`<p class="course-feedback">${esc(item.feedback)}</p>`:''}<h3>Work history</h3>${history.map(e=>`<article class="officer-history"><strong>${esc(e.status)} · ${dateTime(e.created_at)}</strong><p class="profile-bio">${esc(e.body)}</p>${e.feedback?`<p>Review: ${esc(e.feedback)}</p>`:''}</article>`).join('')}`);}
+function officePage(){
+ if(!officerAccess())return empty('Office access required','An administrator can assign you an office and its workspace.');
+ if(!officerReady)return empty('Officer workspaces need setup','Run the new officer and finance migration.');
+ const roles=admin()?officerPositions.map(p=>p[0]):ownOfficerRoles,work=(cache.officer_work_items||[]).filter(w=>(admin()||w.assignee_id===session.user.id&&roles.includes(w.position))&&(officeFilter==='all'||w.position===officeFilter)).sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at));
+ officeWorkPage=Math.min(officeWorkPage,Math.max(0,Math.ceil(work.length/24)-1));
+ return head('YOUR OFFICE',admin()?'Office work & reviews':roles.length===1?officerTitle(roles[0])+' workspace':'My club offices','Plan your work, keep records and submit updates for review.',button('+ New office work','officerWorkForm'))+`<div class="officer-position-grid">${officerPositions.filter(p=>roles.includes(p[0])).map(([key,title,detail])=>`<article class="card"><span class="eyebrow">${title}</span><p>${detail}</p><strong>${work.filter(w=>w.position===key&&w.status!=='done').length} open records</strong>${key==='treasurer'&&financeReportAccess()?'<p><a class="link" href="#finance-reports">Approved finance reports →</a></p>':''}</article>`).join('')}</div><div class="records-tabs" role="group" aria-label="Office filter">${['all',...roles].map(role=>`<button class="${officeFilter===role?'active':''}" data-action="officeFilter" data-position="${role}">${role==='all'?'All my work':officerTitle(role)}</button>`).join('')}</div><div class="officer-work-grid">${work.slice(officeWorkPage*24,(officeWorkPage+1)*24).map(w=>`<article class="card"><div class="row"><span class="tag">${officerTitle(w.position)}</span><span class="tag ${w.status==='submitted'?'gold':''}">${esc(w.status.replaceAll('_',' '))}</span></div><h3>${esc(w.title)}</h3><p class="profile-bio">${esc(w.body.slice(0,320))}${w.body.length>320?'…':''}</p><small class="subtle">${esc(memberName(w.assignee_id))}${w.due_at?' · Due '+date(w.due_at):''}</small>${w.feedback?`<p class="course-feedback">${esc(w.feedback)}</p>`:''}<div class="profile-buttons">${w.status!=='done'||admin()?`<button class="button button-outline button-sm" data-action="officerWorkForm" data-id="${esc(w.id)}">${admin()&&w.status==='submitted'?'Review & complete':'Update work'}</button>`:''}<button class="text-button" data-action="officeWorkHistory" data-id="${esc(w.id)}">Read & history</button></div></article>`).join('')||empty('Ready for your next responsibility','Create a work record or wait for an administrator to assign a task.')}</div><div class="records-pagination"><button class="text-button" data-action="officeWorkPage" data-page="${officeWorkPage-1}" ${officeWorkPage===0?'disabled':''}>Previous</button><span>${work.length} records · Page ${officeWorkPage+1}</span><button class="text-button" data-action="officeWorkPage" data-page="${officeWorkPage+1}" ${(officeWorkPage+1)*24>=work.length?'disabled':''}>Next</button></div>`;
+}
 function learningTrackCheckboxes(selected=[],legend='Your courses',hint='Choose one or more. You can select all four.',name='learning_tracks'){
   return `<fieldset class="learning-choice-fieldset"><legend>${esc(legend)}</legend><p class="subtle">${esc(hint)}</p><div class="learning-choice-grid">${courseTracks.map((t,i)=>`<label class="learning-choice"><input type="checkbox" name="${esc(name)}" value="${esc(t.name)}" ${selected.includes(t.name)?'checked':''}><span><small>COURSE 0${i+1}</small><strong>${esc(t.name)}</strong><em>${esc(t.example)}</em></span></label>`).join('')}</div></fieldset>`;
 }
@@ -2235,7 +2323,7 @@ function accountRoleForm(id,preset=''){
   if(!admin()||!learningHubReady||id===session.user.id)return;
   const member=[...approvedAccountRows,...(cache.profiles||[])].find(p=>p.id===id&&p.membership_status==='approved');if(!member)return;
   const tracks=validLearningTracks((cache.teaching_track_assignments||[]).filter(t=>t.teacher_id===id).map(t=>t.track));
-  modal(`<span class="eyebrow">ACCOUNT ACCESS</span><h2>Role for ${esc(member.full_name)}</h2><p class="muted">The selected role controls this person's sidebar, dashboard and database permissions. Reassign their classes before removing teaching access.</p><form id="editor" data-kind="accountRole" class="form-stack"><input type="hidden" name="user_id" value="${esc(id)}">${select('Account role','next_role',['member','teacher','founder','investor','admin'],preset||member.role)}${learningTrackCheckboxes(tracks,'Teaching courses','For a Teacher, select at least one. A Founder with no teaching courses keeps leadership access only. Other roles ignore these choices.','teaching_tracks')}<div class="notice">Member: student dashboard. Teacher: teaching studio and assigned courses. Founder: meetings and finance review, with optional teaching. Investor: investor portal. Administrator: full club administration, finance and role management.</div><button class="button" type="submit">Save role and teaching courses</button></form>`);
+  modal(`<span class="eyebrow">ACCOUNT ACCESS</span><h2>Role for ${esc(member.full_name)}</h2><p class="muted">The selected role controls this person's sidebar, dashboard and database permissions. Reassign their classes before removing teaching access.</p><form id="editor" data-kind="accountRole" class="form-stack"><input type="hidden" name="user_id" value="${esc(id)}">${select('Account role','next_role',['member','teacher','founder','investor','admin'],preset||member.role)}${learningTrackCheckboxes(tracks,'Teaching courses','For a Teacher, select at least one. A Founder with no teaching courses keeps leadership access only. Other roles ignore these choices.','teaching_tracks')}<div class="notice">Member: student dashboard. Teacher: teaching studio and assigned courses. Founder: meetings and leadership, with optional teaching. Investor: investor portal. Administrator: full club administration, finance and role management.</div><button class="button" type="submit">Save role and teaching courses</button></form>`);
 }
 function courses() {
   if(learningSelectionRequired())return head('STUDENT DASHBOARD','Choose your courses','Select as many courses as you want. Your teachers and classes will follow these choices.')+learningPathForm(true);
@@ -2403,42 +2491,53 @@ function inventory(){
     ${visible.length?`<div class="inventory-grid">${visible.map(x=>`<article class="inventory-card ${itemLow(x)?'stock-low':''}" data-inventory-card><div class="inventory-card-head"><div><h3>${esc(x.name)}</h3><p>${esc(x.category)}${x.serial_number?` · ${esc(x.serial_number)}`:''}</p></div><span class="inventory-kind ${esc(x.item_type)}">${esc(x.item_type)}</span></div><div class="inventory-stock ${itemLow(x)?'stock-low':''}"><strong>${esc(x.quantity_available)} ${esc(x.unit)}</strong><small>in stock<br>of ${esc(x.quantity_total)} ${esc(x.unit)}</small></div><div class="inventory-card-meta"><span>Reorder at <strong>${esc(x.reorder_level)} ${esc(x.unit)}</strong></span><span>${itemLow(x)?'<span class="record-pill stock-low">Low stock</span>':esc(x.condition.replaceAll('_',' '))}</span></div><div class="inventory-card-meta"><span>Location: <strong>${esc(x.location||'Not set')}</strong></span>${x.quantity_total>x.quantity_available?`<span>${esc(x.quantity_total-x.quantity_available)} checked out</span>`:''}</div>${admin()?`<div class="inventory-card-actions"><button class="text-button" data-action="inventoryQuantityForm" data-id="${esc(x.id)}">Update quantity</button><button class="text-button" data-action="inventoryUnitForm" data-id="${esc(x.id)}">Change unit</button><button class="text-button" data-action="inventoryMoveForm" data-id="${esc(x.id)}">Record movement →</button><button class="text-button" data-action="inventoryEditForm" data-id="${esc(x.id)}">Edit details</button></div>`:''}</article>`).join('')}</div>`:`<div class="records-empty"><strong>${items.length?'No matching items':'No items registered yet'}</strong>${items.length?'Choose another filter.':'An administrator can add the first stock item.'}</div>`}
     ${founder()?`<div class="records-toolbar"><div><h2>Stock history</h2><p class="subtle">Permanent checkout, issue, return, adjustment and item change records · founders and administrators.</p></div></div><div class="records-panel">${movements.length?`<div class="records-table-wrap"><table class="records-table"><thead><tr><th>Recorded</th><th>Item</th><th>Movement</th><th>Member</th><th>Handled by</th><th>Reason / change</th></tr></thead><tbody>${pageMoves.map(m=>`<tr><td>${esc(dateTime(m.created_at))}</td><td>${esc(items.find(x=>x.id===m.item_id)?.name||m.old_details?.name||'Unknown item')}</td><td><span class="record-pill">${esc(m.kind.replaceAll('_',' '))}${m.kind==='update_details'?'':` · ${esc(m.quantity)} ${esc(m.unit_at_movement||items.find(x=>x.id===m.item_id)?.unit||'units')}`}</span></td><td>${m.member_id?esc(memberName(m.member_id)):'—'}</td><td>${esc(memberName(m.handled_by))}</td><td>${esc(m.note||'—')}${m.old_details&&m.new_details?`<small>${esc(['name','category','item_type','unit','quantity_total','quantity_available','reorder_level','condition','location','serial_number'].filter(k=>m.old_details[k]!==m.new_details[k]).map(k=>`${k.replaceAll('_',' ')}: ${m.old_details[k]??'—'} → ${m.new_details[k]??'—'}`).join(' · '))}</small>`:''}</td></tr>`).join('')}</tbody></table></div>`:`<div class="records-empty"><strong>No movements yet</strong>Checkouts, issues, returns and item changes will appear here.</div>`}${recordsPager('inventoryLog',inventoryLogPage,movements.length)}</div>`:''}`;
 }
+const financeVoucherCode=entry=>'SPACE-FIN-'+String(entry.voucher_number||entry.id).padStart(6,'0');
+const financeReceipts=entryId=>(cache.finance_receipts||[]).filter(r=>r.entry_id===entryId);
+function financeMonthPanel(){
+ if(!financeReportAccess())return '';
+ const r=financeReport,review=r?.review;
+ const closed=r?.last_closed_month?String(r.last_closed_month).slice(0,7):'';
+ const mayClose=admin()&&financeAdminReady&&r&&!review&&financeMonth<new Date().toISOString().slice(0,7)&&!Number(r.pending_count)&&!Number(r.missing_receipts);
+ return `<section class="card finance-month-panel"><div class="section-heading"><div><span class="eyebrow">MONTHLY ACCOUNTABILITY</span><h2>${review?'Reviewed month':'Monthly report & review'}</h2></div><span class="tag ${review?'':'gold'}">${review?'Closed · '+date(review.created_at):'Review pending'}</span></div><form id="financeMonthForm" class="officer-toolbar"><label class="field">Report month<input name="month" type="month" value="${esc(financeMonth)}" required></label><button class="button button-outline button-sm" type="submit">Open month</button><button class="text-button" type="button" data-action="financeReportCsv" ${r?'':'disabled'}>Approved report CSV ↓</button></form>${financeReportError?`<div class="notice">${esc(financeReportError)} <button class="text-button" data-action="financeReportReload">Retry</button></div>`:!r?'<p role="status">Open a month to load its approved financial report.</p>':`<div class="records-stats">${recordsStat('Opening balance',recordMoney(Math.round(Number(r.opening_balance)*100)),'Approved earlier transactions')}${recordsStat('Income',recordMoney(Math.round(Number(r.income)*100)),'Approved this month')}${recordsStat('Expenses',recordMoney(Math.round(Number(r.expense)*100)),'Approved this month')}${recordsStat('Closing balance',recordMoney(Math.round(Number(r.closing_balance)*100)),r.approved_count+' approved entries')}</div>${admin()?`<p class="subtle">${Number(r.pending_count)||0} transactions await decisions and ${Number(r.missing_receipts)||0} approved transactions need receipts through this month.${closed?' Latest closed month: '+esc(closed)+'.':''}</p>`:''}${review?`<div class="notice"><strong>Actual closing balance: ${recordMoney(Math.round(Number(review.actual_balance)*100))} · Difference: ${recordMoney(Math.round(Number(review.difference)*100))}</strong><p>${esc(review.note)}</p><small>Reviewed ${dateTime(review.created_at)}. Closed entries are preserved; corrections belong in an open month.</small></div>`:admin()?`<button class="button button-sm" data-action="closeFinanceMonthForm" ${mayClose?'':'disabled'}>Review & close this month</button><p class="hint">Close a completed calendar month after deciding pending entries and attaching all approved receipts. After the first close, review the next month in order.</p>`:'<p class="subtle">The administrator completes the monthly review. You have read-only access to approved reports.</p>'}<div class="records-table-wrap"><table class="records-table"><thead><tr><th>Type</th><th>Category</th><th>Approved total (GHS)</th></tr></thead><tbody>${(r.categories||[]).map(c=>`<tr><td>${esc(c.entry_type)}</td><td>${esc(c.category)}</td><td>${recordMoney(Math.round(Number(c.amount)*100))}</td></tr>`).join('')||'<tr><td colspan="3">No approved activity in this month.</td></tr>'}</tbody></table></div>`}</section>${r?`<section class="records-panel"><div class="section-heading"><h2>Approved transactions</h2><span>${r.approved_count} records</span></div><div class="records-table-wrap"><table class="records-table"><thead><tr><th>Voucher / date</th><th>Type / amount</th><th>Category / purpose</th><th>Reference</th></tr></thead><tbody>${financeReportRows.map(e=>`<tr><td>${esc(financeVoucherCode(e))}<small>${recordDate(e.occurred_on)}</small></td><td>${esc(e.entry_type)}<strong>${recordMoney(Math.round(Number(e.amount)*100))}</strong></td><td>${esc(e.category)}<small>${esc(e.description)}</small></td><td>${esc(e.reference||'—')}</td></tr>`).join('')||'<tr><td colspan="4">No approved transactions.</td></tr>'}</tbody></table></div><div class="records-pagination"><button class="text-button" data-action="financeReportPage" data-page="${financeReportPage-1}" ${financeReportPage===0?'disabled':''}>Previous</button><span>Page ${financeReportPage+1}</span><button class="text-button" data-action="financeReportPage" data-page="${financeReportPage+1}" ${(financeReportPage+1)*50>=Number(r.approved_count)?'disabled':''}>Next</button></div></section>`:''}`;
+}
+function financeReportsPage(){if(!financeReportAccess())return empty('Finance report access required','An administrator can assign the treasurer office.');return head('CLUB RECORDS','Approved finance reports','Read-only monthly income, expenses and closing balances.')+(officerReady?financeMonthPanel():'<div class="notice">Run the officer and finance migration to enable approved reports.</div>');}
 function finance(){
-  if(!admin())return '';
-  if(!financeReady)return `${head('LEADERSHIP RECORDS','Finance','Review the club ledger.')}<div class="notice">To activate finance, run <code>supabase/upgrade_inventory_finance.sql</code> in your Supabase SQL Editor, then refresh this page.</div>`;
-  if(!financeApprovalsReady)return `${head('ADMIN RECORDS','Finance','Record income and expenses.')}<div class="notice">Run <code>supabase/upgrade_inventory_finance_approvals.sql</code> to activate founder approvals and the accountable balance.</div>`;
-  const entries=cache.finance_entries||[];
-  const effective=entries.filter(financeEffective);
-  const income=effective.filter(x=>x.entry_type==='income').reduce((n,x)=>n+Math.round(Number(x.amount)*100),0);
-  const expense=effective.filter(x=>x.entry_type==='expense').reduce((n,x)=>n+Math.round(Number(x.amount)*100),0);
-  const pending=entries.filter(x=>financeStatus(x)==='pending').length;
-  const visible=entries.filter(x=>financeFilter==='all'||x.entry_type===financeFilter||financeStatus(x)===financeFilter).sort((a,b)=>b.occurred_on.localeCompare(a.occurred_on)||b.created_at.localeCompare(a.created_at));
-  const pageEntries=visible.slice(financePage*50,(financePage+1)*50);
-  return `${head('ADMIN RECORDS','Finance','Record the club’s funds and track founder decisions.',button('+ Submit transaction','financeEntryForm'))}
-    <div class="records-stats">${recordsStat('Approved income',recordMoney(income),'Founder approved entries','finance-income')}${recordsStat('Approved expenses',recordMoney(expense),'Founder approved entries','finance-expense')}${recordsStat('Recorded balance',recordMoney(income-expense),'Approved income less expenses','finance-total')}${recordsStat('Awaiting review',pending,'Founder approval needed')}</div>
-    <div class="notice">Amounts are in Ghana cedis (GHS). All entries, including ones recorded before this approval upgrade, need a founder decision. Pending and rejected amounts do not affect the balance. Corrections require a new entry and founder review.</div>
-    <div class="records-toolbar"><div><h2>Transaction ledger</h2><p class="subtle">Admin entries retain the purpose, date, reference and founder decision.</p></div><div class="records-actions"><button class="button button-outline button-sm" data-action="exportCsv" data-table="finance_entries">Download ledger CSV ↓</button></div></div>
-    <div class="records-tabs" role="group" aria-label="Filter transactions">${[['all','All'],['pending','Pending'],['approved','Approved'],['rejected','Rejected'],['income','Income'],['expense','Expenses']].map(([key,label])=>`<button data-action="financeFilter" data-filter="${key}" class="${financeFilter===key?'active':''}" aria-pressed="${financeFilter===key}">${label}</button>`).join('')}</div>
-    <div class="records-panel">${visible.length?`<div class="records-table-wrap"><table class="records-table"><thead><tr><th>Date</th><th>Type / amount</th><th>Category / purpose</th><th>Counterparty / reference</th><th>Status</th><th>Entered by</th><th>Founder review</th></tr></thead><tbody>${pageEntries.map(financeEntryRow).join('')}</tbody></table></div>`:`<div class="records-empty"><strong>${entries.length?'No matching transactions':'No transactions yet'}</strong>${entries.length?'Choose another filter.':'Record the first income or expense to begin.'}</div>`}${recordsPager('finance',financePage,visible.length)}</div>`;
+ if(!admin())return empty('Administrator access required','Only administrators control the finance ledger.');
+ const entries=cache.finance_entries||[],approvedEntries=entries.filter(financeEffective),income=approvedEntries.filter(e=>e.entry_type==='income').reduce((a,e)=>a+Math.round(Number(e.amount)*100),0),expense=approvedEntries.filter(e=>e.entry_type==='expense').reduce((a,e)=>a+Math.round(Number(e.amount)*100),0);
+ const visible=entries.filter(e=>financeFilter==='all'||e.entry_type===financeFilter||financeStatus(e)===financeFilter).sort((a,b)=>b.occurred_on.localeCompare(a.occurred_on)||b.created_at.localeCompare(a.created_at));
+ financePage=Math.min(financePage,Math.max(0,Math.ceil(visible.length/50)-1));
+ return head('ADMINISTRATION','Finance & accountability','Record transactions, attach receipts, make decisions and review each month.',financeAdminReady?button('+ Record transaction','financeEntryForm'):'')+(!financeAdminReady?'<div class="notice">Run upgrade_officer_workspaces_finance.sql to activate administrator approvals, receipts and monthly reviews. Earlier records remain below.</div>':'')+`<div class="records-stats">${recordsStat('Approved balance',recordMoney(income-expense),'Approved income minus expenses')}${recordsStat('Total income',recordMoney(income),'Approved entries')}${recordsStat('Total expenses',recordMoney(expense),'Approved entries')}${recordsStat('Awaiting decision',entries.filter(e=>financeStatus(e)==='pending').length,'Administrator review')}</div>${financeAdminReady?financeMonthPanel():''}<div class="records-toolbar"><div><h2>Transaction ledger</h2><p class="subtle">Entries, receipts and decisions remain in history. Approved reports are read-only for assigned treasurers.</p></div><button class="button button-outline button-sm" data-action="exportCsv" data-table="finance_entries">Ledger CSV ↓</button></div><div class="records-tabs">${['all','pending','approved','rejected','income','expense'].map(value=>`<button class="${financeFilter===value?'active':''}" data-action="financeFilter" data-filter="${value}">${value[0].toUpperCase()+value.slice(1)}</button>`).join('')}</div><div class="records-panel"><div class="records-table-wrap"><table class="records-table"><thead><tr><th>Voucher / date</th><th>Type / amount</th><th>Category / purpose</th><th>Counterparty / reference</th><th>Status</th><th>Recorded by</th><th>Receipt & decision</th></tr></thead><tbody>${visible.slice(financePage*50,(financePage+1)*50).map(financeEntryRow).join('')||'<tr><td colspan="7">No transactions match this view.</td></tr>'}</tbody></table></div>${recordsPager('finance',financePage,visible.length)}</div>`;
 }
-function financeEntryRow(x){
-  const review=financeReviewFor(x),status=financeStatus(x);
-  return `<tr><td>${esc(recordDate(x.occurred_on))}<small>Entered ${esc(dateTime(x.created_at))}</small></td><td><span class="record-pill ${x.entry_type==='expense'?'expense':''}">${esc(x.entry_type)}</span><small class="${x.entry_type==='income'?'finance-income':'finance-expense'}">${esc(recordMoney(Math.round(Number(x.amount)*100)))}</small></td><td>${esc(x.category)}<small>${esc(x.description)}</small></td><td>${esc(x.counterparty||'—')}<small>${esc(x.reference||'No reference')}</small></td><td><span class="finance-status ${status}">${esc(status)}</span></td><td>${esc(memberName(x.created_by))}</td><td>${review?`${esc(memberName(review.reviewer_id))}<small>${esc(dateTime(review.created_at))}${review.note?` · ${esc(review.note)}`:''}</small>`:'—'}</td></tr>`;
+function financeEntryRow(e){
+ const review=financeReviewFor(e),status=financeStatus(e),receipts=financeReceipts(e.id);
+ return `<tr><td>${esc(financeVoucherCode(e))}<small>${recordDate(e.occurred_on)}</small></td><td>${esc(e.entry_type)}<strong class="finance-${esc(e.entry_type)}">${recordMoney(Math.round(Number(e.amount)*100))}</strong></td><td>${esc(e.category)}<small>${esc(e.description)}</small></td><td>${esc(e.counterparty||'—')}<small>${esc(e.reference||'No reference')}</small></td><td><span class="finance-status ${status}">${status}</span></td><td>${esc(memberName(e.created_by))}</td><td>${review?`<small>${esc(memberName(review.reviewer_id))} · ${dateTime(review.created_at)}${review.note?' · '+esc(review.note):''}</small>`:''}${financeAdminReady?`<button class="text-button" data-action="financeReceiptForm" data-id="${esc(e.id)}">${receipts.length?receipts.length+' receipt(s) · view / add':'Attach receipt'}</button> · <button class="text-button" data-action="financeVoucher" data-id="${esc(e.id)}">Voucher</button>${status==='pending'?`<div class="profile-buttons"><button class="button button-outline button-sm" data-action="reviewFinance" data-id="${esc(e.id)}" data-decision="approved" ${receipts.length?'':'disabled'}>Approve</button><button class="text-button" data-action="reviewFinance" data-id="${esc(e.id)}" data-decision="rejected">Reject</button></div>`:''}`:''}</td></tr>`;
 }
-function financeReview(){
-  if(!founderOnly())return '';
-  if(!financeReady)return `${head('FOUNDER REVIEW','Finance approvals','Review the club’s transactions.')}<div class="notice">First run <code>supabase/upgrade_inventory_finance.sql</code> in Supabase SQL Editor.</div>`;
-  if(!financeApprovalsReady)return `${head('FOUNDER REVIEW','Finance approvals','Review the club’s transactions.')}<div class="notice">Run <code>supabase/upgrade_inventory_finance_approvals.sql</code> after the first inventory and finance migration.</div>`;
-  const entries=cache.finance_entries||[],pending=entries.filter(x=>financeStatus(x)==='pending').sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
-  const history=entries.filter(x=>financeStatus(x)!=='pending').sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
-  const pageHistory=history.slice(financeReviewPage*50,(financeReviewPage+1)*50);
-  return `${head('FOUNDER REVIEW','Finance approvals','Review new transactions and keep a visible record of decisions.')}
-    <div class="records-stats">${recordsStat('Waiting for review',pending.length,'Founder decision needed')}${recordsStat('Approved',history.filter(x=>financeStatus(x)==='approved').length,'Included in balance')}${recordsStat('Rejected',history.filter(x=>financeStatus(x)==='rejected').length,'Excluded from balance')}${recordsStat('All records',entries.length,'Earlier and new entries')}</div>
-    <div class="notice">Only approved founders can approve or reject new entries. The administrator records the transactions; approval determines whether they count in the club balance. Rejection needs a reason.</div>
-    <div class="section-heading"><div><h2>Awaiting your review</h2><p>Check the amount, purpose and reference before deciding.</p></div></div>
-    ${pending.length?`<div class="finance-review-grid">${pending.map(x=>`<article class="finance-review-card"><header><span class="finance-status pending">Pending</span><strong class="${x.entry_type==='income'?'finance-income':'finance-expense'}">${esc(recordMoney(Math.round(Number(x.amount)*100)))}</strong></header><h3>${esc(x.category)} · ${esc(x.entry_type)}</h3><p>${esc(x.description)}</p><small>${esc(recordDate(x.occurred_on))} · Entered by ${esc(memberName(x.created_by))}</small><small>${x.counterparty?`From / to: ${esc(x.counterparty)} · `:''}Reference: ${esc(x.reference||'Not supplied')}</small><div class="finance-review-actions"><button class="button button-sm" data-action="reviewFinance" data-id="${esc(x.id)}" data-decision="approved">Review to approve</button><button class="button button-outline button-sm" data-action="reviewFinance" data-id="${esc(x.id)}" data-decision="rejected">Reject</button></div></article>`).join('')}</div>`:`<div class="records-empty"><strong>All caught up</strong>No finance entries are awaiting a founder decision.</div>`}
-    <div class="finance-history"><div class="section-heading"><div><h2>Decision history</h2><p>Approved and rejected transactions remain visible with their reviewers and reasons.</p></div></div><div class="records-panel">${history.length?`<div class="records-table-wrap"><table class="records-table"><thead><tr><th>Date</th><th>Type / amount</th><th>Category / purpose</th><th>Counterparty / reference</th><th>Status</th><th>Entered by</th><th>Founder review</th></tr></thead><tbody>${pageHistory.map(financeEntryRow).join('')}</tbody></table></div>`:`<div class="records-empty"><strong>No decisions yet</strong>Approved and rejected transactions will appear here.</div>`}${recordsPager('financeReview',financeReviewPage,history.length)}</div></div>`;
+function financeReview(){return admin()?finance():empty('Administrator access required','Finance approvals are managed by administrators.');}
+function financeReceiptForm(id){
+ if(!admin()||!financeAdminReady)return;const entry=(cache.finance_entries||[]).find(e=>e.id===id);if(!entry)return;
+ modal(`<span class="eyebrow">PRIVATE TRANSACTION EVIDENCE</span><h2>${esc(financeVoucherCode(entry))}</h2><p>${esc(entry.description)}</p><div class="list">${financeReceipts(id).map(r=>`<div class="list-item"><div><strong>${esc(r.file_name)}</strong><small>${fileSize(r.file_size)} · ${dateTime(r.created_at)}</small></div><button class="text-button" data-action="downloadFinanceReceipt" data-id="${esc(r.id)}">Open receipt ↗</button></div>`).join('')||'<p>No receipt attached. A receipt is required before approval.</p>'}</div><form id="editor" data-kind="financeReceipt" class="form-stack"><input type="hidden" name="entry_id" value="${esc(id)}"><label class="field">Add receipt (PDF, JPG, PNG or WebP · up to 10 MB)<input name="receipt" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" required></label><p class="hint">Receipt history is retained. Only administrators can access these files. Closed months cannot accept new evidence.</p><button class="button" type="submit">Attach receipt</button></form>`);
 }
+async function uploadFinanceReceipt(entryId,file){
+ if(!admin()||!financeAdminReady)throw Error('Administrator access required');
+ const ext={'application/pdf':'pdf','image/jpeg':'jpg','image/png':'png','image/webp':'webp'}[file?.type];if(!ext||file.size<1||file.size>10485760)throw Error('Choose a PDF, JPG, PNG or WebP receipt up to 10 MB.');
+ const path=session.user.id+'/'+entryId+'/'+crypto.randomUUID()+'.'+ext;
+ const {error}=await db.storage.from('club-finance-receipts').upload(path,file,{upsert:false,contentType:file.type});if(error)throw error;
+ try{const result=await db.rpc('register_finance_receipt',{p_entry:entryId,p_path:path,p_name:file.name.slice(0,160),p_size:file.size,p_mime:file.type});if(result.error)throw result.error;return result.data;}
+ catch(error){await db.storage.from('club-finance-receipts').remove([path]);throw error;}
+}
+async function downloadFinanceReceipt(id){if(!admin())return;const receipt=(cache.finance_receipts||[]).find(r=>r.id===id);if(!receipt)return;try{const {data,error}=await db.storage.from('club-finance-receipts').createSignedUrl(receipt.storage_path,120);if(error)throw error;const a=document.createElement('a');a.href=data.signedUrl;a.target='_blank';a.rel='noopener noreferrer';a.click();}catch(error){fail(error);}}
+function financeVoucher(id){if(!admin())return;const e=(cache.finance_entries||[]).find(x=>x.id===id);if(!e)return;const review=financeReviewFor(e);modal(`<article class="finance-voucher"><span class="eyebrow">SPACE ENGINEERING CLUB</span><h2>Transaction voucher</h2><strong>${esc(financeVoucherCode(e))} · ${esc(financeStatus(e).toUpperCase())}</strong><dl><dt>Date</dt><dd>${recordDate(e.occurred_on)}</dd><dt>Type / amount</dt><dd>${esc(e.entry_type)} · ${recordMoney(Math.round(Number(e.amount)*100))}</dd><dt>Purpose</dt><dd>${esc(e.category)} · ${esc(e.description)}</dd><dt>Counterparty / reference</dt><dd>${esc(e.counterparty||'—')} · ${esc(e.reference||'—')}</dd><dt>Recorded by</dt><dd>${esc(memberName(e.created_by))}</dd><dt>Decision</dt><dd>${review?esc(review.decision)+' · '+esc(memberName(review.reviewer_id))+' · '+dateTime(review.created_at):'Pending administrator review'}</dd></dl>${review?.note?`<p>${esc(review.note)}</p>`:''}<h3>Supporting receipts</h3><ul>${financeReceipts(id).map(r=>`<li>${esc(r.file_name)} · ${dateTime(r.created_at)}</li>`).join('')||'<li>No supporting receipt recorded.</li>'}</ul><p class="hint">This voucher records the ledger entry and its status. Supporting receipts are retained separately.</p><button class="button no-print" data-action="printFinanceVoucher">Print / save PDF</button></article>`);}
+async function exportFinanceReport(){
+ if(!financeReportAccess()||!officerReady)return;const generation=authGeneration,owner=session.user.id,month=financeMonth;
+ try{const first=await db.rpc('finance_month_report',{p_month:month+'-01'});if(first.error)throw first.error;const rows=[];
+  for(let offset=0;;offset+=250){if(generation!==authGeneration||session?.user.id!==owner||!financeReportAccess())throw Error('Your access changed. Start the export again.');const result=await db.rpc('finance_report_entries',{p_month:month+'-01',p_offset:offset,p_limit:250});if(result.error)throw result.error;rows.push(...(result.data||[]));if((result.data||[]).length<250)break;}
+  const last=await db.rpc('finance_month_report',{p_month:month+'-01'});if(last.error)throw last.error;if(rows.length!==Number(first.data.approved_count)||rows.length!==Number(last.data.approved_count)||new Set(rows.map(r=>r.id)).size!==rows.length)throw Error('The report changed during export. Please retry.');
+  if(generation!==authGeneration||session?.user.id!==owner||!financeReportAccess())return;
+  const cols=['voucher_number','occurred_on','entry_type','category','amount','description','reference'],cell=value=>'"'+String(value??'').replace(/^[\s]*[=+@-]/,"'$&").replaceAll('"','""')+'"';
+  const url=URL.createObjectURL(new Blob(['\ufeff'+cols.join(',')+'\r\n'+rows.map(r=>cols.map(c=>cell(r[c])).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='space-approved-finance-'+month+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);show('Approved monthly report downloaded.');
+ }catch(error){fail(error);}
+}
+
 function eventRow(e) {return `<div class="list-item"><div class="event-date"><b>${new Date(e.starts_at).getDate()}</b><small>${new Date(e.starts_at).toLocaleString(undefined,{month:'short'})}</small></div><div><strong>${esc(e.title)}</strong><small>${dateTime(e.starts_at)} · ${esc(e.location||'Online')}</small></div></div>`;}
 function rsvpControls(kind,id) {
   if(!enhancedReady)return '';
@@ -2779,7 +2878,7 @@ function adminDashboard(){
   const inquiries=(cache.investor_inquiries||[]).filter(q=>q.status==='new');
   const posts=cache.activity_posts||[],projects=cache.projects||[];
   const exports=[['profiles','Applications & members'],['projects','Projects'],['events','Events'],['activity_posts','Activity posts'],['reports','Reports'],['investor_inquiries','Investor inquiries'],['audit_events','Audit log']];
-  return `${head('ADMINISTRATION','Admin overview','Start with membership approvals, then check reports, club records and recent actions.')}
+  return `${head('ADMINISTRATION','Admin overview','Start with membership approvals, then check reports, club records and recent actions.', '<a class="button button-outline" href="#officers">Roles & offices →</a>')}
   ${!roleReady?'<div class="notice">Run the roles and investors migration to enable applicant types and the investor portal.</div>':''}
   <div class="grid grid-4"><a class="stat dashboard-stat" href="#applications"><small>Pending applications</small><b>${adminPendingCount}</b><span>Review requests →</span></a><a class="stat dashboard-stat" href="#moderation"><small>Open reports</small><b>${reports.length}</b><span>Moderate content →</span></a><a class="stat dashboard-stat" href="#feed"><small>Recent activity posts</small><b>${posts.length}</b><span>View feed →</span></a><a class="stat dashboard-stat" href="#projects"><small>Projects</small><b>${projects.length}</b><span>View plans →</span></a></div>
   ${privacyQueue.length?`<div class="notice privacy-admin-notice"><strong>${privacyQueue.length} privacy ${privacyQueue.length===1?'request needs':'requests need'} review.</strong> <a href="#privacy">Open the administrator queue →</a></div>`:''}
@@ -2909,7 +3008,7 @@ function signInDialog(mode='signin') {
   if(pendingEmail) return codeDialog();
   pendingAuthMode=mode==='signup'?'signup':'signin';
   const destination=pendingProtectedPage?pendingProtectedPage.replace(/-/g,' '):'';
-  modal(`<span class="eyebrow">SPACE ENGINEERING CLUB</span><h2>${pendingAuthMode==='signup'?'Create your account':'Sign in'}</h2>${destination?`<div class="auth-access-note"><strong>${esc(destination[0].toUpperCase()+destination.slice(1))} is in the club workspace.</strong><span>Sign in to continue, or create an account for administrator approval.</span></div>`:''}<div class="auth-switch"><button type="button" class="${pendingAuthMode==='signin'?'selected':''}" data-action="signin">I have an account</button><button type="button" class="${pendingAuthMode==='signup'?'selected':''}" data-action="signup">Create an account</button></div><p class="muted">${pendingAuthMode==='signup'?'Choose the type of account you are applying for. Verify your email once to create the account; an administrator will review the application.':'Enter the email for your existing account. We’ll send a fresh one-time sign-in code.'}</p><form id="editor" data-kind="login" class="form-stack">${pendingAuthMode==='signup'?select('I am applying as','application_type',['member','teacher','founder','investor'],pendingType):''}${field('Email address','email','email')}<button class="button" type="submit">${pendingAuthMode==='signup'?'Create account and send code':'Send sign-in code'}</button></form><p class="hint">Sign in again after closing or refreshing SPACE. Sessions end after 30 minutes without activity or 8 hours in total.</p>`);
+  modal(`<span class="eyebrow">SPACE ENGINEERING CLUB</span><h2>${pendingAuthMode==='signup'?'Create your account':'Sign in'}</h2>${destination?`<div class="auth-access-note"><strong>${esc(destination[0].toUpperCase()+destination.slice(1))} is in the club workspace.</strong><span>Sign in to continue, or create an account for administrator approval.</span></div>`:''}<div class="auth-switch"><button type="button" class="${pendingAuthMode==='signin'?'selected':''}" data-action="signin">I have an account</button><button type="button" class="${pendingAuthMode==='signup'?'selected':''}" data-action="signup">Create an account</button></div><p class="muted">${pendingAuthMode==='signup'?'Choose the type of account you are applying for. Verify your email once to create the account; an administrator will review the application.':'Enter the email for your existing account. We’ll send a fresh one-time sign-in code.'}</p><form id="editor" data-kind="login" class="form-stack">${pendingAuthMode==='signup'?select('I am applying as','application_type',['member','teacher','founder','investor'],pendingType):''}${field('Email address','email','email')}<button class="button" type="submit">${pendingAuthMode==='signup'?'Create account and send code':'Send sign-in code'}</button></form><p class="hint">Refreshing this tab keeps you signed in. Sign in again after closing the tab or after 30 minutes without activity or 8 hours in total.</p>`);
 }
 function codeDialog() {
   modal(`<span class="eyebrow">SPACE ENGINEERING CLUB</span><h2>${pendingAuthMode==='signup'?'Verify your new account':'Enter your sign-in code'}</h2><p class="muted">Enter the one-time code sent to <strong>${esc(pendingEmail)}</strong>.</p><form id="editor" data-kind="verify" class="form-stack"><div class="field"><label for="code">One-time code</label><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" maxlength="10" placeholder="Your code" required></div><button class="button" type="submit">${pendingAuthMode==='signup'?'Verify account':'Sign in'}</button></form><div class="otp-actions"><button class="text-button" data-action="resendCode">Resend code</button><button class="text-button" data-action="changeEmail">Use another email</button></div><p class="hint">Only the latest code will work. Check your spam folder if you don't see the email.</p>`);
@@ -2941,7 +3040,7 @@ function projectDetail(id) {
     <div class="row" style="margin-top:22px"><h3>Project discussions</h3><button class="text-button" data-action="projectTopic" data-id="${esc(id)}">Start discussion +</button></div>${threads.length?threads.map(t=>`<div class="list-item"><div><strong>${esc(t.title)}</strong><small>${date(t.created_at)}</small></div><button class="text-button" data-action="topicDetail" data-id="${esc(t.id)}">Open →</button></div>`).join(''):'<p class="muted">No project discussions yet.</p>'}${can?`<div class="profile-action">${button('Update project','projectEdit','button-outline button-sm')}</div>`:''}`);
 }
 function topicDetail(id) {const t=(cache.topics||[]).find(x=>x.id===id);if(!t)return;const list=(cache.replies||[]).filter(x=>x.topic_id===id).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));modal(`<span class="tag">${esc(t.category)}</span><h2 style="margin-top:15px">${esc(t.title)}</h2><p>${esc(t.body)}</p><h3>Replies (${list.length})</h3><div style="max-height:300px;overflow:auto">${list.map(r=>`<div class="reply"><strong>${esc((cache.profiles||[]).find(p=>p.id===r.author_id)?.full_name||'Member')}</strong><span class="subtle"> · ${dateTime(r.created_at)}</span><p>${esc(r.body)}</p></div>`).join('')||'<p class="muted">Be the first to reply.</p>'}</div><form id="editor" data-kind="reply" class="form-stack">${area('Your reply','body')}<button class="button" type="submit">Post reply</button></form>`);}
-async function signOut() {authStateRequest++;loginWelcomePendingOwner=null;dismissLoginWelcome();try{if(session&&window.InnovateXPush)await window.InnovateXPush.unsubscribe(session.user.id,db);await touchPresence(false);const {error}=await db.auth.signOut();if(error)throw error;pendingProtectedPage='';history.replaceState(null,'','#home');await signedIn(null);show('Signed out. See you soon.');}catch(e){fail(e);}}
+async function signOut(){if(!session)return;const owner=session.user.id;authStateRequest++;loginWelcomePendingOwner=null;dismissLoginWelcome();if(window.InnovateXPush)void window.InnovateXPush.unsubscribe(owner,db).catch(console.error);expireSession('',false);if(sessionSignOutPromise)await sessionSignOutPromise;show('Signed out. See you soon.');}
 
 async function deleteAnnouncement(id){
   if(!admin())return;
@@ -2960,6 +3059,20 @@ async function deleteAnnouncement(id){
 function actions(e) {
   if(session&&checkSessionExpiry()){e.preventDefault();return;}
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
+  if(action==='officerRoleForm')return officerRoleForm(id);
+  if(action==='officerWorkForm')return officerWorkForm(id);
+  if(action==='officeWorkHistory')return officeWorkHistory(id);
+  if(action==='officeFilter'&&officerAccess()){officeFilter=el.dataset.position;officeWorkPage=0;render();return;}
+  if(action==='officeWorkPage'&&officerAccess()){officeWorkPage=Math.max(0,Number(el.dataset.page)||0);render();return;}
+  if(action==='officerMemberPage'&&admin()){officerMemberPage=Math.max(0,Number(el.dataset.page)||0);render();return;}
+  if(action==='financeReceiptForm')return financeReceiptForm(id);
+  if(action==='downloadFinanceReceipt')return void downloadFinanceReceipt(id);
+  if(action==='financeVoucher')return financeVoucher(id);
+  if(action==='printFinanceVoucher'&&admin()){document.body.classList.add('finance-printing');window.print();document.body.classList.remove('finance-printing');return;}
+  if(action==='financeReportCsv')return void exportFinanceReport();
+  if(action==='financeReportReload'&&financeReportAccess())return void loadFinanceMonthReport().then(render);
+  if(action==='financeReportPage'&&financeReportAccess()){financeReportPage=Math.max(0,Math.min(Math.max(0,Math.ceil(Number(financeReport?.approved_count||0)/50)-1),Number(el.dataset.page)||0));return void loadFinanceMonthReport().then(render);}
+  if(action==='closeFinanceMonthForm'&&admin()&&financeAdminReady&&financeReport&&!financeReport.review){return form('Review & close month','Confirm the actual bank and cash balance. The review preserves totals and prevents changes to closed periods.','financeMonthClose',`<input type="hidden" name="month" value="${esc(financeMonth)}"><label class="field">Actual closing balance (GHS)<input name="actual_balance" type="number" step="0.01" min="-9999999999.99" max="9999999999.99" value="${Number(financeReport.closing_balance).toFixed(2)}" required></label>${area('Monthly review notes, checks and any difference','note')}`);}
   if(action==='retryPage'){if(session&&authReady)return refreshVisiblePage({force:true});return signInDialog('signin');}
   if(sessionEnding&&!session&&!['login','signup','signin','resendCode','changeEmail'].includes(action)){e.preventDefault();signInDialog('signin');return;}
   if(action==='learningPathForm'&&clubAccess()&&learningChoicesReady)return modal(learningPathForm());
@@ -3081,11 +3194,11 @@ function actions(e) {
   if(action==='financeFilter'){if(!admin())return;financeFilter=el.dataset.filter;financePage=0;render();return;}
   if(action==='inventoryLogPrev'||action==='inventoryLogNext'){if(!founder())return;inventoryLogPage=Math.max(0,inventoryLogPage+(action==='inventoryLogNext'?1:-1));render();return;}
   if(action==='financePrev'||action==='financeNext'){if(!admin())return;financePage=Math.max(0,financePage+(action==='financeNext'?1:-1));render();return;}
-  if(action==='financeReviewPrev'||action==='financeReviewNext'){if(!founderOnly())return;financeReviewPage=Math.max(0,financeReviewPage+(action==='financeReviewNext'?1:-1));render();return;}
-  if(action==='reviewFinance'&&founderOnly()&&financeApprovalsReady){
+  if(action==='financeReviewPrev'||action==='financeReviewNext'){if(!admin())return;financeReviewPage=Math.max(0,financeReviewPage+(action==='financeReviewNext'?1:-1));render();return;}
+  if(action==='reviewFinance'&&admin()&&financeAdminReady){
     const entry=(cache.finance_entries||[]).find(x=>x.id===id),decision=el.dataset.decision;
     if(!entry||financeStatus(entry)!=='pending'||!['approved','rejected'].includes(decision))return;
-    return modal(`<span class="eyebrow">FOUNDER DECISION</span><h2>${decision==='approved'?'Approve':'Reject'} transaction</h2><p class="muted">${esc(entry.entry_type)} · ${esc(recordMoney(Math.round(Number(entry.amount)*100)))} · ${esc(entry.category)} · ${esc(recordDate(entry.occurred_on))}</p><p>${esc(entry.description)}</p><p class="subtle">Reference: ${esc(entry.reference||'Not supplied')} · Entered by ${esc(memberName(entry.created_by))}</p><form id="editor" data-kind="financeReview" class="form-stack"><input type="hidden" name="entry_id" value="${esc(id)}"><input type="hidden" name="decision" value="${decision}"><div class="field"><label for="review_note">${decision==='rejected'?'Reason for rejection':'Review note (optional)'}</label><textarea id="review_note" name="note" maxlength="2000" ${decision==='rejected'?'required':''}></textarea></div><button class="button" type="submit">Confirm ${decision==='approved'?'approval':'rejection'}</button></form>`);
+    return modal(`<span class="eyebrow">ADMINISTRATOR DECISION</span><h2>${decision==='approved'?'Approve':'Reject'} transaction</h2><p class="muted">${esc(entry.entry_type)} · ${esc(recordMoney(Math.round(Number(entry.amount)*100)))} · ${esc(entry.category)} · ${esc(recordDate(entry.occurred_on))}</p><p>${esc(entry.description)}</p><p class="subtle">Reference: ${esc(entry.reference||'Not supplied')} · Entered by ${esc(memberName(entry.created_by))}</p><form id="editor" data-kind="financeReview" class="form-stack"><input type="hidden" name="entry_id" value="${esc(id)}"><input type="hidden" name="decision" value="${decision}"><div class="field"><label for="review_note">${decision==='rejected'?'Reason for rejection':'Review note (optional)'}</label><textarea id="review_note" name="note" maxlength="2000" ${decision==='rejected'?'required':''}></textarea></div><button class="button" type="submit">Confirm ${decision==='approved'?'approval':'rejection'}</button></form>`);
   }
   if(action==='inventoryAddForm'&&admin()&&inventoryCatalogReady)return form('Add stock item','Record a component, tool, supply or other club asset. Quantities are whole numbers; use cm for wire or g for small weights.','inventoryItem',field('Item name','name')+select('Item type','item_type',['component','tool','equipment','consumable','other'])+field('Category (e.g. Sensors, Hand tools)','category')+field('Unit (pcs, cm, g, rolls, sets)','unit','text','pcs')+`<div class="field"><label for="quantity_total">Starting quantity</label><input id="quantity_total" name="quantity_total" type="number" min="0" max="2147483647" step="1" value="1" required></div><div class="field"><label for="reorder_level">Low-stock level</label><input id="reorder_level" name="reorder_level" type="number" min="0" max="2147483647" step="1" value="0" required></div>`+select('Condition','condition',['good','needs_repair','retired'])+field('Storage location','location','text','',false)+field('Serial or asset number (optional)','serial_number','text','',false));
   if(action==='inventoryQuantityForm'&&admin()&&inventoryCatalogReady){
@@ -3109,7 +3222,7 @@ function actions(e) {
     const kinds=first==='return'?['return','check_out','add_stock','remove_stock','issue_stock']:first==='issue_stock'?['issue_stock','add_stock','remove_stock','check_out','return']:['check_out','return','add_stock','remove_stock','issue_stock'];
     return form('Record movement',`${esc(item.name)} · ${item.quantity_available} of ${item.quantity_total} ${esc(item.unit)} in stock.`,'inventoryMovement',`<input type="hidden" name="item_id" value="${esc(item.id)}">`+select('Movement','movement_kind',kinds)+`<div class="field"><label for="movement_quantity">Quantity (${esc(item.unit)})</label><input id="movement_quantity" name="quantity" type="number" min="1" max="2147483647" step="1" value="1" required></div><div class="field" id="movementMember"><label for="member_id">Member receiving or returning it</label><select id="member_id" name="member_id" required>${movementMemberOptions(item.id,first)}</select></div><div class="field"><label for="movement_note">Purpose / project / reason</label><textarea id="movement_note" name="note" maxlength="2000" required></textarea></div>`);
   }
-  if(action==='financeEntryForm'&&admin()&&financeApprovalsReady)return form('Submit transaction','Enter income or spending in GHS. An approved founder must review it before it changes the balance.','financeEntry',select('Type','entry_type',['income','expense'])+select('Category','category',['Opening balance','Membership dues','Donation','Sponsorship','Event','Equipment','Transport','Training','Operations','Other'])+`<div class="field"><label for="amount">Amount (GHS)</label><input id="amount" name="amount" type="number" min="0.01" max="9999999999.99" step="0.01" required></div>`+field('Transaction date','occurred_on','date',new Date().toISOString().slice(0,10))+area('Purpose / explanation','description')+field('From / paid to (optional)','counterparty','text','',false)+field('Receipt or transfer reference (optional)','reference','text','',false));
+  if(action==='financeEntryForm'&&admin()&&financeAdminReady)return form('Record transaction','Enter income or spending in GHS and attach the supporting receipt. Only an administrator can approve it.','financeEntry',select('Type','entry_type',['income','expense'])+select('Category','category',['Opening balance','Membership dues','Donation','Sponsorship','Event','Equipment','Transport','Training','Operations','Other'])+`<div class="field"><label for="amount">Amount (GHS)</label><input id="amount" name="amount" type="number" min="0.01" max="9999999999.99" step="0.01" required></div>`+field('Transaction date','occurred_on','date',new Date().toISOString().slice(0,10))+area('Purpose / explanation','description')+field('From / paid to (optional)','counterparty','text','',false)+field('Receipt or transfer reference (optional)','reference','text','',false)+'<label class="field">Supporting receipt (up to 10 MB)<input name="receipt" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" required></label>');
   if(action==='retryWorkspace'){if(session)return signedIn(session);return signInDialog('signin');}
   if(action.startsWith('calendar')&&['calendarPrev','calendarNext','calendarToday','calendarDay','calendarView','calendarPage','calendarReset','calendarNextItem','calendarExport','calendarPrint','calendarCopyDate','calendarCreate','calendarGoogleItem','calendarIcsItem','calendarTeaching','calendarProject'].includes(action)){
     if(!clubAccess())return;
@@ -3327,7 +3440,7 @@ function actions(e) {
   if(action==='removeFounderRole'&&admin()){
     const account=approvedAccountRows.find(p=>p.id===id&&p.role==='founder'&&p.membership_status==='approved');
     if(!account)return;
-    return modal(`<span class="eyebrow">FOUNDER ROLE</span><h2>Remove ${esc(account.full_name)} from founder leadership?</h2><p class="muted">Founder room and finance review access will end. Choose Teacher to give or retain teaching access and keep current workshop assignments, or Member to end teaching access. Reassign all their workshops before choosing Member. Their public founder profile, if published, is removed separately on the Founders page.</p><form id="editor" data-kind="removeFounderRole" class="form-stack"><input type="hidden" name="user_id" value="${esc(id)}">${select('Keep account as','next_role',['teacher','member'],account.founder_teaching_enabled?'teacher':'member')}<button class="button" type="submit">Remove founder role</button></form>`);
+    return modal(`<span class="eyebrow">FOUNDER ROLE</span><h2>Remove ${esc(account.full_name)} from founder leadership?</h2><p class="muted">Founder room access will end. Choose Teacher to give or retain teaching access and keep current workshop assignments, or Member to end teaching access. Reassign all their workshops before choosing Member. Their public founder profile, if published, is removed separately on the Founders page.</p><form id="editor" data-kind="removeFounderRole" class="form-stack"><input type="hidden" name="user_id" value="${esc(id)}">${select('Keep account as','next_role',['teacher','member'],account.founder_teaching_enabled?'teacher':'member')}<button class="button" type="submit">Remove founder role</button></form>`);
   }
   if(action==='removeFounderCard'&&admin()){
     const card=(cache.founders||[]).find(f=>f.id===id);if(!card)return;
@@ -3516,6 +3629,7 @@ async function openNotification(id) {
   else if(n.target_type==='event')location.hash='#events';
   else if(n.target_type==='announcement')location.hash='#announcements';
   else if(n.target_type==='application')location.hash=admin()?'#applications':'#application';
+  else if(n.target_type==='officer'){location.hash='#office';}
   else if(n.target_type==='teacher'){
     const isClasswork=n.kind==='course'&&/^Classwork ready for review:/i.test(n.title||'');
     const isReview=n.kind==='course'&&/^Project ready for review:/i.test(n.title||'');
@@ -3572,6 +3686,7 @@ async function exportCsv(table){
     if(/^[\s]*[=+@-]/.test(cell))cell="'"+cell;
     return `"${cell.replaceAll('"','""')}"`;
   };
+  if(table==='finance_entries'&&financeAdminReady)columns[table].splice(1,0,'voucher_number');
   const headers=columns[table];
   const dataColumns=headers.filter(key=>!['approval_status','reviewed_by','reviewed_at','review_note'].includes(key)&&!(table==='profiles'&&applicationAnswersReady&&key==='application_reason'));
   const userId=session.user.id;
@@ -3713,6 +3828,8 @@ function uploadRevisionDialog(id) {
 async function submit(e) {
   if(session&&checkSessionExpiry()){e.preventDefault();return;}
   if(sessionEnding&&!session&&!['login','verify'].includes(e.target.dataset.kind)){e.preventDefault();signInDialog('signin');return;}
+  if(e.target.id==='officerSearchForm'){e.preventDefault();if(!admin())return;officerSearch=String(e.target.elements.search.value||'').slice(0,120).trim();officerMemberPage=0;render();return;}
+  if(e.target.id==='financeMonthForm'){e.preventDefault();if(!financeReportAccess())return;const month=String(e.target.elements.month.value||'');if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))return show('Choose a valid report month.');financeMonth=month;financeReportPage=0;financeReport=null;financeReportRows=[];await loadFinanceMonthReport();render();return;}
   if(e.target.id==='teachingStudentSearchForm'){e.preventDefault();if(!teacher()||!learningHubReady)return;teachingStudentSearch=String(e.target.elements.search.value||'').slice(0,100).trim();teachingStudentPage=0;render();return;}
   if(e.target.id==='dmSearchForm'){e.preventDefault();return searchDmConversation(e.target);}
   if(e.target.id==='calendarSearchForm'){e.preventDefault();if(!clubAccess())return;calendarSearch=String(e.target.elements.search.value||'').slice(0,200);calendarAgendaPage=0;render();$('#calendarSearch')?.focus();return;}
@@ -3802,6 +3919,23 @@ async function submit(e) {
       if(error)throw error;
       if(!data.session)throw Error('Verification succeeded, but no session was returned. Please try signing in again.');
       close();await signedIn(data.session,true);show('Email verified. Welcome to SPACE!');return;
+    }
+    if(kind==='officerRoles'){
+      if(!admin()||!officerReady)throw Error('Administrator access required');
+      const roles=[...new FormData(formEl)].filter(([key])=>key==='positions').map(([,value])=>String(value));
+      const {error}=await db.rpc('set_club_officer_roles',{p_user:String(values.user_id),p_roles:roles,p_note:String(values.note||'').trim()});if(error)throw error;close();await refresh();show('Club offices updated. The member’s workspace follows the new responsibilities.');return;
+    }
+    if(kind==='officerWork'){
+      if(!officerAccess()||!officerReady)throw Error('Officer access required');
+      const [assignee,position]=String(values.assignment||'').split('|');
+      const {error}=await db.rpc('save_officer_work',{p_item:String(values.item_id||'')||null,p_assignee:assignee,p_position:position,p_kind:String(values.kind),p_title:String(values.title||'').trim(),p_body:String(values.body||'').trim(),p_status:String(values.status),p_due:String(values.due_at||'')||null,p_feedback:admin()?String(values.feedback||'').trim():''});if(error)throw error;close();await refresh();show('Office work saved with its history.');return;
+    }
+    if(kind==='financeReceipt'){
+      if(!admin()||!financeAdminReady)throw Error('Administrator access required');await uploadFinanceReceipt(String(values.entry_id),formEl.elements.receipt.files?.[0]);close();await refresh();show('Receipt attached.');return;
+    }
+    if(kind==='financeMonthClose'){
+      if(!admin()||!financeAdminReady)throw Error('Administrator access required');const actual=Number(values.actual_balance);if(!Number.isFinite(actual)||Math.abs(actual)>9999999999.99)throw Error('Enter a valid closing balance.');
+      const {error}=await db.rpc('close_finance_month',{p_month:String(values.month)+'-01',p_actual:actual.toFixed(2),p_note:String(values.note||'').trim()});if(error)throw error;close();await refresh();show('Monthly review recorded and the period closed.');return;
     }
     if(kind==='learningPath'){
       if(!clubAccess()||!learningChoicesReady)throw Error('Course selections are not available yet.');
@@ -4049,7 +4183,7 @@ async function submit(e) {
       return await mutate(()=>db.rpc('update_inventory_item_catalog',{p_item:payload.item_id,p_name:name,p_category:category,p_item_type:payload.item_type,p_unit:unit,p_reorder_level:reorder,p_condition:payload.condition,p_location:String(payload.location||'').trim(),p_serial_number:String(payload.serial_number||'').trim()||null,p_note:note}));
     }
     if(kind==='financeReview'){
-      if(!founderOnly()||!financeApprovalsReady)throw Error('Approved founder access and the finance review migration are required.');
+      if(!admin()||!financeAdminReady)throw Error('Administrator access and the new finance migration are required.');
       const entry=(cache.finance_entries||[]).find(x=>x.id===payload.entry_id),note=String(payload.note||'').trim();
       if(!entry||financeStatus(entry)!=='pending'||!['approved','rejected'].includes(payload.decision))throw Error('This transaction is no longer pending review.');
       if(payload.decision==='rejected'&&!note)throw Error('Explain why this transaction is rejected.');
@@ -4058,15 +4192,16 @@ async function submit(e) {
       close();await refresh();show(`Transaction ${payload.decision}.`);return;
     }
     if(kind==='financeEntry'){
-      if(!admin()||!financeApprovalsReady)throw Error('Administrator access and the finance review migration are required.');
+      if(!admin()||!financeAdminReady)throw Error('Administrator access and the new finance migration are required.');
       if(!['income','expense'].includes(payload.entry_type))throw Error('Choose income or expense.');
       const amount=Number(payload.amount),description=String(payload.description||'').trim();
       if(!Number.isFinite(amount)||amount<=0||amount>9999999999.99||Math.abs(amount*100-Math.round(amount*100))>0.000001)throw Error('Enter a positive amount with no more than two decimal places.');
       if(!description||description.length>2000)throw Error('Explain this transaction.');
       if(!/^\d{4}-\d{2}-\d{2}$/.test(payload.occurred_on)||Number.isNaN(Date.parse(`${payload.occurred_on}T12:00:00Z`)))throw Error('Choose a valid transaction date.');
       const record={entry_type:payload.entry_type,category:String(payload.category||'').trim(),amount:amount.toFixed(2),occurred_on:payload.occurred_on,description,counterparty:String(payload.counterparty||'').trim(),reference:String(payload.reference||'').trim()};
-      const {error}=await db.from('finance_entries').insert(record);if(error)throw error;
-      close();await refresh();show('Transaction submitted for founder review.');return;
+      const file=formEl.elements.receipt?.files?.[0];if(!file)throw Error('Attach a supporting receipt.');
+      const {data:entry,error}=await db.from('finance_entries').insert(record).select('*').single();if(error)throw error;
+      close();let receiptError=null;try{await uploadFinanceReceipt(entry.id,file);}catch(error){receiptError=error;}await refresh();show(receiptError?'Transaction recorded. Receipt upload failed; attach it from the ledger before approval.':'Transaction and receipt recorded. An administrator can now review it.');return;
     }
     if(kind==='application'){
       const selected=[...new FormData(formEl)].filter(([name])=>name==='learning_tracks').map(([,value])=>String(value));

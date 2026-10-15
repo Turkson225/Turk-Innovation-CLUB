@@ -12,9 +12,9 @@ import { pipeline } from 'node:stream/promises';
 
 const BUCKETS = [
   'club-documents', 'club-media', 'club-learning', 'club-course-evidence',
-  'club-founder-portraits',
+  'club-founder-portraits', 'club-finance-receipts',
 ];
-const REQUIRED_BUCKETS = BUCKETS.filter((bucket) => bucket !== 'club-founder-portraits');
+const REQUIRED_BUCKETS = BUCKETS.filter((bucket) => !['club-founder-portraits','club-finance-receipts'].includes(bucket));
 const PAGE_SIZE = 100;
 const MAX_ATTEMPTS = 4;
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -25,7 +25,7 @@ function usage() {
   BACKUP_DIR=/absolute/path/outside/the/repository/run-YYYY-MM-DD \\
   node scripts/backup_storage.mjs
 
-Downloads the four core buckets and the founder portrait bucket, if installed,
+Downloads the four core buckets plus founder portraits and finance receipts, if installed,
 into a NEW directory. It writes objects/,
 files.jsonl (path, metadata, SHA-256), and manifest.json (bucket settings and counts).
 No files are changed on the server. Do not commit the resulting backup.`);
@@ -113,6 +113,7 @@ async function checkBuckets(base, key) {
   }
   const missing = REQUIRED_BUCKETS.filter((id) => !discovered.has(id));
   if (missing.length) throw new Error(`Required club bucket(s) not found: ${missing.join(', ')}. Apply the club migrations first.`);
+  if (!discovered.has('club-finance-receipts')) console.warn('Finance receipt bucket not installed; confirm whether upgrade_officer_workspaces_finance.sql has been applied.');
   if (!discovered.has('club-founder-portraits')) {
     console.warn('Founder portrait bucket not installed; apply upgrade_founder_portraits.sql before publishing portraits.');
   }
@@ -259,3 +260,4 @@ async function main() {
 }
 
 main().catch((error) => { console.error(error.message); process.exitCode = 1; });
+
