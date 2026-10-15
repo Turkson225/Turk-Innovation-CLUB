@@ -14,8 +14,9 @@ const EXPECTED_BUCKETS = new Map([
   ['club-course-evidence', false],
   ['club-founder-portraits', true],
   ['club-finance-receipts', false],
+  ['club-direct-files', false],
 ]);
-const REQUIRED_BUCKETS = [...EXPECTED_BUCKETS.keys()].filter((id) => !['club-founder-portraits','club-finance-receipts'].includes(id));
+const REQUIRED_BUCKETS = [...EXPECTED_BUCKETS.keys()].filter((id) => !['club-founder-portraits','club-finance-receipts','club-direct-files'].includes(id));
 
 function check(condition, message) {
   if (!condition) throw new Error(message);

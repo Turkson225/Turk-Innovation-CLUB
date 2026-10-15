@@ -9,7 +9,7 @@ import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 
 const root=await mkdtemp(join(tmpdir(),'space-storage-fixture-'));
-const buckets=['club-documents','club-media','club-learning','club-course-evidence','club-founder-portraits','club-finance-receipts'];
+const buckets=['club-documents','club-media','club-learning','club-course-evidence','club-founder-portraits','club-finance-receipts','club-direct-files'];
 const manifest={format:'innovatex-storage-backup-v1',source:'https://fixture.supabase.co',finished_at:new Date().toISOString(),total_objects:0,total_bytes:0,buckets:[]};
 const rows=[];
 try{
@@ -27,7 +27,7 @@ try{
   await writeFile(join(root,'manifest.json'),JSON.stringify(manifest));
   await writeFile(join(root,'files.jsonl'),rows.map(row=>JSON.stringify(row)).join('\n')+'\n');
   const verify=()=>spawnSync(process.execPath,[fileURLToPath(new URL('./verify_storage_backup.mjs',import.meta.url)),root],{encoding:'utf8',timeout:30000});
-  let result=verify();assert.equal(result.status,0,result.stderr);assert(result.stdout.includes('Verified 2506 objects'));console.log('PASS Verified all 2,506 synthetic objects across six buckets.');
+  let result=verify();assert.equal(result.status,0,result.stderr);assert(result.stdout.includes('Verified 2507 objects'));console.log('PASS Verified all 2,507 synthetic objects across seven buckets.');
   const last=rows.at(-1),file=join(root,'objects',last.bucket,last.path);
   await writeFile(file,Buffer.alloc(last.bytes,120));result=verify();assert.notEqual(result.status,0);assert(result.stderr.includes('hash mismatch'));console.log('PASS Rejected a file changed without changing its size.');
   await rm(file);result=verify();assert.notEqual(result.status,0);console.log('PASS Rejected an incomplete file backup.');

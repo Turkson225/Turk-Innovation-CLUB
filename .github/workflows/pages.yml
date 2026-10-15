@@ -25,10 +25,19 @@ jobs:
       - uses: actions/configure-pages@v5
         with:
           enablement: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check application and public verification
+        run: |
+          node --check app.js
+          node --check certificate.js
+          node scripts/check_workspace.mjs
+          node scripts/check_certificate_verification.mjs
       - name: Prepare static site
         run: |
           mkdir -p _site
-          cp index.html styles.css public-pages.css app.js config.js sitemap.xml .nojekyll manifest.webmanifest sw.js offline.html pwa-register.js _site/
+          cp index.html certificate.html certificate.js styles.css public-pages.css app.js config.js sitemap.xml .nojekyll manifest.webmanifest sw.js offline.html pwa-register.js _site/
           cp -R assets about founders icons _site/
       - uses: actions/upload-pages-artifact@v3
         with:
