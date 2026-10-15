@@ -6,6 +6,12 @@ This is a repeatable **isolated database benchmark**, not a claim about the capa
 
 The [full report](load-test-results/2026-10-15-postgres.md) and [original JSON](load-test-results/2026-10-15-postgres.json) are retained in the repository. [GitHub run 38718920167](https://github.com/Turkson225/Turk-Innovation-CLUB/actions/runs/38718920167) completed the workload and integrity checks. The job correctly failed its latency threshold: overall p95 was 592.53 ms at 10 clients, 2,896.18 ms at 50, and 5,576.04 ms at 100, with zero request errors. Complete-directory and student-classroom reads were the slowest operations. These results call for targeted query/loading improvements before a busy launch; they do not describe the actual Supabase service.
 
+## Improved run measured on 15 October 2026
+
+The [optimized report](load-test-results/2026-10-15-optimized-postgres.md) and [original JSON](load-test-results/2026-10-15-optimized-postgres.json) retain [successful run 38722648477](https://github.com/Turkson225/Turk-Innovation-CLUB/actions/runs/38722648477). All workloads met the two-second p95 threshold at 10, 50 and 100 clients, with **35,370 operations and zero errors**. At 100 clients, overall p95 improved from 5,576.04 ms to 929.12 ms; directory p95 was 1,182.88 ms and student classroom p95 was 493.96 ms. Integrity checks still passed.
+
+The improved directory operation returns **one 24-row page and complete visible statistics**, whereas the baseline fetched the full visible directory. Student submission reads now explicitly filter the signed-in learner. Workload shares, initial row counts, stage durations and PostgreSQL service configuration are retained. These are old-versus-new loading behavior measurements, not a direct speed comparison of an identical SQL statement. Supabase staging is still required for an end-to-end capacity assessment.
+
 ## Run it in GitHub
 
 Open **Actions → SPACE measured database load test → Run workflow → main**. The workflow also runs when its two test scripts or workflow are changed on main. It uses a fresh PostgreSQL 17 service, installs the pinned `pg@8.16.3` client, applies the repository's application migrations, and deletes its randomly named database when finished. The disposable service is destroyed after the job. Cron and external email/push delivery workers are not installed.
@@ -20,7 +26,7 @@ The fixture uses exactly 2,000 accounts: one administrator, eight teachers and 1
 
 | Operation | Target share | What is measured |
 | --- | ---: | --- |
-| Complete member directory | 10% | Every authorized profile in 500-row batches, including a count |
+| Member directory page | 10% | Twenty-four visible profiles through the directory RPC, with complete visible statistics and facets; the retained baseline fetched every visible profile |
 | Activity feed | 20% | Fifty recent posts under member RLS |
 | Student classroom | 20% | Workshop, lessons, classwork and the learner's submissions |
 | Teacher roster | 5% | Assigned teacher roster RPC, first 500 rows |

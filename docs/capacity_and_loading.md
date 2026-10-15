@@ -6,6 +6,10 @@ A fresh PostgreSQL 17 service with the repository migrations and 2,000 synthetic
 
 This benchmark uses one isolated GitHub runner, with SQL shims for Auth and Storage. It does not measure production Supabase, HTTP/CDN delivery, browser rendering, Realtime, uploads or email. A separate Supabase staging workload remains necessary before a simultaneous-user capacity claim.
 
+## Improved measured run — 15 October 2026
+
+After server-side directory pagination, derived search fields, statement-cached profile permission checks and explicit student-record filters, the same staged fixture completed **35,370 operations with zero errors**. Overall p95 was **0.073 s at 10 clients**, **0.434 s at 50**, and **0.929 s at 100**. Every workload passed its two-second p95 target. At 100 clients the directory page was 1.183 s and the student classroom operation was 0.494 s. The directory now transfers 24 rows rather than the complete directory; visible statistics remain complete. See the [optimized report](load-test-results/2026-10-15-optimized-postgres.md) for the revised scope and original measurements. The live Supabase migration has not been applied by the deployment.
+
 ## What 2,000 members means
 
 2,000 registered accounts is a practical planning target for a PostgreSQL-backed club. It is not the same workload as 2,000 simultaneous chats, uploads or sign-ins. No live concurrency benchmark or restore was performed against this club's Supabase project. A member count alone cannot establish capacity or guarantee zero delay. Supabase compute, Realtime limits, disk, bandwidth, query plans and SMTP throughput must match peak activity.
@@ -13,7 +17,7 @@ This benchmark uses one isolated GitHub runner, with SQL shims for Auth and Stor
 ## Changes in this release
 
 - Sign-in loads the open page. Other pages fetch their records when opened; startup no longer fetches the complete workspace.
-- Home does not download the entire member directory. It fetches names for up to 50 recent post authors. Pages that require the directory still retrieve every authorized profile in ordered batches of 500 and render 24 cards at a time. This is complete batched retrieval, not server-side directory search.
+- Home does not download the entire member directory. It fetches names for up to 50 recent post authors. The Members page now uses server-side search/filtering and retrieves 24 visible profiles per page after its performance migration. Other pages that still require a complete directory retrieve authorized profiles in ordered batches of 500.
 - At most six dataset-loading tasks run together in a page batch. Small capability checks use four workers. This is a limit on those batches, not a global limit on all browser requests, uploads or Realtime connections.
 - A complete directory cache is reused for two minutes on other pages; the Members page refreshes presence. Only the current account's course-choice row is fetched, including for administrators.
 - Repeated background loads for the same account and page share a request. Polls are staggered between 45 and 60 seconds and failed page loads back off up to about two minutes. Chat and approval alerts keep their focused checks.

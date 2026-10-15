@@ -24,9 +24,11 @@ ${findings}
 
 At the final measured stage (${last.clients} clients), the two slowest operation p95 values were ${slowest.map(([key,w])=>`${labels[key]}: ${(w.p95_ms/1000).toFixed(2)} s`).join(' and ')}. The workload shares and counts below show their relative sample sizes.
 
-1. Move directory search and filtering to the server and retrieve only the visible member page. Keep complete CSV exports as a separate batched operation. The earlier baseline measured a full directory; the optimized workload measures one server-filtered 24-row page with visible counts and facets.
-2. Add explicit learner/course filters to student data requests, retaining RLS and separate teacher/admin scopes. The current classroom operation requests the RLS-visible submissions collection. Capture EXPLAIN ANALYZE with BUFFERS in staging to verify the effective scan and index behavior before choosing an index or policy change.
-3. Rerun the same fixture and workload after those changes, then run a sustained HTTP/browser test against separate Supabase staging. Do not treat a larger database connection limit as a fix for slow queries.
+${last.by_workload.directory_page?`The optimized workload uses a 24-row directory RPC with complete visible counts and facets, and an explicit learner filter on student submissions. The original baseline retrieved every visible profile. This is a comparison of the old and new application loading behavior, not the same SQL query with a smaller elapsed time. The registered-account fixture and workload shares are retained.
+
+Next: validate these changes in separate Supabase staging with authenticated HTTP/browser sessions, Realtime and uploaded files. Include an arrival-rate burst and sustained 15–30-minute stage before making a live-capacity claim.`:`1. Move directory search and filtering to the server and retrieve only the visible member page. Keep complete CSV exports as a separate batched operation.
+2. Add explicit learner/course filters to student data requests, retaining RLS and separate teacher/admin scopes. Capture EXPLAIN ANALYZE with BUFFERS before choosing further database changes.
+3. Rerun the same fixture and workload after changes, then run a sustained HTTP/browser test against separate Supabase staging.`}
 
 ## Measured stages
 
@@ -49,7 +51,7 @@ Sample counts are provided because short stages can produce sparse measurements 
 
 ${Object.entries(r.dataset).map(([k,v])=>`- ${k}: ${v.toLocaleString('en-US')}`).join('\n')}
 
-There are one administrator, eight teachers and 1,991 learners. Every row is synthetic. Ten percent of profiles are private. The test applies ${r.migrations.length} repository SQL files to a fresh database. Auth/Storage SQL shims support permission checks, while email/push delivery schedules are omitted. Measured requests execute under the authenticated role and a synthetic user identity. Fixture creation bypasses triggers; measured message writes do not.
+There is one administrator, eight teachers and 1,991 learners. Every row is synthetic. Ten percent of profiles are private. The test applies ${r.migrations.length} repository SQL files to a fresh database. Auth/Storage SQL shims support permission checks, while email/push delivery schedules are omitted. Measured requests execute under the authenticated role and a synthetic user identity. Fixture creation bypasses triggers; measured message writes do not.
 
 ## Integrity after load
 
