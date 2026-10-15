@@ -11,7 +11,10 @@ if(process.env.SPACE_SHOP_TEST_DATABASE_URL){
  const {Pool}=require(process.env.SPACE_PG_MODULE||'pg');root=new Pool({connectionString:u.href,max:1});
  assert.equal((await root.query("select count(*)::int n from pg_roles where rolname in ('anon','authenticated','service_role')")).rows[0].n,0,'Service must be fresh, without existing Supabase-style roles');
  const name='space_shop_test_'+crypto.randomBytes(8).toString('hex');await root.query(`create database ${name}`);u.pathname='/'+name;pool=new Pool({connectionString:u.href,max:24});db={query:(...args)=>pool.query(...args)};native=true;
- dispose=async()=>{await pool.end();await root.query(`drop database ${name} with (force)`);await root.query('drop role if exists anon,authenticated,service_role');await root.end();};
+ // Forced disposal can report 57P01 on an idle socket after Pool.end resolves.
+ // Do not hide runtime errors, or termination outside this disposable cleanup.
+ let disposing=false;pool.on('error',error=>{if(disposing&&error.code==='57P01')return;throw error;});
+ dispose=async()=>{disposing=true;await pool.end();await root.query(`drop database ${name} with (force)`);await root.query('drop role if exists anon,authenticated,service_role');await root.end();};
 }else{
  const {PGlite}=require(process.env.SPACE_PGLITE_MODULE||'@electric-sql/pglite');const engine=new PGlite();
  db={query:async(sql,args)=>{sql=sql.replace('create extension if not exists pgcrypto;','');return args?engine.query(sql,args):(await engine.exec(sql)).at(-1);},transaction:fn=>engine.transaction(fn)};dispose=()=>engine.close();
