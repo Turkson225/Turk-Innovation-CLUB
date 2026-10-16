@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 const root=fileURLToPath(new URL('../',import.meta.url));
 function deferred(){let resolve; const promise=new Promise(r=>resolve=r); return {promise,resolve};}
 function node(overrides={}){return {id:'',dataset:{},style:{},isConnected:true,hidden:false,textContent:'',innerHTML:'',value:'',scrollHeight:400,scrollTop:400,clientHeight:300,classList:{add(){},remove(){},toggle(){},contains(){return false;}},querySelector(){return null;},querySelectorAll(){return [];},closest(){return null;},setAttribute(){},getAttribute(){return null;},removeAttribute(){},focus(){},remove(){},close(){this.open=false;},showModal(){this.open=true;},setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;},...overrides};}
-function harness({localItems=new Map(),sessionItems=new Map()}={}){
+function harness({localItems=new Map(),sessionItems=new Map(),location:initialLocation={hash:'#messages'}}={}){
   const requests=[],queued=[],elements=new Map(),timers=new Map();let timerId=0;
   function from(table){
     const call={table,ops:[]}; requests.push(call);
@@ -21,7 +21,7 @@ function harness({localItems=new Map(),sessionItems=new Map()}={}){
   const db={from,storage:{from},rpc(name,args){rpcCalls.push({name,args});return Promise.resolve(rpcQueued.shift()??{data:[],error:null});}};
   const storage=items=>({getItem(key){return items.get(key)??null;},setItem(key,value){items.set(key,value);},removeItem(key){items.delete(key);}});
   let clientOptions;
-  const context=vm.createContext({console,URL,crypto:globalThis.crypto,Blob,Date,Map,Set,Promise,setTimeout(callback,delay=0){const id=++timerId;timers.set(id,{callback,delay});return id;},clearTimeout(id){timers.delete(id);},setInterval(){return 1;},clearInterval(){},sessionStorage:storage(sessionItems),localStorage:storage(localItems),createClient(_url,_key,options){clientOptions=options;return db;},window:{INNOVATEX_CONFIG:{supabaseUrl:'https://qa.supabase.co',supabaseAnonKey:'fake'},addEventListener(){}},navigator:{},location:{hash:'#messages'},history:{replaceState(){}},document:{hidden:false,activeElement:null,querySelector(selector){return elements.get(selector)??null;},querySelectorAll(){return [];},getElementById(id){return elements.get('#'+id)??null;},addEventListener(){},documentElement:{dataset:{theme:'light'}}}});
+  const context=vm.createContext({console,URL,crypto:globalThis.crypto,Blob,Date,Map,Set,Promise,setTimeout(callback,delay=0){const id=++timerId;timers.set(id,{callback,delay});return id;},clearTimeout(id){timers.delete(id);},setInterval(){return 1;},clearInterval(){},sessionStorage:storage(sessionItems),localStorage:storage(localItems),createClient(_url,_key,options){clientOptions=options;return db;},window:{INNOVATEX_CONFIG:{supabaseUrl:'https://qa.supabase.co',supabaseAnonKey:'fake'},addEventListener(){}},navigator:{},location:initialLocation,history:{replaceState(){}},document:{hidden:false,activeElement:null,querySelector(selector){return elements.get(selector)??null;},querySelectorAll(){return [];},getElementById(id){return elements.get('#'+id)??null;},addEventListener(){},documentElement:{dataset:{theme:'light'}}}});
   const source=fs.readFileSync(root+'/app.js','utf8').replace(/^import .*\n/,'').replace(/\ninit\(\);\s*$/,'');
   vm.runInContext(source,context,{filename:'app.js'});
   const run=code=>vm.runInContext(code,context);
@@ -966,6 +966,80 @@ test('An unavailable notification destination restores its Open button and repor
 });
 test('New members can open the shop and product alerts before selecting learning courses',async()=>{
  const h=harness();h.run("learningChoicesReady=true;ownLearningTracks=[];authReady=true;workspaceHydrating=true;setSidebarOpen=()=>{};location.hash='#shop/product-one';route();");assert.equal(h.run('page'),'shop');h.run("cache.notifications=[{id:'new-product',target_type:'shop_product',target_id:'product-two',read_at:'already'}];");await h.exec("openNotification('new-product',qaArgs)",node({textContent:'Open →'}));assert.equal(h.context.location.hash,'#shop/product-two');assert.equal(h.run('page'),'shop');
+});
+// Password authentication keeps existing account IDs and approval boundaries.
+function authForm(kind='login',entries=[],mode='signin'){
+ const button=node({disabled:false}),feedback=node({hidden:true});
+ const form=node({id:'editor',dataset:{kind,authMode:mode},entries,querySelector(selector){return selector==='[type=submit]'?button:selector==='[data-auth-feedback]'?feedback:null;}});
+ return {button,feedback,form,event:{target:form,preventDefault(){}}};
+}
+function passwordHarness(){const h=loginHarness();Object.assign(h.context.location,{origin:'https://turkson225.github.io',pathname:'/Turk-Innovation-CLUB/'});return h;}
+test('Email/password sign-in keeps the existing account and exact password, without sending an OTP',async()=>{
+ const h=passwordHarness(),calls=[],password='  My existing password  ',form=authForm('login',[['email',' SELF@EXAMPLE.TEST '],['password',password]]);
+ h.db.auth.signInWithPassword=async args=>{calls.push(args);return {data:{session:loginSession('self')},error:null};};h.db.auth.signInWithOtp=()=>{throw Error('OTP login is forbidden');};
+ h.queued.push({data:loginProfile(),error:null});await h.exec('submit(qaArgs)',form.event);
+ assert.equal(calls.length,1);assert.equal(calls[0].email,'self@example.test');assert.equal(calls[0].password,password);assert.equal(h.run('session.user.id'),'self');assert.equal(h.stats.opens,1);assert.equal(form.button.disabled,false);
+ assert(!JSON.stringify([...h.localItems,...h.sessionItems]).includes(password));
+});
+test('Wrong passwords stay visible in the open auth form and never grant workspace access',async()=>{
+ const h=passwordHarness(),form=authForm('login',[['email','self@example.test'],['password','wrong']]);h.db.auth.signInWithPassword=async()=>({data:{session:null},error:{message:'Invalid login credentials'}});
+ await h.exec('submit(qaArgs)',form.event);assert.equal(h.run('session'),null);assert.equal(h.stats.opens,0);assert.equal(form.feedback.textContent,'Invalid login credentials');assert.equal(form.feedback.hidden,false);assert.equal(form.button.disabled,false);
+});
+test('A duplicate password submit cannot create two sign-in requests',async()=>{
+ const h=passwordHarness(),pending=deferred(),form=authForm('login',[['email','self@example.test'],['password','password']]);let calls=0;h.db.auth.signInWithPassword=()=>{calls++;return pending.promise;};
+ const first=h.exec('submit(qaArgs)',form.event);await h.exec('submit(qaArgs)',form.event);assert.equal(calls,1);pending.resolve({data:{session:null},error:{message:'Try again'}});await first;assert.equal(form.button.disabled,false);
+});
+test('Signup sends a password and an application choice, never an authoritative role',async()=>{
+ const h=passwordHarness(),form=authForm('login',[['email',' TEACHER@EXAMPLE.TEST '],['password','a unique password'],['password_confirm','a unique password'],['application_type','teacher']],'signup'),calls=[];
+ h.db.auth.signUp=async args=>{calls.push(args);return {data:{user:{id:'applicant'},session:null},error:null};};await h.exec('submit(qaArgs)',form.event);
+ assert.equal(calls[0].email,'teacher@example.test');assert.equal(calls[0].password,'a unique password');assert.equal(calls[0].options.data.application_type,'teacher');assert.equal(calls[0].options.data.role,undefined);assert.equal(h.run('session'),null);assert.equal(h.run('pendingAuthMode'),'signup');assert.equal(h.sessionItems.get('innovatex.pendingType'),'teacher');assert(h.elements.get('#modalContent').innerHTML.includes('data-kind="verify"'));assert(!JSON.stringify([...h.localItems,...h.sessionItems]).includes('a unique password'));
+});
+test('Signup rejects a short password and mismatched confirmation before creating an account',async()=>{
+ for(const [password,confirmation]of [['short','short'],['long enough','different']]){const h=passwordHarness(),form=authForm('login',[['email','self@example.test'],['password',password],['password_confirm',confirmation]],'signup');h.db.auth.signUp=()=>{throw Error('Must not create an account');};await h.exec('submit(qaArgs)',form.event);assert.match(form.feedback.textContent,/8 characters|do not match/);assert.equal(h.run('session'),null);}
+});
+test('Signup choices cannot request an administrator role',async()=>{
+ const h=passwordHarness(),form=authForm('login',[['email','self@example.test'],['password','long enough'],['password_confirm','long enough'],['application_type','admin']],'signup');let sent;h.db.auth.signUp=async args=>{sent=args;return {data:{session:null},error:null};};await h.exec('submit(qaArgs)',form.event);assert.equal(sent.options.data.application_type,'member');assert.equal(sent.options.data.role,undefined);
+});
+test('Unverified password login opens verification without overwriting the application type',async()=>{
+ const h=passwordHarness(),form=authForm('login',[['email','self@example.test'],['password','long enough']]);h.db.auth.signInWithPassword=async()=>({data:{session:null},error:{code:'email_not_confirmed'}});await h.exec('submit(qaArgs)',form.event);assert(h.elements.get('#modalContent').innerHTML.includes('Verify your email'));assert.equal(h.sessionItems.has('innovatex.pendingType'),false);assert.equal(h.run('session'),null);
+});
+test('A pending teacher signup retains its selection after an unverified password attempt',async()=>{
+ const h=passwordHarness(),form=authForm('login',[['email','self@example.test'],['password','long enough']]);h.run("rememberSignup('self@example.test','teacher')");h.db.auth.signInWithPassword=async()=>({data:{session:null},error:{code:'email_not_confirmed'}});await h.exec('submit(qaArgs)',form.event);assert.equal(h.sessionItems.get('innovatex.pendingType'),'teacher');
+});
+test('Resending signup verification uses resend and cannot silently create another account',async()=>{
+ const h=passwordHarness(),calls=[];h.run("rememberSignup('self@example.test','founder')");h.db.auth.resend=async args=>{calls.push(args);return {error:null};};await h.run('requestCode(pendingEmail)');assert.equal(calls[0].type,'signup');assert.equal(calls[0].email,'self@example.test');assert.equal(h.sessionItems.get('innovatex.pendingType'),'founder');assert.equal(h.run('session'),null);
+});
+test('A stale sign-in code does not replace the email/password sign-in screen',()=>{
+ const h=passwordHarness();h.run("pendingEmail='old@example.test';pendingAuthMode='signin';signInDialog('signin')");const html=h.elements.get('#modalContent').innerHTML;assert(html.includes('type="password"'));assert(html.includes('autocomplete="current-password"'));assert(!html.includes('data-kind="verify"'));
+});
+test('Existing-account recovery requests use the dedicated reset URL and a neutral response',async()=>{
+ const h=passwordHarness(),form=authForm('passwordResetRequest',[['email',' SELF@EXAMPLE.TEST ']]),calls=[];h.db.auth.resetPasswordForEmail=async(email,options)=>{calls.push({email,options});return {error:null};};await h.exec('submit(qaArgs)',form.event);assert.equal(calls[0].email,'self@example.test');assert.equal(calls[0].options.redirectTo,'https://turkson225.github.io/Turk-Innovation-CLUB/reset-password.html');assert(h.elements.get('#modalContent').innerHTML.includes('If an account can receive'));assert.equal(h.run('session'),null);
+});
+test('Password recovery remains available after explicit sign-out',async()=>{
+ const h=passwordHarness(),form=authForm('passwordResetRequest',[['email','self@example.test']]);h.run('sessionEnding=true');let called=false;h.db.auth.resetPasswordForEmail=async()=>{called=true;return {error:null};};await h.exec('submit(qaArgs)',form.event);assert.equal(called,true);assert.equal(h.run('session'),null);
+});
+test('Password authentication still enforces pending application access',async()=>{
+ const h=passwordHarness(),form=authForm('login',[['email','self@example.test'],['password','long enough']]);h.db.auth.signInWithPassword=async()=>({data:{session:loginSession('self')},error:null});h.queued.push({data:loginProfile('self',{membership_status:'pending'}),error:null});await h.exec('submit(qaArgs)',form.event);assert.equal(h.run('clubAccess()'),false);assert.equal(h.run('admin()'),false);assert.equal(h.run('me.membership_status'),'pending');
+});
+test('Cross-tab sign-out cancels a delayed password response before account hydration',async()=>{
+ const h=passwordHarness(),pending=deferred(),form=authForm('login',[['email','self@example.test'],['password','long enough']]);h.db.auth.signInWithPassword=()=>pending.promise;
+ const signing=h.exec('submit(qaArgs)',form.event);h.exec('handleAuthStorageChange(qaArgs)',{key:'sb-qa-auth-token-space-signed-out',newValue:'1'});pending.resolve({data:{session:loginSession('self')},error:null});await signing;assert.equal(h.run('session'),null);assert.equal(h.stats.opens,0);assert.equal(h.requests.filter(r=>r.table==='profiles').length,0);assert.match(form.feedback.textContent,/cancelled/);
+});
+test('Root recovery callbacks redirect with their fragment before creating a workspace auth client',async()=>{
+ let redirected='';const hash='#access_token=recovery-token&refresh_token=refresh&type=recovery';const h=harness({location:{origin:'https://turkson225.github.io',pathname:'/Turk-Innovation-CLUB/',hash,replace(url){redirected=url;}}});assert.equal(h.clientOptions,undefined);await h.run('init()');assert.equal(redirected,'https://turkson225.github.io/Turk-Innovation-CLUB/reset-password.html'+hash);assert.equal(h.requests.length,0);
+});
+test('Normal signup callbacks are identified before routing and token hydration',()=>{
+ const h=harness({location:{hash:'#access_token=signup-token&refresh_token=refresh&type=signup'}});assert.equal(h.run('startupAuthCallback'),true);assert.equal(h.run('startupRecovery'),false);assert(h.clientOptions.auth.detectSessionInUrl);
+});
+test('Password authentication works again after deliberate sign-out and clears the remembered marker',async()=>{
+ const h=passwordHarness(),form=authForm('login',[['email','self@example.test'],['password','long enough']]);h.run("sessionEnding=true;authPersistentStorage.setItem(SIGNED_OUT_KEY,'1')");h.db.auth.signInWithPassword=async()=>({data:{session:loginSession('self')},error:null});h.queued.push({data:loginProfile(),error:null});await h.exec('submit(qaArgs)',form.event);assert.equal(h.run('sessionEnding'),false);assert.equal(h.localItems.has('sb-qa-auth-token-space-signed-out'),false);assert.equal(h.run('session.user.id'),'self');
+});
+test('A recovery auth event never hydrates the workspace while its redirect is queued',async()=>{
+ const h=passwordHarness();h.context.URLSearchParams=URLSearchParams;let redirected='';h.context.location.replace=url=>{redirected=url;};const recovered={...loginSession('self'),access_token:'recovery-access',refresh_token:'recovery-refresh'};
+ h.exec("handleAuthStateChange('PASSWORD_RECOVERY',qaArgs)",recovered);await h.exec('signedIn(qaArgs)',recovered);assert.equal(h.run('session'),null);assert.equal(h.requests.filter(r=>r.table==='profiles').length,0);h.fireTimers(0);const target=new URL(redirected);assert.equal(target.pathname,'/Turk-Innovation-CLUB/reset-password.html');assert(target.hash.includes('type=recovery'));assert.equal(h.stats.opens,0);
+});
+test('Password auth and reset fields never enter the workspace autosave path',()=>{
+ const h=passwordHarness();for(const kind of ['login','verify','passwordResetRequest'])assert.equal(h.exec('spaceDraftKey(qaArgs)',{dataset:{kind}}),'');
 });
 let failed=0;
 for(const t of tests){try{await t.fn();console.log('PASS',t.name);}catch(e){failed++;console.log('FAIL',t.name,'\n',e.stack);}}

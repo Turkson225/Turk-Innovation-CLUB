@@ -2,6 +2,11 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const cfg = window.INNOVATEX_CONFIG || {};
 const configured = /^https:\/\/.+\.supabase\.co\/?$/.test(cfg.supabaseUrl || '') && !!cfg.supabaseAnonKey;
+// Capture auth fragments before the workspace router can replace them.
+const startupAuthHash=location.hash||'';
+const startupRecovery=/[&#]type=recovery(?:&|$)/.test(startupAuthHash);
+const startupAuthCallback=startupRecovery||/[&#](?:access_token|error|error_description)=/.test(startupAuthHash)||/[?&]code=/.test(location.search||'');
+let recoveryRedirecting=startupRecovery;
 const DRAFT_MAX_AGE_MS=8*60*60*1000;
 const authMemory=new Map(),authPersistentMemory=new Map();
 // Draft text is tab-scoped. Authentication persists on this browser until sign-out.
@@ -32,7 +37,7 @@ function migrateSavedAuth(){
   authTabStorage.removeItem('space.auth.tab-clock.v1');
 }
 migrateSavedAuth();
-const db = configured ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
+const db = configured && !startupRecovery ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
 let commerce=null;
 let sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
@@ -49,7 +54,7 @@ let inboxUnreadCount = null, inboxCountRequest = 0, pushBusy = false;
 let adminPendingCount = 0, adminAlertsInitialized = false, adminSoundEnabled = false;
 let adminSeenApplicationIds = new Set();
 let adminAlertPolling = false;
-let authGeneration = 0, authStateRequest = 0;
+let authGeneration = 0, authStateRequest = 0, authFormEpoch = 0;
 let loginWelcomePendingOwner = null, loginWelcomeOwner = null, loginWelcomeTimer = null, loginWelcomeRequest = 0;
 let inventoryFilter = 'all', inventorySearchTerm = '', financeFilter = 'all', inventoryLogPage = 0, financePage = 0, financeReviewPage = 0;
 let memberDirectoryPage = 0, projectListPage = 0;
@@ -1167,7 +1172,7 @@ function completeLoginWelcome(generation){
 function checkSessionExpiry(){return sessionEnding;}
 function expireSession(message,prompt=true) {
   if(!session||sessionEnding)return;
-  sessionEnding=true;authStateRequest++;authPersistentStorage.setItem(SIGNED_OUT_KEY,String(Date.now()));
+  sessionEnding=true;authStateRequest++;authFormEpoch++;authPersistentStorage.setItem(SIGNED_OUT_KEY,String(Date.now()));
   // Clear private UI and invalidate pending loads before waiting for any network.
   void touchPresence(false).catch(console.error);
   close();pendingProtectedPage='';page='home';history.replaceState(null,'','#home');
@@ -1177,10 +1182,22 @@ function expireSession(message,prompt=true) {
   if(prompt){signInDialog('signin');show(message);}
 }
 function handleAuthStorageChange(event){
-  if(event.key!==SIGNED_OUT_KEY||!event.newValue||!session)return;
-  sessionEnding=true;authStateRequest++;close();void signedIn(null).catch(console.error);void db.auth.stopAutoRefresh().catch(console.error);
+  if(event.key!==SIGNED_OUT_KEY||!event.newValue)return;
+  sessionEnding=true;authStateRequest++;authFormEpoch++;close();void signedIn(null).catch(console.error);void db.auth.stopAutoRefresh().catch(console.error);
 }
 function handleAuthStateChange(_event,newSession){
+  if(_event==='PASSWORD_RECOVERY'){
+    recoveryRedirecting=true;
+    // Recovery belongs to the isolated password page, never a workspace login.
+    if(newSession)setTimeout(()=>{
+      clearSavedAuthTokens();
+      const target=new URL('reset-password.html',location.origin+location.pathname);
+      target.hash=new URLSearchParams({access_token:newSession.access_token,refresh_token:newSession.refresh_token,token_type:'bearer',type:'recovery'}).toString();
+      location.replace(target.href);
+    },0);
+    return;
+  }
+  if(recoveryRedirecting)return;
   // A delayed refresh must not reopen a workspace after explicit sign-out.
   if(sessionEnding&&newSession)return;
   const request=++authStateRequest;
@@ -1189,6 +1206,7 @@ function handleAuthStateChange(_event,newSession){
   },0);
 }
 async function signedIn(newSession,showWelcome=false) {
+  if(newSession&&recoveryRedirecting)return;
   if(newSession&&sessionEnding&&!showWelcome)return;
   if(newSession&&!showWelcome&&newSession.user.id===session?.user.id&&checkSessionExpiry())return;
   const previousOwner=session?.user.id;
@@ -1302,6 +1320,7 @@ async function finishWorkspaceSignIn(generation){
     if(admin()){void refreshAdminAlerts();adminAlertTimer=setInterval(()=>{if(!document.hidden)void refreshAdminAlerts();},10000);}
 }
 async function init() {
+  if(startupRecovery){const target=new URL('reset-password.html',location.origin+location.pathname);target.hash=startupAuthHash;location.replace(target.href);return;}
   document.querySelectorAll('#nav a[data-page]').forEach(a=>{const slot=a.querySelector('span');if(slot)slot.innerHTML=iconSvg(a.dataset.page);});
   let savedTheme='';try{savedTheme=localStorage.getItem('innovatex.theme')||'';}catch{}
   try{adminSoundEnabled=localStorage.getItem('innovatex.adminSound')==='on';}catch{}
@@ -1388,12 +1407,12 @@ async function init() {
     if(e.target.name==='chat_image'){const label=$('#chatImageName');if(label){label.textContent=e.target.files?.[0]?.name||'';label.hidden=!e.target.files?.length;}}
     if(e.target.name==='movement_kind'&&e.target.closest('form[data-kind="inventoryMovement"]')){const member=$('#movementMember'),input=member?.querySelector('select'),needsMember=['check_out','return','issue_stock'].includes(e.target.value);if(member&&input){member.hidden=!needsMember;input.disabled=!needsMember;input.required=needsMember;if(needsMember)input.innerHTML=movementMemberOptions(e.target.form.elements.item_id.value,e.target.value);}}
   });
-  route();
+  if(!startupAuthCallback)route();
   if(!db) return;
   window.addEventListener('storage',handleAuthStorageChange);
   db.auth.onAuthStateChange(handleAuthStateChange);
   const {data,error}=await db.auth.getSession();
-  if(error) fail(error); else await signedIn(data.session);
+  if(error){route();fail(error);}else await signedIn(data.session,!!data.session&&startupAuthCallback);
   window.addEventListener('focus',checkSessionExpiry);
   window.addEventListener('pageshow',event=>{if(sessionEnding&&!session)signInDialog('signin');else if(!checkSessionExpiry()&&event.persisted&&session)void signedIn(session);});
   document.addEventListener('visibilitychange',()=>{
@@ -3083,27 +3102,48 @@ function field(label,name,type='text',value='',required=true) {return `<div clas
 function area(label,name,value='') {return `<div class="field"><label for="${name}">${esc(label)}</label><textarea id="${name}" name="${name}" required>${esc(value)}</textarea></div>`;}
 function select(label,name,options,current='') {return `<div class="field"><label for="${name}">${esc(label)}</label><select id="${name}" name="${name}">${options.map(x=>`<option value="${esc(x)}" ${x===current?'selected':''}>${esc(x)}</option>`).join('')}</select></div>`;}
 function form(title,description,kind,fields) {modal(`<span class="eyebrow">SPACE WORKSPACE</span><h2>${title}</h2><p class="muted">${description}</p><form id="editor" data-kind="${kind}" class="form-stack">${fields}<button class="button" type="submit">Save ${title.toLowerCase()}</button></form>`);}
+function checkAuthAttempt(epoch){
+  if(epoch===authFormEpoch)return;
+  clearSavedAuthTokens();void db.auth.signOut({scope:'local'}).catch(console.error);
+  throw Error('Sign-in was cancelled by sign-out. Please sign in again.');
+}
+function authFeedback(formEl,message){
+  const output=formEl?.querySelector('[data-auth-feedback]');
+  if(output){output.textContent=message;output.hidden=!message;}else if(message)show(message);
+}
+function passwordField(label,name,creating=false){
+  return `<div class="field"><label for="${name}">${label}</label><div class="auth-password"><input id="${name}" name="${name}" type="password" autocomplete="${creating?'new-password':'current-password'}" ${creating?'minlength="8"':''} required><button type="button" class="text-button" data-action="togglePassword" data-input="${name}" aria-label="Show ${label.toLowerCase()}" aria-pressed="false">Show</button></div></div>`;
+}
+function rememberSignup(email,type){
+  pendingEmail=email;pendingAuthMode='signup';pendingType=['member','teacher','founder','investor'].includes(type)?type:'member';
+  authTabStorage.setItem('innovatex.pendingEmail',email);authTabStorage.setItem('innovatex.pendingAuthMode','signup');
+  if(['member','teacher','founder','investor'].includes(type))authTabStorage.setItem('innovatex.pendingType',pendingType);else authTabStorage.removeItem('innovatex.pendingType');
+}
+function clearPendingAuth(){
+  pendingEmail='';pendingType='member';
+  for(const key of ['pendingEmail','pendingType','pendingAuthMode'])authTabStorage.removeItem('innovatex.'+key);
+}
 function signInDialog(mode='signin') {
-  if(!configured) return show('Add your Supabase URL and publishable key to config.js first.');
-  if(pendingEmail) return codeDialog();
+  if(!configured)return show('Add your Supabase URL and publishable key to config.js first.');
+  if(mode==='signup'&&pendingEmail&&pendingAuthMode==='signup')return codeDialog();
   pendingAuthMode=mode==='signup'?'signup':'signin';
-  const destination=pendingProtectedPage?pendingProtectedPage.replace(/-/g,' '):'';
-  modal(`<span class="eyebrow">SPACE</span><h2>${pendingAuthMode==='signup'?'Create your account':'Sign in'}</h2>${destination?`<div class="auth-access-note"><strong>${esc(destination[0].toUpperCase()+destination.slice(1))} is in the club workspace.</strong><span>Sign in to continue, or create an account for administrator approval.</span></div>`:''}<div class="auth-switch"><button type="button" class="${pendingAuthMode==='signin'?'selected':''}" data-action="signin">I have an account</button><button type="button" class="${pendingAuthMode==='signup'?'selected':''}" data-action="signup">Create an account</button></div><p class="muted">${pendingAuthMode==='signup'?'Choose the type of account you are applying for. Verify your email once to create the account; an administrator will review the application.':'Enter the email for your existing account. We’ll send a fresh one-time sign-in code.'}</p><form id="editor" data-kind="login" class="form-stack">${pendingAuthMode==='signup'?select('I am applying as','application_type',['member','teacher','founder','investor'],pendingType):''}${field('Email address','email','email')}<button class="button" type="submit">${pendingAuthMode==='signup'?'Create account and send code':'Send sign-in code'}</button></form><p class="hint">You stay signed in on this browser until you sign out. Use Sign out when you finish on a shared device.</p>`);
+  const signup=pendingAuthMode==='signup',destination=pendingProtectedPage?pendingProtectedPage.replace(/-/g,' '):'';
+  modal(`<span class="eyebrow">SPACE</span><h2>${signup?'Create your account':'Welcome back'}</h2>${destination?`<div class="auth-access-note"><strong>${esc(destination[0].toUpperCase()+destination.slice(1))} is in the club workspace.</strong><span>Sign in to continue, or create an account for administrator approval.</span></div>`:''}<div class="auth-switch"><button type="button" class="${signup?'':'selected'}" data-action="signin">I have an account</button><button type="button" class="${signup?'selected':''}" data-action="signup">Create an account</button></div><p class="muted">${signup?'Choose your account type and a password. Verify your email once, then submit your application for administrator approval.':'Sign in with your email address and password.'}</p><form id="editor" data-kind="login" data-auth-mode="${pendingAuthMode}" class="form-stack">${signup?select('I am applying as','application_type',['member','teacher','founder','investor'],pendingType):''}<div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>${passwordField('Password','password',signup)}${signup?passwordField('Confirm password','password_confirm',true):''}<p class="hint">${signup?'Use at least 8 characters. A longer, unique password is best.':'Previously used email codes? Choose “Set password” below using your existing email.'}</p><p class="auth-feedback" data-auth-feedback role="alert" hidden></p><button class="button" type="submit">${signup?'Create account':'Sign in'}</button></form>${signup?'':`<div class="otp-actions"><button type="button" class="text-button" data-action="forgotPassword">Forgot password / Set password</button></div>`}<p class="hint">You stay signed in on this browser until you sign out. Use Sign out when you finish on a shared device.</p>`);
 }
 function codeDialog() {
-  modal(`<span class="eyebrow">SPACE</span><h2>${pendingAuthMode==='signup'?'Verify your new account':'Enter your sign-in code'}</h2><p class="muted">Enter the one-time code sent to <strong>${esc(pendingEmail)}</strong>.</p><form id="editor" data-kind="verify" class="form-stack"><div class="field"><label for="code">One-time code</label><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" maxlength="10" placeholder="Your code" required></div><button class="button" type="submit">${pendingAuthMode==='signup'?'Verify account':'Sign in'}</button></form><div class="otp-actions"><button class="text-button" data-action="resendCode">Resend code</button><button class="text-button" data-action="changeEmail">Use another email</button></div><p class="hint">Only the latest code will work. Check your spam folder if you don't see the email.</p>`);
-  $('#code').focus();
+  modal(`<span class="eyebrow">SPACE</span><h2>Verify your email</h2><p class="muted">Enter the one-time code sent to <strong>${esc(pendingEmail)}</strong>. After this, sign in with your email and password.</p><form id="editor" data-kind="verify" class="form-stack"><div class="field"><label for="code">Verification code</label><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" maxlength="10" placeholder="Your code" required></div><p class="auth-feedback" data-auth-feedback role="alert" hidden></p><button class="button" type="submit">Verify account</button></form><div class="otp-actions"><button type="button" class="text-button" data-action="resendCode">Resend code</button><button type="button" class="text-button" data-action="changeEmail">Use another email</button><button type="button" class="text-button" data-action="signin">Back to sign in</button></div><p class="hint">Only the latest code will work. Check your spam folder if you don't see the email. You can also follow the verification link if your email includes one.</p>`);
+  $('#code')?.focus();
 }
-async function requestCode(email,type=pendingType,mode=pendingAuthMode) {
+async function requestCode(email){
   if(sessionSignOutPromise)await sessionSignOutPromise;
-  mode=mode==='signup'?'signup':'signin';
-  const {error}=await db.auth.signInWithOtp({email,options:{shouldCreateUser:mode==='signup',emailRedirectTo:location.origin+location.pathname}});
-  if(error) throw error;
-  pendingEmail=email;pendingAuthMode=mode;pendingType=['member','teacher','founder','investor'].includes(type)?type:'member';
-  sessionStorage.setItem('innovatex.pendingEmail',email);sessionStorage.setItem('innovatex.pendingAuthMode',mode);
-  if(mode==='signup')sessionStorage.setItem('innovatex.pendingType',pendingType);else sessionStorage.removeItem('innovatex.pendingType');
-  codeDialog();
-  show('Verification code sent. Check your email.');
+  if(!email)throw Error('Enter your email address first.');
+  const {error}=await db.auth.resend({type:'signup',email,options:{emailRedirectTo:location.origin+location.pathname}});
+  if(error)throw error;
+  rememberSignup(email,authTabStorage.getItem('innovatex.pendingType'));codeDialog();authFeedback($('#editor'),'A new verification code has been sent.');
+}
+function passwordResetDialog(){
+  const email=$('#email')?.value||pendingEmail||'';
+  modal(`<span class="eyebrow">SPACE</span><h2>Set or reset your password</h2><p class="muted">Use the email on your existing account. Your profile, roles, courses and orders stay with that account.</p><form id="editor" data-kind="passwordResetRequest" class="form-stack"><div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" autocapitalize="none" spellcheck="false" value="${esc(email)}" required></div><p class="auth-feedback" data-auth-feedback role="alert" hidden></p><button class="button" type="submit">Email password reset</button></form><div class="otp-actions"><a class="text-button" href="./reset-password.html">I already have a reset code</a><button class="text-button" data-action="signin">Back to sign in</button></div>`);
 }
 function projectDetail(id) {
   const p=(cache.projects||[]).find(x=>x.id===id);if(!p)return;
@@ -3156,7 +3196,7 @@ function actions(e) {
   if(action==='financeReportPage'&&financeReportAccess()){financeReportPage=Math.max(0,Math.min(Math.max(0,Math.ceil(Number(financeReport?.approved_count||0)/50)-1),Number(el.dataset.page)||0));return void loadFinanceMonthReport().then(render);}
   if(action==='closeFinanceMonthForm'&&admin()&&financeAdminReady&&financeReport&&!financeReport.review){return form('Review & close month','Confirm the actual bank and cash balance. The review preserves totals and prevents changes to closed periods.','financeMonthClose',`<input type="hidden" name="month" value="${esc(financeMonth)}"><label class="field">Actual closing balance (GHS)<input name="actual_balance" type="number" step="0.01" min="-9999999999.99" max="9999999999.99" value="${Number(financeReport.closing_balance).toFixed(2)}" required></label>${area('Monthly review notes, checks and any difference','note')}`);}
   if(action==='retryPage'){if(session&&authReady)return refreshVisiblePage({force:true});return signInDialog('signin');}
-  if(sessionEnding&&!session&&!['login','signup','signin','resendCode','changeEmail'].includes(action)){e.preventDefault();signInDialog('signin');return;}
+  if(sessionEnding&&!session&&!['login','signup','signin','resendCode','changeEmail','forgotPassword','togglePassword'].includes(action)){e.preventDefault();signInDialog('signin');return;}
   if(action==='learningPathForm'&&clubAccess()&&learningChoicesReady)return modal(learningPathForm());
   if(action==='accountRoleForm')return accountRoleForm(id);
   if(action==='teachingStudentTrack'&&teacher()&&learningHubReady){if(el.dataset.track==='all'||allowedTeachingTracks().includes(el.dataset.track)){teachingStudentTrack=el.dataset.track;teachingStudentPage=0;render();}return;}
@@ -3425,6 +3465,8 @@ function actions(e) {
   }
   if(action==='login'||action==='signup')return signInDialog('signup');
   if(action==='signin')return signInDialog('signin');
+  if(action==='forgotPassword')return passwordResetDialog();
+  if(action==='togglePassword'){const input=document.getElementById(el.dataset.input);if(input&&['password','text'].includes(input.type)){const reveal=input.type==='password';input.type=reveal?'text':'password';el.textContent=reveal?'Hide':'Show';el.setAttribute('aria-pressed',String(reveal));el.setAttribute('aria-label',(reveal?'Hide':'Show')+' password');}return;}
   if(action==='memberProfile')return memberProfile(id);
   if(memberDirectoryAction(action,el,id))return;
   if(action==='openDm'){
@@ -3584,7 +3626,7 @@ function actions(e) {
   if(action==='founderMeetingForm')return form('Founder meeting','Add the Google Meet link and an agenda for accepted founders.','founderMeeting',field('Meeting title','title')+area('Agenda','agenda')+field('Start','starts_at','datetime-local')+field('End','ends_at','datetime-local')+field('Google Meet URL','meet_url','url','',false));
   if(action==='founderCalendar'||action==='founderIcs'){const m=(cache.founder_meetings||[]).find(x=>x.id===id);if(m)calendar({...m,description:m.agenda,location:'Online'},action==='founderIcs');return;}
   if(action==='changeEmail'){pendingEmail='';sessionStorage.removeItem('innovatex.pendingEmail');sessionStorage.removeItem('innovatex.pendingType');sessionStorage.removeItem('innovatex.pendingAuthMode');return signInDialog(pendingAuthMode);}
-  if(action==='resendCode')return requestCode(pendingEmail).catch(fail);
+  if(action==='resendCode'){if(el.disabled)return;el.disabled=true;return requestCode(pendingEmail).catch(error=>authFeedback($('#editor'),error.message||'Could not send a code. Try again.')).finally(()=>{el.disabled=false;});}
   if(action==='avatarForm'){
     if(!avatarReady)return show('Run the Supabase profile photo migration first.');
     modal(`<span class="eyebrow">MY PROFILE</span><h2>Change profile photo</h2><div class="avatar-preview">${memberAvatar(session.user.id,true)}<p>Choose a clear image. Approved club members can see your photo in conversations and the directory.</p></div><form id="editor" data-kind="avatar" class="form-stack"><div class="field"><label for="avatar_image">Photo (JPG, PNG, WebP or GIF, up to 5 MB)</label><input id="avatar_image" name="avatar_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif" required></div><button class="button" type="submit">Save photo</button></form>${me?.avatar_path?`<button class="text-button remove-avatar" data-action="removeAvatar">Remove current photo</button>`:''}`);
@@ -3929,7 +3971,7 @@ function uploadRevisionDialog(id) {
 }
 async function submit(e) {
   if(session&&checkSessionExpiry()){e.preventDefault();return;}
-  if(sessionEnding&&!session&&!['login','verify'].includes(e.target.dataset.kind)){e.preventDefault();signInDialog('signin');return;}
+  if(sessionEnding&&!session&&!['login','verify','passwordResetRequest'].includes(e.target.dataset.kind)){e.preventDefault();signInDialog('signin');return;}
   if(commerce?.handleSubmit(e))return;
   if(e.target.id==='dmComposer'&&advancedReady&&dmReady||['spaceCoursePicker','spaceProjectPicker','spaceLibrarySearch','spaceNotificationPreferences','spaceEventSearch'].includes(e.target.id)||e.target.id==='editor'&&e.target.dataset.kind?.startsWith('space')){await advancedSubmit(e);return;}
   if(e.target.id==='officerSearchForm'){e.preventDefault();if(!admin())return;officerSearch=String(e.target.elements.search.value||'').slice(0,120).trim();officerMemberPage=0;render();return;}
@@ -4011,16 +4053,52 @@ async function submit(e) {
     catch(error){if(path)await db.storage.from('club-media').remove([path]);fail(error);}finally{send.disabled=false;}return;
   }
   if(e.target.id!=='editor'&&!e.target.matches('.privacy-editor')&&e.target.id!=='teacherProfileForm'&&e.target.id!=='learningPathForm')return; e.preventDefault(); if(!db)return;
-  const formEl=e.target,kind=formEl.dataset.kind,values=Object.fromEntries(new FormData(formEl));
-  const submitBtn=formEl.querySelector('[type=submit]'); submitBtn.disabled=true;
+  const formEl=e.target,kind=formEl.dataset.kind,values=Object.fromEntries(new FormData(formEl)),authAttempt=authFormEpoch;
+  const submitBtn=formEl.querySelector('[type=submit]');if(submitBtn.disabled)return;submitBtn.disabled=true;
+  if(['login','verify','passwordResetRequest'].includes(kind))authFeedback(formEl,'');
   try {
-    if(kind==='login'){await requestCode(String(values.email).trim().toLowerCase(),String(values.application_type),pendingAuthMode);return;}
+    if(kind==='login'){
+      if(sessionSignOutPromise)await sessionSignOutPromise;
+      const email=String(values.email||'').trim().toLowerCase(),password=String(values.password||''),signup=formEl.dataset.authMode==='signup';
+      if(!email||!password)throw Error('Enter your email address and password.');
+      if(signup){
+        if(password.length<8)throw Error('Use a password with at least 8 characters.');
+        if(password!==String(values.password_confirm||''))throw Error('Your passwords do not match.');
+        const type=['member','teacher','founder','investor'].includes(values.application_type)?values.application_type:'member';
+        const {data,error}=await db.auth.signUp({email,password,options:{emailRedirectTo:location.origin+location.pathname,data:{application_type:type}}});
+        if(error)throw error;checkAuthAttempt(authAttempt);
+        rememberSignup(email,type);
+        if(data.session){close();await signedIn(data.session,true);show('Account created. Complete your application to continue.');}
+        else{codeDialog();authFeedback($('#editor'),'Check your inbox for your verification code. If this email already has a verified account, sign in or use Set password.');}
+      }else{
+        const unverifiedType=pendingEmail===email?authTabStorage.getItem('innovatex.pendingType'):null;
+        clearPendingAuth();
+        const {data,error}=await db.auth.signInWithPassword({email,password});
+        if(error){
+          if(error.code==='email_not_confirmed'){rememberSignup(email,unverifiedType);codeDialog();authFeedback($('#editor'),'Verify your email before signing in. Enter your verification code or choose Resend code.');return;}
+          throw error;
+        }
+        checkAuthAttempt(authAttempt);
+        if(!data.session)throw Error('Sign-in did not return a session. Please try again.');
+        close();await signedIn(data.session,true);show('Welcome to SPACE!');
+      }
+      return;
+    }
+    if(kind==='passwordResetRequest'){
+      if(sessionSignOutPromise)await sessionSignOutPromise;
+      const email=String(values.email||'').trim().toLowerCase();if(!email)throw Error('Enter your email address.');
+      const redirectTo=new URL('reset-password.html',location.origin+location.pathname).href;
+      const {error}=await db.auth.resetPasswordForEmail(email,{redirectTo});if(error)throw error;
+      const target=new URL('reset-password.html',location.origin+location.pathname);
+      modal(`<span class="eyebrow">SPACE</span><h2>Check your email</h2><p>If an account can receive password recovery at <strong>${esc(email)}</strong>, a reset email is on its way. Check your spam folder too.</p><p class="muted">Follow the link in the email, or enter its reset code on the password page.</p><div class="otp-actions"><a class="button" href="${esc(target.href)}">Enter a reset code</a><button class="text-button" data-action="signin">Back to sign in</button></div>`);return;
+    }
     if(kind==='verify'){
       if(sessionSignOutPromise)await sessionSignOutPromise;
       const token=String(values.code).trim();
       if(!/^[0-9]{6,10}$/.test(token))throw Error('Enter the numeric code from your email.');
       const {data,error}=await db.auth.verifyOtp({email:pendingEmail,token,type:'email'});
       if(error)throw error;
+      checkAuthAttempt(authAttempt);
       if(!data.session)throw Error('Verification succeeded, but no session was returned. Please try signing in again.');
       close();await signedIn(data.session,true);show('Email verified. Welcome to SPACE!');return;
     }
@@ -4531,7 +4609,7 @@ async function submit(e) {
       const table={course:'courses',event:'events',announcement:'announcements'}[kind];
       return await mutate(()=>db.from(table).insert(payload));
     }
-  }catch(error){fail(error);}finally{submitBtn.disabled=false;}
+  }catch(error){if(['login','verify','passwordResetRequest'].includes(kind))authFeedback(formEl,error.message||'Unable to continue. Please try again.');else fail(error);}finally{submitBtn.disabled=false;}
 }
 async function createMeetFor(kind,id) {
   const meeting=kind==='meeting',item=(cache[meeting?'founder_meetings':'events']||[]).find(x=>x.id===id);

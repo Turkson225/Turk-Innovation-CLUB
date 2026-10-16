@@ -1482,3 +1482,12 @@ dialog::backdrop{background:rgba(17,24,39,.56);backdrop-filter:blur(3px)}
 @media(max-width:600px){.space-verify-shell{padding:24px 16px 40px}.space-verify-card{padding:25px}.space-verify-card h1{font-size:36px}.space-verify-brand{padding:20px;gap:14px}.space-verify-brand span{font-size:8px;letter-spacing:1px}}
 
 .form-stack input[type=checkbox]{width:18px;height:18px;padding:0;margin-right:8px;vertical-align:middle;accent-color:var(--brand,#7424db)}
+
+/* Email/password authentication */
+.auth-password{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:9px;background:var(--white);padding-right:12px}
+.auth-password:focus-within{outline:2px solid var(--teal);outline-offset:2px}
+.auth-password input{min-width:0;flex:1;border:0!important;background:transparent!important;box-shadow:none!important;outline:none!important}
+.auth-password button{flex:none;min-height:44px;min-width:44px}
+.auth-feedback{margin:0;padding:11px 13px;border-radius:9px;background:color-mix(in srgb,var(--teal) 9%,var(--white));color:var(--ink);font-size:13px;line-height:1.55;overflow-wrap:anywhere}
+.auth-feedback[hidden]{display:none}
+@media(max-width:760px){.auth-password input,form[data-kind="login"] input,form[data-kind="passwordResetRequest"] input{font-size:16px}}
