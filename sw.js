@@ -1,5 +1,5 @@
 /* SPACE public offline shell. Member data and API responses never enter Cache Storage. */
-const PUBLIC_CACHE = 'innovatex-public-v11';
+const PUBLIC_CACHE = 'innovatex-public-v12';
 const CACHE_PREFIX = 'innovatex-public-';
 const scope = new URL(self.registration.scope);
 const urlFor = path => new URL(path, scope).href;
@@ -138,7 +138,7 @@ self.addEventListener('notificationclick', event => {
     const target = safeNotificationUrl(event.notification.data?.url);
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const app = windows.find(client => {
-      try { const url = new URL(client.url); return url.origin === scope.origin && url.pathname === scope.pathname; }
+      try { const url = new URL(client.url); return url.origin === scope.origin && url.pathname === scope.pathname && url.searchParams.get('account')!=='separate'; }
       catch { return false; }
     });
     if (app) {

@@ -38,8 +38,8 @@ const message=(id,sender_id='a',recipient_id='self',body='hello',created_at='202
 function composer(peer,text){const input=node({value:text});const send=node();const form=node({id:'dmComposer',dataset:{peer},elements:{body:input},querySelector(s){return s==='[type=submit]'?send:null;}});return {form,input,send,event:{target:form,preventDefault(){}}};}
 function action(h,dataset){return h.exec('actions(qaArgs)',{target:{closest(){return node({dataset});}},preventDefault(){}});}
 
-function loginHarness({reducedMotion=false,play=()=>Promise.resolve(),realLearningPath=false}={}){
-  const h=harness(),stats={opens:0,closes:0,plays:0,pauses:0,focused:0,workspaceFocused:0};
+function loginHarness({reducedMotion=false,play=()=>Promise.resolve(),realLearningPath=false,harnessOptions={}}={}){
+  const h=harness(harnessOptions),stats={opens:0,closes:0,plays:0,pauses:0,focused:0,workspaceFocused:0};
   const dialog=node({open:false,show(){this.open=true;stats.opens++;},showModal(){throw Error("Welcome must not block the workspace");},close(){this.open=false;stats.closes++;}});
   const video=node({currentTime:0,pause(){stats.pauses++;},play(){stats.plays++;return play();}}),still=node({hidden:true});
   h.elements.set('#loginWelcome',dialog);h.elements.set('#loginWelcomeVideo',video);h.elements.set('#loginWelcomeStill',still);h.elements.set('#loginWelcomeSkip',node({focus(){stats.focused++;}}));
@@ -651,12 +651,12 @@ test('Unavailable durable storage keeps authentication in memory without throwin
  const h=harness();h.context.localStorage={getItem(){throw Error('blocked');},setItem(){throw Error('blocked');},removeItem(){throw Error('blocked');}};
  h.clientOptions.auth.storage.setItem('test','temporary');assert.equal(h.clientOptions.auth.storage.getItem('test'),'temporary');h.clientOptions.auth.storage.removeItem('test');assert.equal(h.clientOptions.auth.storage.getItem('test'),null);
 });
-function sessionHarness(){
-  const h=loginHarness(),stats={stopped:0,started:0,signouts:[],prompts:0,renders:0};let now=1000000;
+function sessionHarness(options={}){
+  const h=loginHarness(options),stats={stopped:0,started:0,signouts:[],prompts:0,renders:0};let now=1000000;
   h.context.Date=class extends Date{static now(){return now;}};
   h.db.auth={startAutoRefresh:async()=>{stats.started++;},stopAutoRefresh:async()=>{stats.stopped++;},signOut:async options=>{stats.signouts.push(options);return {error:null};}};
   h.context.qaPrompt=()=>{stats.prompts++;};h.context.qaRender=()=>{stats.renders++;};h.run('signInDialog=qaPrompt;render=qaRender');
-  const login=async(id='self',interactive=true)=>{h.queued.push({data:loginProfile(id),error:null});await h.exec('signedIn(qaArgs.session,qaArgs.interactive)',{session:loginSession(id),interactive});};
+  const login=async(id='self',interactive=true,profile={})=>{h.queued.push({data:loginProfile(id,profile),error:null});await h.exec('signedIn(qaArgs.session,qaArgs.interactive)',{session:loginSession(id),interactive});};
   return {...h,stats,setNow:value=>{now=value;},getNow:()=>now,login};
 }
 test('Remembered sign-in has no app-imposed inactivity or eight-hour cutoff',async()=>{
@@ -1043,6 +1043,70 @@ test('Password auth and reset fields never enter the workspace autosave path',()
 });
 test('A certificate notification opens the fresh certificate directly without relying on classroom cache',async()=>{
  const h=harness();h.run("setSidebarOpen=()=>{};let openedCertificate='';certification={open:async id=>{openedCertificate=id;}};cache.notifications=[{id:'certificate-notice',target_type:'certificate',target_id:'award',read_at:'already'}];");await h.exec("openNotification('certificate-notice',qaArgs)",node({textContent:'Open'}));assert.equal(h.run('openedCertificate'),'award');
+});
+const separateLocation=()=>({origin:'https://turkson225.github.io',pathname:'/Turk-Innovation-CLUB/',search:'?account=separate',hash:'#home'});
+test('Admin, teacher and member sessions use independent storage and Supabase broadcast keys',async()=>{
+ const localItems=new Map(),admin=sessionHarness({harnessOptions:{localItems}}),teacher=sessionHarness({harnessOptions:{localItems,location:separateLocation()}}),member=sessionHarness({harnessOptions:{localItems,location:separateLocation()}});
+ admin.run('refreshAdminAlerts=async()=>{};updateAdminAlertControls=()=>{}');
+ const accounts=[[admin,'administrator','admin'],[teacher,'instructor','teacher'],[member,'learner','member']];
+ for(const [h,id,role]of accounts){h.clientOptions.auth.storage.setItem(h.clientOptions.auth.storageKey,JSON.stringify(loginSession(id)));await h.login(id,true,{role});}
+ assert.equal(new Set(accounts.map(([h])=>h.clientOptions.auth.storageKey)).size,3);assert.equal(admin.run('admin()'),true);assert.equal(teacher.run('teacher()'),true);assert.equal(member.run('teacher()'),false);assert.equal(member.run('admin()'),false);
+ for(const [h,id]of accounts){assert.equal(JSON.parse(h.clientOptions.auth.storage.getItem(h.clientOptions.auth.storageKey)).user.id,id);assert.equal(h.run('session.user.id'),id);}
+ assert.equal(JSON.parse(localItems.get('sb-qa-auth-token')).user.id,'administrator');assert.equal(localItems.size,1);
+});
+test('A separate account tab starts empty and never imports the remembered main account',()=>{
+ const localItems=new Map([['sb-qa-auth-token','main-credentials']]),sessionItems=new Map([['sb-qa-auth-token','copied-old-main']]),h=harness({localItems,sessionItems,location:separateLocation()});
+ assert.equal(h.clientOptions.auth.storage.getItem(h.clientOptions.auth.storageKey),null);assert.equal(localItems.get('sb-qa-auth-token'),'main-credentials');assert.equal(sessionItems.get('sb-qa-auth-token'),'copied-old-main');assert.equal(h.run('separateAccountTab'),true);
+});
+test('Refreshing a separate tab restores its account with a fresh broadcast channel',()=>{
+ const localItems=new Map(),sessionItems=new Map(),first=harness({localItems,sessionItems,location:separateLocation()});first.clientOptions.auth.storage.setItem(first.clientOptions.auth.storageKey,'teacher-credentials');
+ const refreshed=harness({localItems,sessionItems,location:separateLocation()});assert.notEqual(refreshed.clientOptions.auth.storageKey,first.clientOptions.auth.storageKey);assert.equal(refreshed.clientOptions.auth.storage.getItem(refreshed.clientOptions.auth.storageKey),'teacher-credentials');assert.equal(localItems.size,0);
+});
+test('Duplicate tabs can choose different accounts without a shared broadcast channel',()=>{
+ const first=harness({location:separateLocation()});first.clientOptions.auth.storage.setItem(first.clientOptions.auth.storageKey,'teacher');const duplicate=harness({sessionItems:new Map(first.sessionItems),location:separateLocation()});
+ assert.notEqual(first.clientOptions.auth.storageKey,duplicate.clientOptions.auth.storageKey);duplicate.clientOptions.auth.storage.setItem(duplicate.clientOptions.auth.storageKey,'member');assert.equal(first.clientOptions.auth.storage.getItem(first.clientOptions.auth.storageKey),'teacher');assert.equal(duplicate.clientOptions.auth.storage.getItem(duplicate.clientOptions.auth.storageKey),'member');
+});
+test('A routing refresh keeps separate account mode even when a URL query is missing',()=>{
+ const sessionItems=new Map(),first=harness({sessionItems,location:separateLocation()});first.clientOptions.auth.storage.setItem(first.clientOptions.auth.storageKey,'teacher');const refreshed=harness({sessionItems,location:{hash:'#courses'}});assert.equal(refreshed.run('separateAccountTab'),true);assert.equal(refreshed.clientOptions.auth.storage.getItem(refreshed.clientOptions.auth.storageKey),'teacher');
+});
+test('Signing out of a separate account clears only its own tokens and private workspace',async()=>{
+ const localItems=new Map([['sb-qa-auth-token','main-token']]),first=sessionHarness({harnessOptions:{localItems,location:separateLocation()}}),second=harness({localItems,location:separateLocation()});first.clientOptions.auth.storage.setItem(first.clientOptions.auth.storageKey,'teacher-token');second.clientOptions.auth.storage.setItem(second.clientOptions.auth.storageKey,'member-token');await first.login('instructor');await first.run('signOut()');
+ assert.equal(first.run('session'),null);assert.equal(first.clientOptions.auth.storage.getItem(first.clientOptions.auth.storageKey),null);assert.equal(second.clientOptions.auth.storage.getItem(second.clientOptions.auth.storageKey),'member-token');assert.equal(localItems.get('sb-qa-auth-token'),'main-token');assert.equal(first.stats.signouts[0].scope,'local');
+ const refreshed=harness({localItems,sessionItems:first.sessionItems,location:separateLocation()});assert.equal(refreshed.clientOptions.auth.storage.getItem(refreshed.clientOptions.auth.storageKey),null);
+});
+test('Main account sign-out events do not sign out a separate teacher account',async()=>{
+ const h=sessionHarness({harnessOptions:{location:separateLocation()}});await h.login('instructor');h.exec('handleAuthStorageChange(qaArgs)',{key:'sb-qa-auth-token-space-signed-out',newValue:'1'});assert.equal(h.run('session.user.id'),'instructor');assert.equal(h.run('sessionEnding'),false);
+});
+test('Separate account storage falls back to memory if tab storage becomes unavailable',()=>{
+ const h=harness({location:separateLocation()});h.context.sessionStorage={getItem(){throw Error('blocked');},setItem(){throw Error('blocked');},removeItem(){throw Error('blocked');}};const storage=h.clientOptions.auth.storage,key=h.clientOptions.auth.storageKey;storage.setItem(key,'teacher');assert.equal(storage.getItem(key),'teacher');assert.equal(h.localItems.size,0);storage.removeItem(key);assert.equal(storage.getItem(key),null);
+});
+test('The Accounts menu escapes identity text and opens a clean, independent tab without an opener',()=>{
+ const h=harness({location:separateLocation()});h.run("session.user.email='<script>@example.test';me.full_name='<script>Name</script>';accountsDialog()");const html=h.elements.get('#modalContent').innerHTML;assert(html.includes('&lt;script&gt;Name'));assert(!html.includes('<script>'));assert(html.includes('?account=separate#home'));assert(html.includes('target="_blank" rel="noopener noreferrer"'));assert(!/access_token|refresh_token/.test(html));assert(html.includes('Return to my main account'));
+});
+test('Switching this tab preserves the main login and cancels late work before navigation',()=>{
+ let target='';const localItems=new Map([['sb-qa-auth-token','main-token']]),h=harness({localItems,location:{...separateLocation(),search:'',assign:url=>{target=url;}}});let stopped=0,signouts=0;h.db.auth={stopAutoRefresh:async()=>{stopped++;},signOut:async()=>{signouts++;}};h.run('changeAccountTab(true)');assert.equal(localItems.get('sb-qa-auth-token'),'main-token');assert.equal(target,'https://turkson225.github.io/Turk-Innovation-CLUB/?account=separate#home');assert.equal(stopped,1);assert.equal(signouts,0);assert.equal(h.run('sessionEnding'),true);assert.equal(h.sessionItems.get('sb-qa-auth-token-space-separate-mode'),'1');
+});
+test('Returning to the main account removes only this tab’s preview credentials',()=>{
+ let target='';const localItems=new Map([['sb-qa-auth-token','main-token']]),h=harness({localItems,location:{...separateLocation(),assign:url=>{target=url;}}});h.db.auth={stopAutoRefresh:async()=>{}};h.clientOptions.auth.storage.setItem(h.clientOptions.auth.storageKey,'teacher');h.run('changeAccountTab(false)');h.clientOptions.auth.storage.setItem(h.clientOptions.auth.storageKey,'late-teacher-response');assert.equal(target,'https://turkson225.github.io/Turk-Innovation-CLUB/#home');assert.equal(h.sessionItems.has('sb-qa-auth-token-space-separate-mode'),false);assert.equal(h.sessionItems.has('sb-qa-auth-token-space-tab-session'),false);assert.equal(localItems.get('sb-qa-auth-token'),'main-token');
+});
+test('An email confirmation callback preserves an existing main account',()=>{
+ const localItems=new Map([['sb-qa-auth-token','main-token']]),h=harness({localItems,location:{hash:'#access_token=new-user&refresh_token=new-refresh&type=signup'}});assert.equal(h.run('separateAccountTab'),true);assert.equal(h.clientOptions.auth.storage.getItem(h.clientOptions.auth.storageKey),null);assert.equal(localItems.get('sb-qa-auth-token'),'main-token');assert.equal(h.sessionItems.get('sb-qa-auth-token-space-separate-mode'),'1');
+});
+test('Separate accounts do not change or unsubscribe the main account’s device alerts',async()=>{
+ const h=sessionHarness({harnessOptions:{location:separateLocation()}});h.run('let previewPushCalls=0;window.InnovateXPush={authChanged:async()=>{previewPushCalls++;},unsubscribe:async()=>{previewPushCalls++;},state:()=>{previewPushCalls++;return {};},subscribe:async()=>{previewPushCalls++;}}');await h.login('instructor');assert.match(h.run('pushSettingsCard()'),/main SPACE account/);await h.run('togglePushNotifications()');await h.run('signOut()');assert.equal(h.run('previewPushCalls'),0);
+});
+test('Separate account sign-in explains tab lifetime and keeps the remembered browser session unchanged',()=>{
+ const h=harness({location:separateLocation()});h.run("signInDialog('signin')");assert(h.elements.get('#modalContent').innerHTML.includes('closing the tab ends this separate session'));assert.equal(h.clientOptions.auth.autoRefreshToken,true);assert.equal(h.clientOptions.auth.persistSession,true);
+});
+async function pushClickFixture(includeMain){
+ const handlers=new Map(),calls=[],base='https://turkson225.github.io/Turk-Innovation-CLUB/',preview={url:base+'?account=separate#notifications',navigate:async()=>{calls.push('preview navigate');},focus:async()=>{calls.push('preview focus');}},main={url:base+'#home',navigate:async function(url){calls.push('main navigate '+url);return this;},focus:async()=>{calls.push('main focus');}};
+ const context=vm.createContext({URL,console,self:{registration:{scope:base},addEventListener:(name,callback)=>handlers.set(name,callback),clients:{matchAll:async()=>includeMain?[preview,main]:[preview],openWindow:async url=>{calls.push('open '+url);}}}});vm.runInContext(fs.readFileSync(root+'/sw.js','utf8'),context);let task;handlers.get('notificationclick')({notification:{data:{url:base+'#notifications'},close(){}},waitUntil:promise=>{task=promise;}});await task;return calls;
+}
+test('A device notification opens the main account rather than a separate preview tab',async()=>{
+ const calls=await pushClickFixture(true);assert(calls.some(call=>call.startsWith('main navigate ')));assert(calls.includes('main focus'));assert(!calls.some(call=>call.startsWith('preview')));
+});
+test('A device notification opens a new main-account tab when only previews are open',async()=>{
+ assert.deepEqual(await pushClickFixture(false),['open https://turkson225.github.io/Turk-Innovation-CLUB/#notifications']);
 });
 test('A completed learning course exposes its own certificate download action',()=>{
  const h=harness();h.run("cache.course_completions=[{course_id:'learning-course',learner_id:'self',completed_at:'2026-10-16',assessed_by:'teacher'}];");const html=h.exec('courseFeedback(qaArgs)',{id:'learning-course'});assert(html.includes('data-action="certificateCourse"'));assert(html.includes('data-id="learning-course"'));

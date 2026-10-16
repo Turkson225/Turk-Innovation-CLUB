@@ -31,14 +31,14 @@ function hasRecovery(session){
   try{const saved=JSON.parse(recoveryStorage.getItem(verifiedKey)||'null');return !!session?.user?.id&&saved?.userId===session.user.id&&saved.until>Date.now();}catch{return false;}
 }
 function clearMatchingWorkspace(userId){
-  const key='sb-'+project+'-auth-token';
+  const base='sb-'+project+'-auth-token';
   // Another account on this browser must not be signed out by this recovery.
-  for(const name of ['localStorage','sessionStorage'])try{
+  for(const name of ['localStorage','sessionStorage'])for(const key of [base,base+'-space-tab-session'])try{
     const storage=window[name];
     const saved=JSON.parse(storage.getItem(key)||'null');
     if(saved?.user?.id!==userId)continue;
     for(const suffix of ['', '-code-verifier','-user'])storage.removeItem(key+suffix);
-    try{window.localStorage.setItem(key+'-space-signed-out',String(Date.now()));}catch{}
+    try{(key===base?window.localStorage:storage).setItem(key+'-space-signed-out',String(Date.now()));}catch{}
   }catch{}
 }
 async function verifyRecoveryCode(event){

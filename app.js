@@ -9,18 +9,32 @@ const startupAuthCallback=startupRecovery||/[&#](?:access_token|error|error_desc
 let recoveryRedirecting=startupRecovery;
 const DRAFT_MAX_AGE_MS=8*60*60*1000;
 const authMemory=new Map(),authPersistentMemory=new Map();
-// Draft text is tab-scoped. Authentication persists on this browser until sign-out.
+// The main account is remembered. Separate account tabs never share its tokens.
 const authTabStorage={
-  getItem(key){try{return sessionStorage.getItem(key)??authMemory.get(key)??null;}catch{return authMemory.get(key)??null;}},
+  getItem(key){try{return sessionStorage.getItem(key);}catch{return authMemory.get(key)??null;}},
   setItem(key,value){authMemory.set(key,value);try{sessionStorage.setItem(key,value);}catch{}},
   removeItem(key){authMemory.delete(key);try{sessionStorage.removeItem(key);}catch{}}
 };
-const authPersistentStorage={
+const authBrowserStorage={
   getItem(key){try{return localStorage.getItem(key);}catch{return authPersistentMemory.get(key)??null;}},
   setItem(key,value){authPersistentMemory.set(key,value);try{localStorage.setItem(key,value);}catch{}},
   removeItem(key){authPersistentMemory.delete(key);try{localStorage.removeItem(key);}catch{}}
 };
-const authStorageKey=configured?`sb-${new URL(cfg.supabaseUrl).hostname.split('.')[0]}-auth-token`:'';
+const authBaseStorageKey=configured?`sb-${new URL(cfg.supabaseUrl).hostname.split('.')[0]}-auth-token`:'';
+const separateAccountMarker=authBaseStorageKey+'-space-separate-mode';
+// Opening a confirmation link must not replace another remembered account.
+const separateAccountTab=/[?&]account=separate(?:&|$)/.test(location.search||'')||authTabStorage.getItem(separateAccountMarker)==='1'||!!(startupAuthCallback&&!startupRecovery&&authBrowserStorage.getItem(authBaseStorageKey));
+if(separateAccountTab)authTabStorage.setItem(separateAccountMarker,'1');
+const separateSessionKey=authBaseStorageKey+'-space-tab-session';
+// Supabase also broadcasts by storageKey. A fresh channel per document prevents
+// copied/duplicated tabs from changing one another's active account.
+const authStorageKey=separateAccountTab?authBaseStorageKey+'-tab-'+crypto.randomUUID():authBaseStorageKey;
+let accountNavigationPending=false;
+const authPersistentStorage=separateAccountTab?{
+  getItem(key){return accountNavigationPending?null:authTabStorage.getItem(key.startsWith(authStorageKey)?separateSessionKey+key.slice(authStorageKey.length):key);},
+  setItem(key,value){if(!accountNavigationPending)authTabStorage.setItem(key.startsWith(authStorageKey)?separateSessionKey+key.slice(authStorageKey.length):key,value);},
+  removeItem(key){authTabStorage.removeItem(key.startsWith(authStorageKey)?separateSessionKey+key.slice(authStorageKey.length):key);}
+}:authBrowserStorage;
 const SIGNED_OUT_KEY=authStorageKey?authStorageKey+'-space-signed-out':'';
 function clearSavedAuthTokens(){
   if(!authStorageKey)return;
@@ -29,7 +43,7 @@ function clearSavedAuthTokens(){
 function migrateSavedAuth(){
   if(!authStorageKey)return;
   if(authPersistentStorage.getItem(SIGNED_OUT_KEY))clearSavedAuthTokens();
-  else for(const suffix of ['', '-code-verifier', '-user']){
+  else if(!separateAccountTab)for(const suffix of ['', '-code-verifier', '-user']){
     const key=authStorageKey+suffix,tab=authTabStorage.getItem(key);
     if(!authPersistentStorage.getItem(key)&&tab)authPersistentStorage.setItem(key,tab);
     authTabStorage.removeItem(key);
@@ -37,7 +51,7 @@ function migrateSavedAuth(){
   authTabStorage.removeItem('space.auth.tab-clock.v1');
 }
 migrateSavedAuth();
-const db = configured && !startupRecovery ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
+const db = configured && !startupRecovery ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storageKey:authStorageKey, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
 let commerce=null,certification=null;
 let sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
@@ -277,7 +291,7 @@ function updateInboxIndicators(){
   bubble.hidden=!count;
   bell.classList.toggle('has-unread',count>0);
   $('#notificationBadge').textContent=count;
-  void window.InnovateXPush?.updateBadge(count);
+  if(!separateAccountTab)void window.InnovateXPush?.updateBadge(count);
 }
 async function refreshInboxUnreadCount(){
   if(networkOffline())return;
@@ -1239,7 +1253,7 @@ async function signedIn(newSession,showWelcome=false) {
   if(chatRealtime) { void db.removeChannel(chatRealtime).catch(console.error); chatRealtime=null; }
   if(memberNoticeRealtime) { void db.removeChannel(memberNoticeRealtime).catch(console.error); memberNoticeRealtime=null; }
   if(generation!==authGeneration)return;
-  void window.InnovateXPush?.authChanged(session?.user.id||null,db).then(()=>{if(page==='notifications')render();}).catch(error=>{console.error('Push state',error);if(!session)show(error.message);});
+  if(!separateAccountTab)void window.InnovateXPush?.authChanged(session?.user.id||null,db).then(()=>{if(page==='notifications')render();}).catch(error=>{console.error('Push state',error);if(!session)show(error.message);});
   if(session) {
     render();
     pendingEmail=''; sessionStorage.removeItem('innovatex.pendingEmail');sessionStorage.removeItem('innovatex.pendingAuthMode');
@@ -1413,6 +1427,8 @@ async function init() {
   db.auth.onAuthStateChange(handleAuthStateChange);
   const {data,error}=await db.auth.getSession();
   if(error){route();fail(error);}else await signedIn(data.session,!!data.session&&startupAuthCallback);
+  if(separateAccountTab&&!/[?&]account=separate(?:&|$)/.test(location.search||''))history.replaceState(null,'',accountTabUrl(true));
+  if(separateAccountTab&&!session&&!error&&!$('#modal').open)signInDialog('signin');
   window.addEventListener('focus',checkSessionExpiry);
   window.addEventListener('pageshow',event=>{if(sessionEnding&&!session)signInDialog('signin');else if(!checkSessionExpiry()&&event.persisted&&session)void signedIn(session);});
   document.addEventListener('visibilitychange',()=>{
@@ -1516,6 +1532,7 @@ function render() {
   const dmScrollTop=sameDmThread?previousDmStream.scrollTop:0;
   $('#workspaceSearchButton')?.setAttribute('aria-label',clubAccess()?'Search workspace':'Find a page');
   $('#authButton').textContent=session?'Sign out':'Join / sign in';
+  const accountsButton=$('#accountsButton');if(accountsButton){accountsButton.hidden=!session&&!separateAccountTab;accountsButton.title=separateAccountTab?'Accounts · separate account tab':'Accounts';accountsButton.setAttribute('aria-label',session?'Accounts: '+(session.user.email||me?.full_name||'signed in'):'Accounts');}
   const storeLink=$('#memberStoreButton');if(storeLink)storeLink.hidden=!clubAccess();
   $('#connectionLabel').textContent=!configured?'Setup required':session&&!approved()?'Application pending':investor()?'Investor portal live':session?'Member workspace live':'Public preview';
   $('#accountBadge').hidden=!approved();$('#accountBadge').innerHTML=approved()?roleBadge(me):'';
@@ -2985,6 +3002,7 @@ function adminDashboard(){
   <div class="section-heading"><h2>Recent administrator actions</h2></div><div class="card">${(cache.audit_events||[]).slice(0,8).map(a=>`<div class="list-item"><div><strong>${esc(a.action.replaceAll('_',' '))}</strong><small>${dateTime(a.created_at)} · ${esc(memberName(a.actor_id))}</small></div></div>`).join('')||'<p class="muted">No actions recorded yet.</p>'}</div>`;
 }
 function pushSettingsCard(){
+  if(separateAccountTab)return '<div class="notice"><strong>Separate account tab</strong><p>Messages and updates appear in this account’s notification inbox. Device and lock-screen alerts continue to use your main SPACE account.</p></div>';
   const state=window.InnovateXPush?.state();
   const needsAttention=state?.supported&&!state.subscribed&&state.permission!=='denied'&&!!state.reason;
   const status=pushBusy?'Updating…':!state?.supported?state?.installed?'Unavailable on this browser':'Install the web app first':state.permission==='denied'?'Blocked in device settings':state.subscribed?'On for this device':needsAttention?'Needs attention':'Off for this device';
@@ -2994,7 +3012,7 @@ function pushSettingsCard(){
   return `<div class="card push-settings"><span class="push-settings-icon" aria-hidden="true">${iconSvg('notifications')}</span><div><span class="eyebrow">PHONE &amp; DESKTOP</span><h2>Alerts on this device</h2><p>${esc(detail)}</p><strong class="push-status">${esc(status)}</strong>${guide}</div>${control}</div>`;
 }
 async function togglePushNotifications(){
-  if(!clubAccess()||pushBusy||!window.InnovateXPush)return;
+  if(separateAccountTab||!clubAccess()||pushBusy||!window.InnovateXPush)return;
   const owner=session.user.id,client=window.InnovateXPush;
   pushBusy=true;
   // Calling subscribe here preserves the button's user gesture for the browser permission request.
@@ -3123,12 +3141,28 @@ function clearPendingAuth(){
   pendingEmail='';pendingType='member';
   for(const key of ['pendingEmail','pendingType','pendingAuthMode'])authTabStorage.removeItem('innovatex.'+key);
 }
+function accountTabUrl(separate=false){
+  const target=new URL(location.origin+location.pathname);if(separate)target.searchParams.set('account','separate');target.hash='home';return target.href;
+}
+function accountsDialog(){
+  const email=session?.user.email||me?.email||'',name=me?.full_name||'SPACE account';
+  modal(`<span class="eyebrow">ACCOUNTS</span><h2>Choose how to sign in</h2><div class="account-current"><strong>${esc(name)}</strong>${email?`<span>${esc(email)}</span>`:''}${me?roleBadge(me):''}<small>${separateAccountTab?'This account stays in this tab. Refreshing keeps you signed in.':'Your main account is remembered on this browser.'}</small></div><div class="account-choices"><a class="button" href="${esc(accountTabUrl(true))}" target="_blank" rel="noopener noreferrer">Open another account in a new tab ↗</a><button class="button button-outline" type="button" data-action="separateAccountHere">Sign in to another account here</button>${separateAccountTab?`<button class="text-button" type="button" data-action="mainAccountHere">Return to my main account</button>`:''}</div><p class="hint">Keep your admin, teacher and member accounts open side by side. Each separate tab has its own sign-in and sign-out. Separate account sessions end when their tab is closed.</p>`);
+}
+function changeAccountTab(separate=true){
+  if(accountNavigationPending)return;
+  accountNavigationPending=true;authStateRequest++;authFormEpoch++;authGeneration++;sessionEnding=true;
+  void db?.auth.stopAutoRefresh().catch(console.error);
+  // Detach this tab without revoking the account in another window.
+  for(const suffix of ['', '-code-verifier','-user','-space-signed-out'])authTabStorage.removeItem(separateSessionKey+suffix);
+  if(separate)authTabStorage.setItem(separateAccountMarker,'1');else authTabStorage.removeItem(separateAccountMarker);
+  clearPendingAuth();location.assign(accountTabUrl(separate));
+}
 function signInDialog(mode='signin') {
   if(!configured)return show('Add your Supabase URL and publishable key to config.js first.');
   if(mode==='signup'&&pendingEmail&&pendingAuthMode==='signup')return codeDialog();
   pendingAuthMode=mode==='signup'?'signup':'signin';
   const signup=pendingAuthMode==='signup',destination=pendingProtectedPage?pendingProtectedPage.replace(/-/g,' '):'';
-  modal(`<span class="eyebrow">SPACE</span><h2>${signup?'Create your account':'Welcome back'}</h2>${destination?`<div class="auth-access-note"><strong>${esc(destination[0].toUpperCase()+destination.slice(1))} is in the club workspace.</strong><span>Sign in to continue, or create an account for administrator approval.</span></div>`:''}<div class="auth-switch"><button type="button" class="${signup?'':'selected'}" data-action="signin">I have an account</button><button type="button" class="${signup?'selected':''}" data-action="signup">Create an account</button></div><p class="muted">${signup?'Choose your account type and a password. Verify your email once, then submit your application for administrator approval.':'Sign in with your email address and password.'}</p><form id="editor" data-kind="login" data-auth-mode="${pendingAuthMode}" class="form-stack">${signup?select('I am applying as','application_type',['member','teacher','founder','investor'],pendingType):''}<div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>${passwordField('Password','password',signup)}${signup?passwordField('Confirm password','password_confirm',true):''}<p class="hint">${signup?'Use at least 8 characters. A longer, unique password is best.':'Previously used email codes? Choose “Set password” below using your existing email.'}</p><p class="auth-feedback" data-auth-feedback role="alert" hidden></p><button class="button" type="submit">${signup?'Create account':'Sign in'}</button></form>${signup?'':`<div class="otp-actions"><button type="button" class="text-button" data-action="forgotPassword">Forgot password / Set password</button></div>`}<p class="hint">You stay signed in on this browser until you sign out. Use Sign out when you finish on a shared device.</p>`);
+  modal(`<span class="eyebrow">SPACE</span><h2>${signup?'Create your account':'Welcome back'}</h2>${destination?`<div class="auth-access-note"><strong>${esc(destination[0].toUpperCase()+destination.slice(1))} is in the club workspace.</strong><span>Sign in to continue, or create an account for administrator approval.</span></div>`:''}<div class="auth-switch"><button type="button" class="${signup?'':'selected'}" data-action="signin">I have an account</button><button type="button" class="${signup?'selected':''}" data-action="signup">Create an account</button></div><p class="muted">${signup?'Choose your account type and a password. Verify your email once, then submit your application for administrator approval.':'Sign in with your email address and password.'}</p><form id="editor" data-kind="login" data-auth-mode="${pendingAuthMode}" class="form-stack">${signup?select('I am applying as','application_type',['member','teacher','founder','investor'],pendingType):''}<div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>${passwordField('Password','password',signup)}${signup?passwordField('Confirm password','password_confirm',true):''}<p class="hint">${signup?'Use at least 8 characters. A longer, unique password is best.':'Previously used email codes? Choose “Set password” below using your existing email.'}</p><p class="auth-feedback" data-auth-feedback role="alert" hidden></p><button class="button" type="submit">${signup?'Create account':'Sign in'}</button></form>${signup?'':`<div class="otp-actions"><button type="button" class="text-button" data-action="forgotPassword">Forgot password / Set password</button></div>`}<p class="hint">${separateAccountTab?"This tab has its own account. Refreshing keeps you signed in; closing the tab ends this separate session.":"You stay signed in on this browser until you sign out. Use Accounts to open a different account in a separate tab."}</p>`);
 }
 function codeDialog() {
   modal(`<span class="eyebrow">SPACE</span><h2>Verify your email</h2><p class="muted">Enter the one-time code sent to <strong>${esc(pendingEmail)}</strong>. After this, sign in with your email and password.</p><form id="editor" data-kind="verify" class="form-stack"><div class="field"><label for="code">Verification code</label><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" maxlength="10" placeholder="Your code" required></div><p class="auth-feedback" data-auth-feedback role="alert" hidden></p><button class="button" type="submit">Verify account</button></form><div class="otp-actions"><button type="button" class="text-button" data-action="resendCode">Resend code</button><button type="button" class="text-button" data-action="changeEmail">Use another email</button><button type="button" class="text-button" data-action="signin">Back to sign in</button></div><p class="hint">Only the latest code will work. Check your spam folder if you don't see the email. You can also follow the verification link if your email includes one.</p>`);
@@ -3160,7 +3194,7 @@ function projectDetail(id) {
     <div class="row" style="margin-top:22px"><h3>Project discussions</h3><button class="text-button" data-action="projectTopic" data-id="${esc(id)}">Start discussion +</button></div>${threads.length?threads.map(t=>`<div class="list-item"><div><strong>${esc(t.title)}</strong><small>${date(t.created_at)}</small></div><button class="text-button" data-action="topicDetail" data-id="${esc(t.id)}">Open →</button></div>`).join(''):'<p class="muted">No project discussions yet.</p>'}${advancedReady?`<div class="profile-action"><button class="button button-outline button-sm" data-action="spaceOpenProject" data-id="${esc(id)}">Task board & build updates →</button></div>`:''}${can?`<div class="profile-action">${button('Update project','projectEdit','button-outline button-sm')}</div>`:''}`);
 }
 function topicDetail(id) {const t=(cache.topics||[]).find(x=>x.id===id);if(!t)return;const list=(cache.replies||[]).filter(x=>x.topic_id===id).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));modal(`<span class="tag">${esc(t.category)}</span><h2 style="margin-top:15px">${esc(t.title)}</h2><p>${esc(t.body)}</p><h3>Replies (${list.length})</h3><div style="max-height:300px;overflow:auto">${list.map(r=>`<div class="reply"><strong>${esc((cache.profiles||[]).find(p=>p.id===r.author_id)?.full_name||'Member')}</strong><span class="subtle"> · ${dateTime(r.created_at)}</span><p>${esc(r.body)}</p></div>`).join('')||'<p class="muted">Be the first to reply.</p>'}</div><form id="editor" data-kind="reply" class="form-stack">${area('Your reply','body')}<button class="button" type="submit">Post reply</button></form>`);}
-async function signOut(){if(!session)return;const owner=session.user.id;authStateRequest++;loginWelcomePendingOwner=null;dismissLoginWelcome();if(window.InnovateXPush)void window.InnovateXPush.unsubscribe(owner,db).catch(console.error);expireSession('',false);if(sessionSignOutPromise)await sessionSignOutPromise;show('Signed out. See you soon.');}
+async function signOut(){if(!session)return;const owner=session.user.id;authStateRequest++;loginWelcomePendingOwner=null;dismissLoginWelcome();if(!separateAccountTab&&window.InnovateXPush)void window.InnovateXPush.unsubscribe(owner,db).catch(console.error);expireSession('',false);if(sessionSignOutPromise)await sessionSignOutPromise;show('Signed out. See you soon.');}
 
 async function deleteAnnouncement(id){
   if(!admin())return;
@@ -3179,6 +3213,9 @@ async function deleteAnnouncement(id){
 function actions(e) {
   if(session&&checkSessionExpiry()){e.preventDefault();return;}
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
+  if(action==='accounts')return accountsDialog();
+  if(action==='separateAccountHere')return changeAccountTab(true);
+  if(action==='mainAccountHere')return changeAccountTab(false);
   if(commerce?.action(action,id,el))return;
   if(certification?.action(action,id,el))return;
   if(advancedActions(action,id,el))return;
