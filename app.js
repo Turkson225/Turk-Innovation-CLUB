@@ -286,6 +286,7 @@ async function refreshInboxUnreadCount(){
 }
 // Normalize the legacy system approval title without rewriting member content.
 function notificationTitle(notification){
+  if(notification?.kind==='shop_order')return String(notification.title||'').replace(/: Confirmed$/,': Processing').replace(/: Collected$/,': Delivered');
   return notification?.kind==='membership'&&notification.title==='Your InnovateX application was approved'
     ?'Your SPACE application was approved':notification?.title||'';
 }
@@ -313,6 +314,7 @@ function receiveMemberNotification(notification){
   if(!known&&['role','role_assignment'].includes(notification.kind))void refreshVisiblePage({force:true}).then(()=>{if(page==='home'||page==='office')render();});
   if(page==='notifications')render();
   if(!known&&notification.kind==='shop_product'&&page==='shop')void refreshVisiblePage({force:true});
+  if(!known&&notification.target_type==='shop_order'&&['orders','shop-admin'].includes(page))void refreshVisiblePage({force:true});
   if(!known&&notification.kind==='direct_message'&&notification.target_type==='direct_message')void refreshDmAfterNotification(notification.target_id);
   if(!known&&!(page==='messages'&&activePeerId===notification.target_id&&!document.hidden&&notification.kind==='direct_message'))showMemberAlert(notification);
 }
@@ -3707,7 +3709,7 @@ async function openNotification(id,button) {
   setSidebarOpen(false);
   if(n.target_type==='role_change'){if(!commerce)throw Error('Reload SPACE to open role updates.');await commerce.openRole(n.target_id);return;}
   if(n.target_type==='shop_product'){close();location.hash='#shop/'+n.target_id;route();return;}
-  if(n.target_type==='shop_order'){close();location.hash='#orders/'+n.target_id;route();return;}
+  if(n.target_type==='shop_order'){commerce?.clearOrderRoute?.();close();location.hash='#orders/'+n.target_id;route();return;}
   if(n.kind==='membership'&&/^Your account role is now /i.test(n.title||'')){await refreshCurrentAccess();location.hash='#'+(commerce?.roleDestination()||'home');route();return;}
   if(n.target_type==='channel'){activeChannelId=n.target_id;location.hash='#channels';}
   else if(n.target_type==='project'){if(await openWorkspaceDestination('projects'))projectDetail(n.target_id);}
@@ -4796,6 +4798,7 @@ async function refreshCurrentAccess(){
 }
 commerce=window.SpaceClubShop?.create({db,esc,deadline:requestWithDeadline,modal,close,show,fail,render,
  get:()=>({session,me,page,admin:admin(),approved:approved(),club:clubAccess(),offices:ownOfficerRoles}),
+ openOrderId:()=>$('#modal').open?$('#modalContent .shop-order-detail[data-shop-order-id]')?.dataset.shopOrderId:'',
  go:target=>{setSidebarOpen(false);location.hash='#'+target;route();},refreshAccess:refreshCurrentAccess
 })||null;
 init();

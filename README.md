@@ -492,3 +492,18 @@ This frontend correction uses the existing shop RPCs; **no new SQL migration is 
 The platform name is **SPACE**. The organization is **TURK INNOVATION CLUB**. SPACE logos on the workspace, public pages, certificate verifier and offline screen have no “Engineering Club” subtitle. About and founder content identify the club by its actual name; transaction vouchers, shop records and completion certificates use TURK INNOVATION CLUB as the organization. The installed app name remains SPACE.
 
 The frontend maps the old certificate-verifier issuer label to the corrected club name, so existing deployments need no new SQL migration for the visible correction. The advanced-platform SQL also uses the corrected issuer for future installations. Public offline caches are versioned again so refreshed installations discard the older public branding.
+
+
+### Order tracking and purchase receipts — 16 October 2026
+
+Run the entire **`supabase/upgrade_shop_order_tracking.sql`** file in Supabase SQL Editor after the shop migration. No new secrets, Edge Functions, bucket or cron job is required. The migration is rerunnable and creates receipt snapshots for older paid, completed orders without sending historical notifications. This repository deploy cannot apply SQL to the live project automatically.
+
+**Administrator:** open **Manage shop → Orders → Update status**. Move the order to **Processing**, **Ready**, or **Delivered**, with a note the member can read. Delivered includes collection or handover and requires confirmation that the full payment was received, with a payment reference. Delivery creates one permanent purchase receipt, deducts stock once and creates one pending Finance income entry. Supporting evidence and administrator approval in Finance are still required for approved reports. Completed and cancelled orders cannot be reopened through this tool.
+
+**Members:** open **My orders → Track order** for the progress tracker, status history, messages and a Refresh status action. Stage updates send the buyer an existing club notification. The open order refreshes with normal page refresh/polling and incoming order notices; opening the same order notification again reloads the latest detail. Receipt-ready notices lead to the order's **View purchase receipt** action. Notification delivery uses the existing in-app/push setup and does not add email delivery.
+
+**Receipts:** the purchase receipt shows TURK INNOVATION CLUB as seller, a stable `TIC-R-…` receipt number, order reference, buyer details, immutable item/price snapshots, total paid, payment reference and timestamps. The buyer and administrators can open it and use **Print / Save PDF**. Administrators can choose **Send receipt to member** with a note, which adds a permanent history entry and a notification; it never charges again or creates another payment. Receipts are read-only to clients, including administrators, and other members cannot access them. Unpaid/cancelled orders cannot receive paid receipts.
+
+For compatibility, the stored states remain `confirmed` and `collected`; the interface, notification titles and CSV exports call them **Processing** and **Delivered**. The upgraded action RPC also accepts `processing` and `delivered` aliases, so existing orders, client versions and stock history remain valid. The frontend stage controls still work with the original shop RPC while the receipt migration is pending; administrators see the exact setup filename if they try opening an unavailable receipt.
+
+Checks cover status authorization, buyer notifications, receipt privacy/immutability, retry safety, old-order backfill without notification spam, closed Finance-period rollback and concurrent deliveries in PostgreSQL.

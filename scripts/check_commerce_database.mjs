@@ -36,8 +36,8 @@ let checks=0,p,v,order,notice;
 async function check(name,fn){await fn();checks++;console.log('PASS',name);}
 try{
  await prepareFixture(db);
- for(const name of ['upgrade_role_acknowledgements.sql','upgrade_club_shop.sql','upgrade_shop_product_alerts.sql'])await db.query(fs.readFileSync(new URL('../supabase/'+name,import.meta.url),'utf8'));
- await check('Migrations rerun without losing 2,000 accounts',async()=>{for(const name of ['upgrade_role_acknowledgements.sql','upgrade_club_shop.sql','upgrade_shop_product_alerts.sql'])await db.query(fs.readFileSync(new URL('../supabase/'+name,import.meta.url),'utf8'));assert.equal(await count('profiles'),2000);});
+ for(const name of ['upgrade_role_acknowledgements.sql','upgrade_club_shop.sql','upgrade_shop_product_alerts.sql','upgrade_shop_order_tracking.sql'])await db.query(fs.readFileSync(new URL('../supabase/'+name,import.meta.url),'utf8'));
+ await check('Migrations rerun without losing 2,000 accounts',async()=>{for(const name of ['upgrade_role_acknowledgements.sql','upgrade_club_shop.sql','upgrade_shop_product_alerts.sql','upgrade_shop_order_tracking.sql'])await db.query(fs.readFileSync(new URL('../supabase/'+name,import.meta.url),'utf8'));assert.equal(await count('profiles'),2000);});
  await check('Only administrators can assign roles and every change carries the administrator note',async()=>{
   const args={p_user:uuid(11),p_role:'teacher',p_tracks:['AI & Machine Learning'],p_note:'Lead the practical AI workshops, please.'};
   await denied(()=>rpc(10,'space_assign_account_role',args));await rpc(1,'space_assign_account_role',args);
@@ -68,7 +68,6 @@ try{
   await check('Concurrent duplicate checkout reserves and creates only once',async()=>{const pp=await product('Synthetic retry kit'),vv=await option(pp,10),token=crypto.randomUUID();const ids=await Promise.all(Array.from({length:8},()=>buy(31,vv,1,7500,token)));assert.equal(new Set(ids).size,1);assert.equal(await count('space_shop_stock_moves',"variant_id=$1 and kind='reserved'",[vv]),1);});
   await check('Cancellation racing collection has one final outcome and consistent stock',async()=>{const pp=await product('Synthetic collection race'),vv=await option(pp,5),oo=await buy(32,vv);const results=await Promise.allSettled([act(32,oo,'cancelled'),act(1,oo,'collected','SYNTHETIC-RACE')]);assert.equal(results.filter(x=>x.status==='fulfilled').length,1);const o=await rpc(1,'space_shop_order',{p_order:oo}),r=(await db.query('select * from space_shop_variants where id=$1',[vv])).rows[0];assert.equal(r.reserved,0);assert.equal(r.on_hand,o.status==='collected'?4:5);assert.equal(await count('finance_entries','id=$1',[o.finance_entry_id||null]),o.status==='collected'?1:0);});
  }else console.log('INFO Concurrency scenarios run in CI against disposable PostgreSQL 17.');
- await check('A closed finance period rolls collection and stock movements back together',async()=>{const pp=await product('Synthetic closed-period item'),vv=await option(pp,5),oo=await buy(40,vv);await db.query("insert into finance_monthly_reviews(month,opening_balance,income,expense,closing_balance,actual_balance,difference,approved_count,rejected_count,note,reviewed_by) values(date_trunc('month',current_date)::date,0,0,0,0,0,0,0,0,'Synthetic closed period for rollback check',$1)",[uuid(1)]);await denied(()=>act(1,oo,'collected','SYNTHETIC-CLOSED'),/period is closed/i);const o=await rpc(1,'space_shop_order',{p_order:oo}),r=(await db.query('select * from space_shop_variants where id=$1',[vv])).rows[0];assert.equal(o.status,'pending');assert.equal(o.finance_entry_id,null);assert.equal(r.on_hand,5);assert.equal(r.reserved,1);assert.equal(await count('space_shop_stock_moves',"order_id=$1 and kind='collected'",[oo]),0);});
  await check('Anonymous roles have no table or feature-function privileges',async()=>{assert.equal((await db.query("select has_table_privilege('anon','public.space_shop_orders','select') allowed")).rows[0].allowed,false);for(const signature of ['public.space_shop_place_order(jsonb,text,text,text,uuid,bigint)','public.space_acknowledge_role(uuid)'])assert.equal((await db.query("select has_function_privilege('anon',$1,'execute') allowed",[signature])).rows[0].allowed,false);});
  await check('A published product notifies every approved club member once it has a priced in-stock option',async()=>{
   await db.query("set session_replication_role=replica; update profiles set membership_status='pending' where id='"+uuid(1998)+"'; set session_replication_role=origin");
@@ -107,5 +106,49 @@ try{
   await submit('shopVariantForm',[['id',saved.variants[0].id],['product',saved.id],['sku','UI-STARTER-KIT'],['label','Advanced classroom kit'],['price','145.75'],['stock','12'],['unit','kits'],['low','3'],['active','on'],['note','Recounted stock and updated kit price']]);
   result=await rpc(10,'space_shop_catalog',{p_search:'Synthetic updated classroom kit'});assert.equal(result.rows[0].variants.length,1);assert.equal(result.rows[0].variants[0].id,saved.variants[0].id);assert.equal(result.rows[0].variants[0].price_cents,14575);assert.equal(result.rows[0].variants[0].on_hand,12);assert(modal.includes('Price and stock saved with history.'));assert.equal(await count('space_shop_stock_moves',"variant_id=$1 and kind='recount'",[saved.variants[0].id]),1);
  });
+ await check('Processing, Ready and Delivered updates notify only the buyer and administrators',async()=>{
+  const pp=await product('Synthetic tracking item'),vv=await option(pp,5),oo=await buy(51,vv);
+  await act(1,oo,'processing');assert.equal((await rpc(51,'space_shop_order',{p_order:oo})).status,'confirmed');
+  assert.equal(await rpc(51,'space_shop_order_receipt',{p_order:oo}),null);
+  assert.equal(await count('notifications',"user_id=$1 and target_id=$2 and title like '%: Processing'",[uuid(51),oo]),1);
+  await act(1,oo,'ready');await denied(()=>act(1,oo,'processing'),/backwards/);
+  await denied(()=>act(51,oo,'delivered','FORGED'),/administrator/i);
+  await denied(()=>act(1,oo,'delivered'),/payment/);
+  assert.equal(await count('space_shop_receipts','order_id=$1',[oo]),0);
+  await act(1,oo,'delivered','SYNTHETIC-TRACKING-PAID');
+  const r=await rpc(51,'space_shop_order_receipt',{p_order:oo});assert(r);assert.equal(r.seller_name,'TURK INNOVATION CLUB');assert.equal(r.total_cents,7500);assert.equal(r.payment_reference,'SYNTHETIC-TRACKING-PAID');assert.equal(r.items[0].unit_price_cents,7500);assert.equal(r.buyer_name,'Synthetic buyer 51');assert(r.receipt_number.startsWith('TIC-R-'));assert.equal(r.finance_entry_id,undefined);assert.equal(r.buyer_id,undefined);
+  assert.equal(await count('notifications',"user_id=$1 and target_id=$2 and title like '%: Delivered'",[uuid(51),oo]),1);
+  assert.equal(await count('notifications',"user_id=$1 and target_id=$2 and title like 'Purchase receipt ready:%'",[uuid(51),oo]),1);
+  assert.equal((await as(52,'select * from notifications where target_id=$1',[oo])).rows.length,0);
+  const before=await count('notifications','target_id=$1',[oo]);await act(1,oo,'delivered','DIFFERENT-RETRY-REF');
+  assert.equal(await count('space_shop_receipts','order_id=$1',[oo]),1);assert.equal(await count('notifications','target_id=$1',[oo]),before);assert.equal((await rpc(51,'space_shop_order_receipt',{p_order:oo})).payment_reference,'SYNTHETIC-TRACKING-PAID');
+ });
+ await check('Receipt snapshots are immutable, private and cannot be issued by a member',async()=>{
+  const receipts=(await as(51,'select * from space_shop_receipts')).rows;assert.equal(receipts.length,1);const r=receipts[0];
+  assert.equal(await rpc(52,'space_shop_order_receipt',{p_order:r.order_id}),null);assert.equal((await as(52,'select * from space_shop_receipts')).rows.length,0);
+  assert.equal((await rpc(1,'space_shop_order_receipt',{p_order:r.order_id})).receipt_number,r.receipt_number);
+  await denied(()=>rpc(51,'space_shop_send_receipt',{p_order:r.order_id,p_note:'Forged receipt notice'}));
+  await denied(()=>rpc(1,'space_shop_record_receipt',{p_order:r.order_id,p_notify:true}),/permission/);
+  for(const sql of ["update space_shop_receipts set total_cents=1",'delete from space_shop_receipts',"insert into space_shop_receipts default values"])await denied(()=>as(1,sql),/permission/);
+  await assert.rejects(()=>db.query('delete from space_shop_receipts where id=$1',[r.id]),/history|immutable|cannot|append|permanent/i);
+  const before=await count('notifications','user_id=$1 and target_id=$2',[uuid(51),r.order_id]);
+  const sent=await rpc(1,'space_shop_send_receipt',{p_order:r.order_id,p_note:'Thank you. Keep this purchase receipt.'});assert.equal(sent,r.id);assert.equal(await count('space_shop_receipts','order_id=$1',[r.order_id]),1);assert.equal(await count('notifications','user_id=$1 and target_id=$2',[uuid(51),r.order_id]),before+1);
+  assert.equal(await count('space_shop_order_events',"order_id=$1 and status='receipt' and note like '%Thank you.%'",[r.order_id]),1);
+  const item=r.items[0],variant=(await db.query('select * from space_shop_variants where sku=$1',[item.sku])).rows[0];await option(variant.product_id,10,9900,variant.id);assert.equal((await rpc(51,'space_shop_order_receipt',{p_order:r.order_id})).items[0].unit_price_cents,7500);
+  assert.equal((await db.query("select has_table_privilege('anon','public.space_shop_receipts','select') allowed")).rows[0].allowed,false);
+  assert.equal((await db.query("select has_function_privilege('anon','public.space_shop_order_receipt(uuid)','execute') allowed")).rows[0].allowed,false);
+ });
+ await check('Receipt sharing rejects unpaid orders and migration reruns backfill paid history without alerts',async()=>{
+  const pp=await product('Synthetic historic receipt'),vv=await option(pp,5),oo=await buy(53,vv);
+  await denied(()=>rpc(1,'space_shop_send_receipt',{p_order:oo,p_note:'Too early to issue'}),/payment|delivery/i);
+  await db.query('alter table public.space_shop_orders disable trigger shop_receipt_after_delivery');try{await act(1,oo,'delivered','SYNTHETIC-HISTORIC');}finally{await db.query('alter table public.space_shop_orders enable trigger shop_receipt_after_delivery');}
+  assert.equal(await rpc(53,'space_shop_order_receipt',{p_order:oo}),null);const before=await count('notifications');
+  const migration=fs.readFileSync(new URL('../supabase/upgrade_shop_order_tracking.sql',import.meta.url),'utf8');await db.query(migration);assert(await rpc(53,'space_shop_order_receipt',{p_order:oo}));assert.equal(await count('notifications'),before);await db.query(migration);assert.equal(await count('space_shop_receipts','order_id=$1',[oo]),1);assert.equal(await count('notifications'),before);
+ });
+ if(native)await check('Concurrent delivery retries issue one receipt and one stock deduction',async()=>{
+  const pp=await product('Synthetic receipt delivery race'),vv=await option(pp,5),oo=await buy(54,vv);await Promise.all([act(1,oo,'delivered','SYNTHETIC-DELIVERY'),act(1,oo,'delivered','SYNTHETIC-DELIVERY')]);
+  assert.equal(await count('space_shop_receipts','order_id=$1',[oo]),1);assert.equal(await count('space_shop_stock_moves',"order_id=$1 and kind='collected'",[oo]),1);const o=await rpc(1,'space_shop_order',{p_order:oo});assert.equal(await count('finance_entries','id=$1',[o.finance_entry_id]),1);assert.equal((await db.query('select on_hand from space_shop_variants where id=$1',[vv])).rows[0].on_hand,4);
+ });
+ await check('A closed finance period rolls collection and stock movements back together',async()=>{const pp=await product('Synthetic closed-period item'),vv=await option(pp,5),oo=await buy(40,vv);await db.query("insert into finance_monthly_reviews(month,opening_balance,income,expense,closing_balance,actual_balance,difference,approved_count,rejected_count,note,reviewed_by) values(date_trunc('month',current_date)::date,0,0,0,0,0,0,0,0,'Synthetic closed period for rollback check',$1)",[uuid(1)]);await denied(()=>act(1,oo,'collected','SYNTHETIC-CLOSED'),/period is closed/i);const o=await rpc(1,'space_shop_order',{p_order:oo}),r=(await db.query('select * from space_shop_variants where id=$1',[vv])).rows[0];assert.equal(o.status,'pending');assert.equal(o.finance_entry_id,null);assert.equal(r.on_hand,5);assert.equal(r.reserved,1);assert.equal(await count('space_shop_stock_moves',"order_id=$1 and kind='collected'",[oo]),0);});
  console.log(`${checks}/${checks} shop and role database checks passed (${native?'PostgreSQL':'PGlite'}).`);
 }finally{await dispose?.();}

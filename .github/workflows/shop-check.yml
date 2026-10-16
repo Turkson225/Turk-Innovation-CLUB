@@ -5,6 +5,7 @@ on:
     paths:
       - 'supabase/upgrade_club_shop.sql'
       - 'supabase/upgrade_shop_product_alerts.sql'
+      - 'supabase/upgrade_shop_order_tracking.sql'
       - 'supabase/upgrade_role_acknowledgements.sql'
       - 'scripts/check_commerce_database.mjs'
       - 'club-commerce.js'
