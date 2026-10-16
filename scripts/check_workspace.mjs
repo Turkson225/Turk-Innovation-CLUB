@@ -964,6 +964,9 @@ test('Opening a role notification does not wait for a slow read-status write',as
 test('An unavailable notification destination restores its Open button and reports the failure',async()=>{
  const h=harness();h.context.console={...console,error(){}};h.run("setSidebarOpen=()=>{};commerce={openRole:async()=>{throw Error('Role notice unavailable');}};cache.notifications=[{id:'notice',target_type:'role_change',target_id:'role-note',read_at:'already'}];");const button=node({textContent:'Open →'});await h.exec("openNotification('notice',qaArgs)",button);assert.equal(button.disabled,false);assert.equal(button.textContent,'Open →');assert.equal(h.elements.get('#toast').textContent,'Role notice unavailable');
 });
+test('New members can open the shop and product alerts before selecting learning courses',async()=>{
+ const h=harness();h.run("learningChoicesReady=true;ownLearningTracks=[];authReady=true;workspaceHydrating=true;setSidebarOpen=()=>{};location.hash='#shop/product-one';route();");assert.equal(h.run('page'),'shop');h.run("cache.notifications=[{id:'new-product',target_type:'shop_product',target_id:'product-two',read_at:'already'}];");await h.exec("openNotification('new-product',qaArgs)",node({textContent:'Open →'}));assert.equal(h.context.location.hash,'#shop/product-two');assert.equal(h.run('page'),'shop');
+});
 let failed=0;
 for(const t of tests){try{await t.fn();console.log('PASS',t.name);}catch(e){failed++;console.log('FAIL',t.name,'\n',e.stack);}}
 console.log(`${tests.length-failed}/${tests.length} checks passed`);

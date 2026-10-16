@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - 'supabase/upgrade_club_shop.sql'
+      - 'supabase/upgrade_shop_product_alerts.sql'
       - 'supabase/upgrade_role_acknowledgements.sql'
       - 'scripts/check_commerce_database.mjs'
       - 'scripts/load_test_fixture.mjs'

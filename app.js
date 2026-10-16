@@ -295,7 +295,7 @@ function showMemberAlert(notification){
   if(memberAlertNotificationId===notification.id&&!$('#memberAlert').hidden)return;
   memberDeferredNotification=null;
   memberAlertNotificationId=notification.id;
-  $('#memberAlertTitle').textContent=notification.kind==='direct_message'?'New direct message':'New club update';
+  $('#memberAlertTitle').textContent=notification.kind==='direct_message'?'New direct message':notification.kind==='shop_product'?'New in SPACE shop':'New club update';
   $('#memberAlertMessage').textContent=String(notificationTitle(notification)||'Open Notifications for the latest update.').slice(0,180);
   $('#memberAlert').hidden=false;
   void spacePlayNotificationSound();
@@ -312,6 +312,7 @@ function receiveMemberNotification(notification){
   updateInboxIndicators();void refreshInboxUnreadCount();
   if(!known&&['role','role_assignment'].includes(notification.kind))void refreshVisiblePage({force:true}).then(()=>{if(page==='home'||page==='office')render();});
   if(page==='notifications')render();
+  if(!known&&notification.kind==='shop_product'&&page==='shop')void refreshVisiblePage({force:true});
   if(!known&&notification.kind==='direct_message'&&notification.target_type==='direct_message')void refreshDmAfterNotification(notification.target_id);
   if(!known&&!(page==='messages'&&activePeerId===notification.target_id&&!document.hidden&&notification.kind==='direct_message'))showMemberAlert(notification);
 }
@@ -1445,7 +1446,7 @@ function setSidebarOpen(open){
 }
 function route() {
   const requested=location.hash.slice(1).split('/')[0] || 'home';page=pages.includes(requested)?requested:'home';
-  if(learningSelectionRequired()&&!['courses','privacy','application','role-updates','notifications'].includes(page)){page='courses';history.replaceState(null,'','#courses');}
+  if(learningSelectionRequired()&&!['courses','privacy','application','role-updates','notifications','shop','cart','orders'].includes(page)){page='courses';history.replaceState(null,'','#courses');}
   if(page==='classroom')activeCourseId=location.hash.slice(1).split('/')[1]||activeCourseId;
   if(page==='meeting-room')activeMeetingId=location.hash.slice(1).split('/')[1]||activeMeetingId;
   if(page==='project-board')activeProject=location.hash.slice(1).split('/')[1]||activeProject;
@@ -1519,7 +1520,7 @@ function render() {
   }
   const views={...Object.fromEntries(['shop','cart','orders','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
-  $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'?commerce?.homeRoleBanner()||'':'')+views[page]();
+  $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'?(commerce?.homeRoleBanner()||'')+(commerce?.homeShopBanner()||''):'')+views[page]();
   commerce?.afterRender();
   if(page==='members'){hydrateDirectoryPhotos();openLinkedMemberProfile();}
   if(memberFocus&&page==='members'&&!$('#modal')?.open){const search=$('#memberSearch');search?.focus({preventScroll:true});search?.setSelectionRange?.(memberFocus.start,memberFocus.end);}
@@ -3704,6 +3705,7 @@ async function openNotification(id,button) {
   if(!n.read_at)void markNotification(id);
   setSidebarOpen(false);
   if(n.target_type==='role_change'){if(!commerce)throw Error('Reload SPACE to open role updates.');await commerce.openRole(n.target_id);return;}
+  if(n.target_type==='shop_product'){close();location.hash='#shop/'+n.target_id;route();return;}
   if(n.target_type==='shop_order'){close();location.hash='#orders/'+n.target_id;route();return;}
   if(n.kind==='membership'&&/^Your account role is now /i.test(n.title||'')){await refreshCurrentAccess();location.hash='#'+(commerce?.roleDestination()||'home');route();return;}
   if(n.target_type==='channel'){activeChannelId=n.target_id;location.hash='#channels';}

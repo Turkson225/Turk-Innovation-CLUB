@@ -35,8 +35,8 @@ let checks=0,p,v,order,notice;
 async function check(name,fn){await fn();checks++;console.log('PASS',name);}
 try{
  await prepareFixture(db);
- for(const name of ['upgrade_role_acknowledgements.sql','upgrade_club_shop.sql'])await db.query(fs.readFileSync(new URL('../supabase/'+name,import.meta.url),'utf8'));
- await check('Migrations rerun without losing 2,000 accounts',async()=>{for(const name of ['upgrade_role_acknowledgements.sql','upgrade_club_shop.sql'])await db.query(fs.readFileSync(new URL('../supabase/'+name,import.meta.url),'utf8'));assert.equal(await count('profiles'),2000);});
+ for(const name of ['upgrade_role_acknowledgements.sql','upgrade_club_shop.sql','upgrade_shop_product_alerts.sql'])await db.query(fs.readFileSync(new URL('../supabase/'+name,import.meta.url),'utf8'));
+ await check('Migrations rerun without losing 2,000 accounts',async()=>{for(const name of ['upgrade_role_acknowledgements.sql','upgrade_club_shop.sql','upgrade_shop_product_alerts.sql'])await db.query(fs.readFileSync(new URL('../supabase/'+name,import.meta.url),'utf8'));assert.equal(await count('profiles'),2000);});
  await check('Only administrators can assign roles and every change carries the administrator note',async()=>{
   const args={p_user:uuid(11),p_role:'teacher',p_tracks:['AI & Machine Learning'],p_note:'Lead the practical AI workshops, please.'};
   await denied(()=>rpc(10,'space_assign_account_role',args));await rpc(1,'space_assign_account_role',args);
@@ -69,5 +69,23 @@ try{
  }else console.log('INFO Concurrency scenarios run in CI against disposable PostgreSQL 17.');
  await check('A closed finance period rolls collection and stock movements back together',async()=>{const pp=await product('Synthetic closed-period item'),vv=await option(pp,5),oo=await buy(40,vv);await db.query("insert into finance_monthly_reviews(month,opening_balance,income,expense,closing_balance,actual_balance,difference,approved_count,rejected_count,note,reviewed_by) values(date_trunc('month',current_date)::date,0,0,0,0,0,0,0,0,'Synthetic closed period for rollback check',$1)",[uuid(1)]);await denied(()=>act(1,oo,'collected','SYNTHETIC-CLOSED'),/period is closed/i);const o=await rpc(1,'space_shop_order',{p_order:oo}),r=(await db.query('select * from space_shop_variants where id=$1',[vv])).rows[0];assert.equal(o.status,'pending');assert.equal(o.finance_entry_id,null);assert.equal(r.on_hand,5);assert.equal(r.reserved,1);assert.equal(await count('space_shop_stock_moves',"order_id=$1 and kind='collected'",[oo]),0);});
  await check('Anonymous roles have no table or feature-function privileges',async()=>{assert.equal((await db.query("select has_table_privilege('anon','public.space_shop_orders','select') allowed")).rows[0].allowed,false);for(const signature of ['public.space_shop_place_order(jsonb,text,text,text,uuid,bigint)','public.space_acknowledge_role(uuid)'])assert.equal((await db.query("select has_function_privilege('anon',$1,'execute') allowed",[signature])).rows[0].allowed,false);});
+ await check('A published product notifies every approved club member once it has a priced in-stock option',async()=>{
+  await db.query("set session_replication_role=replica; update profiles set membership_status='pending' where id='"+uuid(1998)+"'; set session_replication_role=origin");
+  const pp=await product('Synthetic announcement test',false),vv=await option(pp,0);
+  const notices=()=>count('notifications',"kind='shop_product' and target_id=$1",[pp]);assert.equal(await notices(),0);
+  const publish=()=>rpc(1,'space_shop_save_product',{p_id:pp,p_title:'Synthetic announcement test',p_category:'Merchandise',p_description:'Synthetic product for announcements.',p_image:null,p_published:true});
+  await publish();assert.equal(await notices(),0);await option(pp,4,7500,vv);
+  const expected=await count('profiles',"membership_status='approved' and role in ('member','teacher','founder','admin') and id<>$1",[uuid(1)]);
+  assert.equal(await notices(),expected);assert.equal(await count('space_shop_product_announcements','product_id=$1',[pp]),1);
+  const own=(await as(15,"select * from notifications where kind='shop_product' and target_id=$1",[pp])).rows;assert.equal(own.length,1);assert.equal(own[0].target_type,'shop_product');assert(own[0].title.includes('Synthetic announcement test'));
+  for(const n of [13,1998])assert.equal((await as(n,"select * from notifications where kind='shop_product' and target_id=$1",[pp])).rows.length,0);
+  await publish();await option(pp,6,9000,vv);assert.equal(await notices(),expected);
+  await rpc(1,'space_shop_save_product',{p_id:pp,p_title:'Edited announcement title',p_category:'Merchandise',p_description:'Synthetic product for announcements.',p_image:null,p_published:false});await publish();assert.equal(await notices(),expected);
+  assert.equal((await as(15,'select * from space_shop_product_announcements')).rows.length,0);
+  await denied(()=>rpc(15,'space_shop_announce_product',{p_product:pp}),/permission/);
+  await denied(()=>as(15,'delete from space_shop_product_announcements'),/permission/);
+ });
+ await check('Installing or rerunning product alerts never broadcasts the existing catalog',async()=>{const before=await count('notifications',"kind='shop_product'");await db.query(fs.readFileSync(new URL('../supabase/upgrade_shop_product_alerts.sql',import.meta.url),'utf8'));assert.equal(await count('notifications',"kind='shop_product'"),before);});
+ if(native)await check('Concurrent stock options publish only one alert per member',async()=>{const pp=await product('Synthetic simultaneous announcement');await Promise.all(['A','B'].map(sku=>rpc(1,'space_shop_save_variant',{p_id:null,p_product:pp,p_sku:'ANNOUNCE-'+sku,p_label:sku,p_price:7500,p_stock:3,p_unit:'kits',p_low:1,p_active:true,p_note:'Concurrent synthetic stock'})));const expected=await count('profiles',"membership_status='approved' and role in ('member','teacher','founder','admin') and id<>$1",[uuid(1)]);assert.equal(await count('notifications',"kind='shop_product' and target_id=$1",[pp]),expected);assert.equal(await count('space_shop_product_announcements','product_id=$1',[pp]),1);});
  console.log(`${checks}/${checks} shop and role database checks passed (${native?'PostgreSQL':'PGlite'}).`);
 }finally{await dispose?.();}
