@@ -1,0 +1,34 @@
+name: Check automatic course certificates
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/upgrade_automatic_course_certificates.sql'
+      - 'scripts/check_course_certificates_database.mjs'
+      - '.github/workflows/certificates-check.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  database:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: certificate-disposable-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install isolated PostgreSQL client
+        run: npm install --prefix "$RUNNER_TEMP/certificate-check" --no-package-lock --ignore-scripts pg@8.16.3
+      - name: Verify signatures, automatic issuance, privacy and concurrent confirmations
+        env:
+          SPACE_CERTIFICATE_DISPOSABLE: '1'
+          SPACE_CERTIFICATE_TEST_DATABASE_URL: postgresql://postgres:certificate-disposable-only@127.0.0.1:5432/postgres
+        run: SPACE_PG_MODULE="$RUNNER_TEMP/certificate-check/node_modules/pg" node scripts/check_course_certificates_database.mjs

@@ -1,0 +1,8 @@
+.certificate-canvas-wrap{width:100%;overflow:auto;background:#000;border-radius:10px;margin:16px 0}
+.certificate-canvas-wrap canvas{display:block;width:100%;height:auto}
+dialog:has(.certificate-document){width:min(1050px,calc(100vw - 20px));max-height:94dvh;overflow:auto}
+.certificate-document .section-heading{padding-right:28px}.certificate-controls{position:sticky;bottom:-28px;margin:0 -12px;padding:14px 12px;background:var(--white);border-top:1px solid var(--line);z-index:1}
+#certificateCompleteForm label:has([type=checkbox]),#certificateSettingsForm label:has([type=checkbox]){font-size:13px;line-height:1.6}
+#certificateCompleteForm input[type=checkbox],#certificateSettingsForm input[type=checkbox]{width:18px;height:18px;vertical-align:middle;margin-right:6px}
+#certificateSignature{max-width:100%;font-size:14px}.certificate-completion-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
+@media(max-width:760px){#certificateCompleteForm input,#certificateCompleteForm select,#certificateCompleteForm textarea,#certificateSettingsForm input{font-size:16px}.certificate-document .profile-buttons{gap:10px}.certificate-controls{bottom:-20px}.certificate-canvas-wrap{border-radius:6px}}

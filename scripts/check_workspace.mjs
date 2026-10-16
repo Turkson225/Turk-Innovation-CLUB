@@ -1041,6 +1041,12 @@ test('A recovery auth event never hydrates the workspace while its redirect is q
 test('Password auth and reset fields never enter the workspace autosave path',()=>{
  const h=passwordHarness();for(const kind of ['login','verify','passwordResetRequest'])assert.equal(h.exec('spaceDraftKey(qaArgs)',{dataset:{kind}}),'');
 });
+test('A certificate notification opens the fresh certificate directly without relying on classroom cache',async()=>{
+ const h=harness();h.run("setSidebarOpen=()=>{};let openedCertificate='';certification={open:async id=>{openedCertificate=id;}};cache.notifications=[{id:'certificate-notice',target_type:'certificate',target_id:'award',read_at:'already'}];");await h.exec("openNotification('certificate-notice',qaArgs)",node({textContent:'Open'}));assert.equal(h.run('openedCertificate'),'award');
+});
+test('A completed learning course exposes its own certificate download action',()=>{
+ const h=harness();h.run("cache.course_completions=[{course_id:'learning-course',learner_id:'self',completed_at:'2026-10-16',assessed_by:'teacher'}];");const html=h.exec('courseFeedback(qaArgs)',{id:'learning-course'});assert(html.includes('data-action="certificateCourse"'));assert(html.includes('data-id="learning-course"'));
+});
 let failed=0;
 for(const t of tests){try{await t.fn();console.log('PASS',t.name);}catch(e){failed++;console.log('FAIL',t.name,'\n',e.stack);}}
 console.log(`${tests.length-failed}/${tests.length} checks passed`);
