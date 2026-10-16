@@ -478,3 +478,10 @@ The add-product form now includes the opening GHS price, stock quantity, option 
 **Store / View products** is a main sidebar link and Home shortcut, with a Store button in the header. **Manage shop** shows each product’s Draft/Published status, a direct Publish action and a **View member store** link. Filters reset after product saves and when moving between management and member browsing, so a previous search or category cannot hide the new product. Older drafts are preserved; publish them individually when ready. Editing a product with no option now allows its first price and stock to be entered in the same form.
 
 This correction uses the existing shop migration/functions and needs **no additional SQL migration**. Reload SPACE to download it. The existing `upgrade_shop_product_alerts.sql` is still needed only for new-product notifications. A database regression test now runs the real add-product handler against the SQL fixture and checks that a different approved member can retrieve its published product, price and quantity.
+
+
+### Product update submission fix — 16 October 2026
+
+The product and stock forms contained hidden controls named `id`. Browser form named-property access can expose that control through `form.id`, so the old submission router could miss the form and allow a normal page navigation instead of calling the save RPC. Both stages of the shop submission router now read the form's `id` attribute directly. Product and stock forms also display saving/errors inside the dialog, and successful updates show a visible confirmation beside the refreshed product details. If the write succeeds but detail refresh fails, the dialog acknowledges the saved change and offers **Reload product** without retrying the write.
+
+This frontend correction uses the existing shop RPCs; **no new SQL migration is required**. Administrator-only management and owner-only orders are unchanged. Regression checks model the browser's hidden-ID collision and exercise product creation, product edits, price/stock updates, error feedback and member readback against the isolated PostgreSQL fixture.
