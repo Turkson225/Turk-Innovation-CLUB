@@ -485,3 +485,10 @@ This correction uses the existing shop migration/functions and needs **no additi
 The product and stock forms contained hidden controls named `id`. Browser form named-property access can expose that control through `form.id`, so the old submission router could miss the form and allow a normal page navigation instead of calling the save RPC. Both stages of the shop submission router now read the form's `id` attribute directly. Product and stock forms also display saving/errors inside the dialog, and successful updates show a visible confirmation beside the refreshed product details. If the write succeeds but detail refresh fails, the dialog acknowledges the saved change and offers **Reload product** without retrying the write.
 
 This frontend correction uses the existing shop RPCs; **no new SQL migration is required**. Administrator-only management and owner-only orders are unchanged. Regression checks model the browser's hidden-ID collision and exercise product creation, product edits, price/stock updates, error feedback and member readback against the isolated PostgreSQL fixture.
+
+
+### Platform and club identity — 16 October 2026
+
+The platform name is **SPACE**. The organization is **TURK INNOVATION CLUB**. SPACE logos on the workspace, public pages, certificate verifier and offline screen have no “Engineering Club” subtitle. About and founder content identify the club by its actual name; transaction vouchers, shop records and completion certificates use TURK INNOVATION CLUB as the organization. The installed app name remains SPACE.
+
+The frontend maps the old certificate-verifier issuer label to the corrected club name, so existing deployments need no new SQL migration for the visible correction. The advanced-platform SQL also uses the corrected issuer for future installations. Public offline caches are versioned again so refreshed installations discard the older public branding.

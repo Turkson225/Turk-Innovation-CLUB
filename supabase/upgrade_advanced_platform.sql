@@ -107,7 +107,7 @@ create or replace function public.space_revoke_certificate(p_certificate uuid,p_
  insert into public.audit_events(actor_id,action,target_type,target_id) values(auth.uid(),'certificate_revoked','certificate',p_certificate);
 end $$;
 create or replace function public.space_verify_certificate(p_code text) returns jsonb language sql stable security definer set search_path='' as $$
- select jsonb_build_object('code',c.public_code,'recipient_initials',(select string_agg(left(x,1)||'.',' ') from regexp_split_to_table(c.recipient_name,'\s+') x where x<>''),'course',c.course_title,'issued_at',c.issued_at,'status',case when c.revoked_at is null then 'valid' else 'revoked' end,'issuer','SPACE Engineering Club') from public.space_certificates c where c.public_code::text=p_code and c.public_verification
+ select jsonb_build_object('code',c.public_code,'recipient_initials',(select string_agg(left(x,1)||'.',' ') from regexp_split_to_table(c.recipient_name,'\s+') x where x<>''),'course',c.course_title,'issued_at',c.issued_at,'status',case when c.revoked_at is null then 'valid' else 'revoked' end,'issuer','TURK INNOVATION CLUB') from public.space_certificates c where c.public_code::text=p_code and c.public_verification
 $$;
 
 alter table public.project_tasks drop constraint if exists project_tasks_status_check;

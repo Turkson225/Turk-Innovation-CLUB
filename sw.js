@@ -1,5 +1,5 @@
 /* SPACE public offline shell. Member data and API responses never enter Cache Storage. */
-const PUBLIC_CACHE = 'innovatex-public-v10';
+const PUBLIC_CACHE = 'innovatex-public-v11';
 const CACHE_PREFIX = 'innovatex-public-';
 const scope = new URL(self.registration.scope);
 const urlFor = path => new URL(path, scope).href;
@@ -148,3 +148,4 @@ self.addEventListener('notificationclick', event => {
     } else await self.clients.openWindow(target);
   })());
 });
+
