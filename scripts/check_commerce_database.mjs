@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import vm from 'node:vm';
 import {createRequire} from 'node:module';
 import {prepareFixture,uuid} from './load_test_fixture.mjs';
 const require=createRequire(import.meta.url);let db,root,pool,dispose,native=false;
@@ -87,5 +88,15 @@ try{
  });
  await check('Installing or rerunning product alerts never broadcasts the existing catalog',async()=>{const before=await count('notifications',"kind='shop_product'");await db.query(fs.readFileSync(new URL('../supabase/upgrade_shop_product_alerts.sql',import.meta.url),'utf8'));assert.equal(await count('notifications',"kind='shop_product'"),before);});
  if(native)await check('Concurrent stock options publish only one alert per member',async()=>{const pp=await product('Synthetic simultaneous announcement');await Promise.all(['A','B'].map(sku=>rpc(1,'space_shop_save_variant',{p_id:null,p_product:pp,p_sku:'ANNOUNCE-'+sku,p_label:sku,p_price:7500,p_stock:3,p_unit:'kits',p_low:1,p_active:true,p_note:'Concurrent synthetic stock'})));const expected=await count('profiles',"membership_status='approved' and role in ('member','teacher','founder','admin') and id<>$1",[uuid(1)]);assert.equal(await count('notifications',"kind='shop_product' and target_id=$1",[pp]),expected);assert.equal(await count('space_shop_product_announcements','product_id=$1',[pp]),1);});
+ await check('The real add-product UI saves opening stock and makes the product visible to another member',async()=>{
+  const state={session:{user:{id:uuid(1)}},me:{role:'admin'},page:'shop-admin',approved:true,club:true,admin:true,offices:[]},errors=[],messages=[];let finish;const done=new Promise(resolve=>finish=resolve);let disabled=false;
+  const button={isConnected:true,textContent:'Save',get disabled(){return disabled;},set disabled(value){disabled=value;if(!value)finish();}};
+  const api={rpc:async(name,args)=>{try{return{data:await rpc(1,name,args),error:null};}catch(error){return{data:null,error};}},storage:{from(){return{createSignedUrl:async()=>({data:{signedUrl:'unused'},error:null})};}}};
+  const ctx={db:api,get:()=>state,esc:value=>String(value??'').replaceAll('<','&lt;'),deadline:fn=>fn(),modal(){},close(){},render(){},show:value=>messages.push(value),fail:error=>errors.push(error),go(){},refreshAccess:async()=>{}};
+  const environment=vm.createContext({window:{},document:{getElementById:()=>null},localStorage:{getItem:()=>null,setItem(){}},crypto:crypto.webcrypto,FormData:class{constructor(form){return form.entries[Symbol.iterator]();}}});vm.runInContext(fs.readFileSync(new URL('../club-commerce.js',import.meta.url),'utf8'),environment);const shop=environment.window.SpaceClubShop.create(ctx);
+  shop.handleSubmit({preventDefault(){},target:{id:'shopProductForm',querySelector:()=>button,entries:[['id',''],['initial_option','1'],['title','Synthetic UI starter kit'],['category','Kits'],['description','Synthetic product created through the complete UI save handler.'],['price','125.50'],['stock','7'],['unit','kits'],['option_label','Starter kit'],['sku','UI-STARTER-KIT'],['published','on']]}});
+  let timeout;try{await Promise.race([done,new Promise((_,reject)=>timeout=setTimeout(()=>reject(Error('UI save did not finish')),15000))]);}finally{clearTimeout(timeout);}
+  assert.deepEqual(errors,[]);assert(messages.some(x=>x.includes('Members can now view it in Store')));const result=await rpc(10,'space_shop_catalog',{p_search:'Synthetic UI starter kit'});assert.equal(result.total,1);assert.equal(result.rows[0].published,true);assert.equal(result.rows[0].variants.length,1);assert.equal(result.rows[0].variants[0].price_cents,12550);assert.equal(result.rows[0].variants[0].on_hand,7);
+ });
  console.log(`${checks}/${checks} shop and role database checks passed (${native?'PostgreSQL':'PGlite'}).`);
 }finally{await dispose?.();}

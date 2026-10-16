@@ -24,7 +24,7 @@
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=space-logo-20261001">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?v=space-logo-20261001">
   <link rel="stylesheet" href="styles.css?v=space-advanced-20261015">
-  <link rel="stylesheet" href="club-commerce.css?v=space-shop-products-20261016">
+  <link rel="stylesheet" href="club-commerce.css?v=space-store-fix-20261016">
 </head>
 <body>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -40,7 +40,7 @@
           <a href="#role-updates" data-page="role-updates" hidden><span>✓</span> Role updates</a>
           <a href="#messages" data-page="messages" data-private hidden><span>◍</span> Direct messages <i id="dmBadge" hidden>0</i></a>
           <a href="#calendar" data-page="calendar" data-private hidden><span>▦</span> Calendar</a>
-          <a href="#shop" data-page="shop" hidden><span>◈</span> SPACE shop</a>
+          <a href="#shop" data-page="shop" hidden><span>◈</span> Store / View products</a>
           <a href="#office" data-page="office" hidden><span>▧</span> My office</a>
           <a href="#finance-reports" data-page="finance-reports" hidden><span>◈</span> Finance reports</a>
         </div>
@@ -119,6 +119,7 @@
         <div class="crumb">SPACE<span class="crumb-separator">/</span><strong id="pageCrumb">Overview</strong></div>
         <a class="mobile-wordmark" href="#home" aria-label="SPACE Engineering Club home"><img class="mobile-wordmark-long" src="assets/space-wordmark.png" alt="" width="312" height="76"><img class="mobile-wordmark-short" src="assets/space-monogram.png" alt="" width="64" height="76"></a>
         <div class="top-actions">
+          <a id="memberStoreButton" class="store-top-link" href="#shop" aria-label="Store: view products" title="Store: view products" hidden><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14l1 14H4L5 7Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg><span>Store</span></a>
           <button id="workspaceSearchButton" class="workspace-search-trigger" type="button" data-action="workspaceSearch" aria-label="Search workspace" title="Search workspace (Ctrl or Command + K)"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><span>Search</span><kbd>⌘ K</kbd></button>
           <button id="memberBell" class="admin-top-button member-bell" type="button" data-action="openMemberInbox" aria-label="Open notifications" title="Notifications" hidden>
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></svg>
@@ -184,8 +185,8 @@
 })();
 
   </script>
-  <script src="club-commerce.js?v=space-shop-products-20261016"></script>
-  <script type="module" src="app.js?v=space-shop-products-20261016"></script>
+  <script src="club-commerce.js?v=space-store-fix-20261016"></script>
+  <script type="module" src="app.js?v=space-store-fix-20261016"></script>
 </body>
 </html>
 

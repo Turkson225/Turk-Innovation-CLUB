@@ -7,6 +7,7 @@ on:
       - 'supabase/upgrade_shop_product_alerts.sql'
       - 'supabase/upgrade_role_acknowledgements.sql'
       - 'scripts/check_commerce_database.mjs'
+      - 'club-commerce.js'
       - 'scripts/load_test_fixture.mjs'
       - '.github/workflows/shop-check.yml'
   workflow_dispatch:

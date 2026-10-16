@@ -142,7 +142,7 @@ let founderPortraitReady = false;
 let toastTimer;
 const pages = ['shop','cart','orders','shop-admin','role-updates','classroom','meeting-room','project-board','home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','finance-reports','officers','office','discussions','courses','teaching','events','calendar','announcements','founder-room'];
 const workspacePageInfo={
-  shop:{title:'SPACE shop',section:'Club shop',aliases:'Buy merchandise T-shirts electronics kits'},
+  shop:{title:'Store / View products',section:'Club shop',aliases:'Buy merchandise T-shirts electronics kits'},
   cart:{title:'Basket',section:'Club shop'},
   orders:{title:'My orders',section:'Club shop',aliases:'Collection purchases order tracking'},
   'shop-admin':{title:'Manage shop',section:'Administration',aliases:'Products sale stock prices orders'},
@@ -1495,6 +1495,7 @@ function render() {
   const dmScrollTop=sameDmThread?previousDmStream.scrollTop:0;
   $('#workspaceSearchButton')?.setAttribute('aria-label',clubAccess()?'Search workspace':'Find a page');
   $('#authButton').textContent=session?'Sign out':'Join / sign in';
+  const storeLink=$('#memberStoreButton');if(storeLink)storeLink.hidden=!clubAccess();
   $('#connectionLabel').textContent=!configured?'Setup required':session&&!approved()?'Application pending':investor()?'Investor portal live':session?'Member workspace live':'Public preview';
   $('#accountBadge').hidden=!approved();$('#accountBadge').innerHTML=approved()?roleBadge(me):'';
   $('#pageCrumb').textContent=workspacePageInfo[page]?.title||'Home';
@@ -1520,7 +1521,7 @@ function render() {
   }
   const views={...Object.fromEntries(['shop','cart','orders','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
-  $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'?(commerce?.homeRoleBanner()||'')+(commerce?.homeShopBanner()||''):'')+views[page]();
+  $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'?(commerce?.homeRoleBanner()||'')+(commerce?.homeShopBanner?.()||''):'')+views[page]();
   commerce?.afterRender();
   if(page==='members'){hydrateDirectoryPhotos();openLinkedMemberProfile();}
   if(memberFocus&&page==='members'&&!$('#modal')?.open){const search=$('#memberSearch');search?.focus({preventScroll:true});search?.setSelectionRange?.(memberFocus.start,memberFocus.end);}
