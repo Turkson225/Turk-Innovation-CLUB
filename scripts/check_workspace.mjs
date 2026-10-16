@@ -18,7 +18,7 @@ function harness({localItems=new Map(),sessionItems=new Map(),location:initialLo
     return builder;
   }
   const rpcQueued=[],rpcCalls=[];
-  const db={from,storage:{from},rpc(name,args){rpcCalls.push({name,args});return Promise.resolve(rpcQueued.shift()??{data:[],error:null});}};
+  const db={from,storage:{from},rpc(name,args){rpcCalls.push({name,args});return Promise.resolve(rpcQueued.shift()??(name==='club_mark_dm_read'?{error:{code:'PGRST202',message:'Legacy project'}}:{data:[],error:null}));}};
   const storage=items=>({getItem(key){return items.get(key)??null;},setItem(key,value){items.set(key,value);},removeItem(key){items.delete(key);}});
   let clientOptions;
   const context=vm.createContext({console,URL,crypto:globalThis.crypto,Blob,Date,Map,Set,Promise,setTimeout(callback,delay=0){const id=++timerId;timers.set(id,{callback,delay});return id;},clearTimeout(id){timers.delete(id);},setInterval(){return 1;},clearInterval(){},sessionStorage:storage(sessionItems),localStorage:storage(localItems),createClient(_url,_key,options){clientOptions=options;return db;},window:{INNOVATEX_CONFIG:{supabaseUrl:'https://qa.supabase.co',supabaseAnonKey:'fake'},addEventListener(){}},navigator:{},location:initialLocation,history:{replaceState(){}},document:{hidden:false,activeElement:null,querySelector(selector){return elements.get(selector)??null;},querySelectorAll(){return [];},getElementById(id){return elements.get('#'+id)??null;},addEventListener(){},documentElement:{dataset:{theme:'light'}}}});
@@ -26,11 +26,12 @@ function harness({localItems=new Map(),sessionItems=new Map(),location:initialLo
   vm.runInContext(source,context,{filename:'app.js'});
   const run=code=>vm.runInContext(code,context);
   const exec=(code,args)=>{context.qaArgs=args;return run(code);};
-  const renderOriginal=run('render');
+  const renderOriginal=run('render'),unreadRefreshOriginal=run('refreshUnreadCounts');
   run("session={user:{id:'self'}};sessionStartedAt=Date.now();lastSessionActivityAt=sessionStartedAt;me={id:'self',full_name:'Tester',role:'member',membership_status:'approved'};dmReady=true;page='messages';cache={profiles:[me,{id:'a',full_name:'Alice',membership_status:'approved',role:'member'},{id:'b',full_name:'Bob',membership_status:'approved',role:'teacher'}],direct_messages:[],direct_message_reads:[],notifications:[]};render=()=>{};dmShowThreadUpdate=()=>{};refreshUnreadCounts=async()=>{};refreshInboxUnreadCount=async()=>{};");
   elements.set('#toast',node());elements.set('#dmBody',node());elements.set('#modal',node({open:false}));elements.set('#modalContent',node());
+  for(const id of ['memberBell','memberBellCount','notificationBadge','dmBadge','dmReadStatus'])elements.set('#'+id,node());
   const fireTimers=delay=>{for(const [id,timer]of [...timers])if(timer.delay===delay&&timers.has(id)){timers.delete(id);timer.callback();}};
-  return {run,exec,requests,queued,rpcQueued,rpcCalls,elements,context,db,timers,fireTimers,clientOptions,localItems,sessionItems,renderOriginal};
+  return {run,exec,requests,queued,rpcQueued,rpcCalls,elements,context,db,timers,fireTimers,clientOptions,localItems,sessionItems,renderOriginal,unreadRefreshOriginal};
 }
 const tests=[];
 function test(name,fn){tests.push({name,fn});}
@@ -280,14 +281,14 @@ test('Read positions are never marked while hidden or away from the latest messa
   await h.run("markDmRead('a')");assert.equal(h.requests.length,0);
   h.elements.get('#dmStream').scrollTop=800;h.context.document.hidden=true;await h.run("markDmRead('a')");assert.equal(h.requests.length,0);
 });
-test('A newly arrived notice prevents marking messages not covered by loaded history',async()=>{
+test('A newly arrived notice remains unread without blocking a receipt for loaded messages',async()=>{
   const h=harness();h.elements.set('#dmStream',node({dataset:{peer:'a'}}));h.exec("activePeerId='a';dmThreadPeer='a';dmThreadRows=qaArgs;cache.notifications=[{id:'new',kind:'direct_message',target_id:'a',read_at:null}];dmThreadCoveredNotices.set('a',new Set());",[message('unread')]);
-  await h.run("markDmRead('a')");assert.equal(h.requests.length,0);
+  await h.run("markDmRead('a')");assert(h.requests.some(x=>x.table==='direct_message_reads'));assert(!h.requests.some(x=>x.table==='notifications'));assert.equal(h.run('cache.notifications[0].read_at'),null);
 });
 test('Marking a read position is scoped to caller and current conversation',async()=>{
   const h=harness();h.elements.set('#dmStream',node({dataset:{peer:'a'}}));h.exec("activePeerId='a';dmThreadPeer='a';dmThreadRows=qaArgs;dmThreadCoveredNotices.set('a',new Set());",[message('unread')]);
   h.queued.push({error:null},{error:null});await h.run("markDmRead('a')");
-  const call=h.requests.find(x=>x.table==='direct_message_reads'),position=call.ops.find(op=>op[0]==='upsert')[1];assert.equal(position.user_id,'self');assert.equal(position.peer_id,'a');assert.equal(h.run("cache.direct_message_reads[0].peer_id"),'a');
+  const call=h.requests.find(x=>x.table==='direct_message_reads'&&x.ops.some(op=>op[0]==='insert')),position=call.ops.find(op=>op[0]==='insert')[1];assert.equal(position.user_id,'self');assert.equal(position.peer_id,'a');assert.equal(h.run("cache.direct_message_reads[0].peer_id"),'a');assert(!h.requests.some(x=>x.ops.some(op=>op[0]==='upsert')));
 });
 
 test('Chats shows actual conversations while Find members lists approved club peers',()=>{
@@ -379,7 +380,7 @@ test('Agenda task and meeting actions respect caller visibility and role',()=>{
 });
 test('Read receipts and alert updates cannot advance beyond the displayed thread snapshot',async()=>{
   const h=harness(),inboundAt=new Date(Date.now()-600000).toISOString(),displayedAt=new Date(Date.now()-500000).toISOString();h.elements.set('#dmStream',node({dataset:{peer:'a'}}));h.exec("activePeerId='a';dmThreadPeer='a';dmThreadRows=qaArgs;cache.notifications=[{id:'covered',user_id:'self',kind:'direct_message',target_id:'a',created_at:qaArgs[1].created_at,read_at:null}];dmThreadCoveredNotices.set('a',new Set(['covered']));",[message('newest-displayed','self','a','sent',displayedAt),message('newest-inbound','a','self','received',inboundAt)]);h.queued.push({error:null},{error:null});await h.run("markDmRead('a')");
-  const position=h.requests.find(x=>x.table==='direct_message_reads').ops.find(op=>op[0]==='upsert')[1];assert(new Date(position.last_read_at)<=new Date(displayedAt),'Receipt skips messages arriving after the displayed snapshot');assert(new Date(position.last_read_at)>=new Date(inboundAt),'Displayed incoming messages are marked read');const alert=h.requests.find(x=>x.table==='notifications');const bound=alert?.ops.find(op=>op[0]==='lte'&&op[1]==='created_at');if(bound)assert(new Date(bound[2])<=new Date(displayedAt),'Notification read boundary must be no newer than the displayed snapshot');
+  const position=h.requests.find(x=>x.table==='direct_message_reads'&&x.ops.some(op=>op[0]==='insert')).ops.find(op=>op[0]==='insert')[1];assert(new Date(position.last_read_at)<=new Date(displayedAt),'Receipt skips messages arriving after the displayed snapshot');assert(new Date(position.last_read_at)>=new Date(inboundAt),'Displayed incoming messages are marked read');const alert=h.requests.find(x=>x.table==='notifications');const bound=alert?.ops.find(op=>op[0]==='lte'&&op[1]==='created_at');if(bound)assert(new Date(bound[2])<=new Date(displayedAt),'Notification read boundary must be no newer than the displayed snapshot');
 });
 for(const replacementPhoto of [false,true])test(`Pending photo send unlocks replacement composer and ${replacementPhoto?'retains a new selection':'clears its submitted selection'}`,async()=>{
   const h=harness(),pending=deferred(),c=composer('a','caption'),submitted={name:'old.png',type:'image/png',size:100},next={name:'new.png',type:'image/png',size:100},send=node({disabled:true}),picker=node({value:replacementPhoto?'new.png':'old.png'});let removed=false;const preview=node({remove(){removed=true;}}),current=node({querySelector(selector){return selector==='.dm-image-preview'?preview:selector==='[name=dm_image]'?picker:null;}});
@@ -1110,6 +1111,37 @@ test('A device notification opens a new main-account tab when only previews are 
 });
 test('A completed learning course exposes its own certificate download action',()=>{
  const h=harness();h.run("cache.course_completions=[{course_id:'learning-course',learner_id:'self',completed_at:'2026-10-16',assessed_by:'teacher'}];");const html=h.exec('courseFeedback(qaArgs)',{id:'learning-course'});assert(html.includes('data-action="certificateCourse"'));assert(html.includes('data-id="learning-course"'));
+});
+function dmReadHarness(){
+ const h=harness();h.elements.set('#dmStream',node({dataset:{peer:'a'}}));h.exec("activePeerId='a';dmThreadPeer='a';dmThreadRows=[qaArgs];cache.notifications=[{id:'covered',kind:'direct_message',target_id:'a',created_at:'2026-10-01T08:00:01Z',read_at:null}];dmThreadCoveredNotices.set('a',new Set(['covered']));",message('visible'));
+ return h;
+}
+test('Atomic reading clears the badge and a covered alert created after its message',async()=>{
+ const h=dmReadHarness();h.rpcQueued.push({data:{last_read_at:'2026-10-01T08:00:00Z',read_notice_ids:['covered'],counts:{direct_messages:{},direct_total:0}},error:null});await h.run("markDmRead('a')");assert.equal(h.rpcCalls[0].name,'club_mark_dm_read');assert.equal(h.rpcCalls[0].args.p_message,'visible');assert.equal(h.requests.length,0);assert(h.run('cache.notifications[0].read_at'));assert.equal(h.run('unreadCounts.direct_total'),0);assert.equal(h.elements.get('#dmBadge').hidden,true);
+});
+test('Read receipts preserve new alerts outside the displayed snapshot',async()=>{
+ const h=dmReadHarness();h.run("cache.notifications.push({id:'new-alert',kind:'direct_message',target_id:'a',created_at:'2026-10-01T08:00:02Z',read_at:null})");h.rpcQueued.push({data:{last_read_at:'2026-10-01T08:00:00Z',read_notice_ids:['covered'],counts:{direct_messages:{a:1},direct_total:1}},error:null});await h.run("markDmRead('a')");assert.deepEqual(Array.from(h.rpcCalls[0].args.p_notices),['covered']);assert.equal(h.run('cache.notifications[1].read_at'),null);assert.equal(h.run('unreadCounts.direct_total'),1);
+});
+test('A count response started before reading cannot restore the old unread badge',async()=>{
+ const h=dmReadHarness(),old=deferred();h.context.qaRefresh=h.unreadRefreshOriginal;h.run('refreshUnreadCounts=qaRefresh');h.rpcQueued.push(old.promise);const stale=h.run('refreshUnreadCounts()');h.rpcQueued.push({data:{last_read_at:'2026-10-01T08:00:00Z',read_notice_ids:['covered'],counts:{direct_messages:{},direct_total:0}},error:null});await h.run("markDmRead('a')");old.resolve({data:{direct_messages:{a:7},direct_total:7},error:null});await stale;assert.equal(h.run('unreadCounts.direct_total'),0);assert.equal(h.elements.get('#dmBadge').hidden,true);
+});
+test('Legacy projects update only the granted timestamp column and retain the newer receipt',async()=>{
+ const h=dmReadHarness();h.queued.push({data:{last_read_at:'2026-10-01T08:00:00.000123Z'},error:null},{error:null},{error:null});await h.run("markDmRead('a')");const write=h.requests.find(r=>r.table==='direct_message_reads'&&r.ops.some(op=>op[0]==='update'));assert.deepEqual(Object.keys(write.ops.find(op=>op[0]==='update')[1]),['last_read_at']);assert(write.ops.some(op=>op[0]==='lt'&&op[1]==='last_read_at'));assert(!write.ops.some(op=>op[0]==='upsert'));assert.equal(h.run('cache.direct_message_reads[0].last_read_at'),'2026-10-01T08:00:00.000123Z');const alerts=h.requests.find(r=>r.table==='notifications');assert(!alerts.ops.some(op=>op[0]==='lte'));
+});
+test('A concurrent legacy first-read insert retries a monotonic timestamp update',async()=>{
+ const h=dmReadHarness();h.queued.push({data:null,error:null},{error:{code:'23505',message:'Already inserted by another tab'}},{error:null},{error:null});await h.run("markDmRead('a')");assert(h.requests.some(r=>r.table==='direct_message_reads'&&r.ops.some(op=>op[0]==='update')));assert.equal(h.run('dmReadError'),'');
+});
+test('Microsecond timestamps do not turn a newer outgoing message into an earlier read message',()=>{
+ const h=harness();h.run("dmReceiptsReady=true;dmPeerReceipts.set('a','2026-10-01T08:00:00.000123Z')");h.context.qaMessage=message('later','self','a','Later message','2026-10-01T08:00:00.000124Z');assert(h.run('dmMessageMarkup(qaMessage,cache.profiles[1])').includes('aria-label="Sent"'));assert(h.run("dmTime('2026-10-01T09:00:00.000123+01:00')===dmTime('2026-10-01T08:00:00.000123Z')"));
+});
+test('A temporary peer receipt error is retried on the next conversation refresh',async()=>{
+ const h=harness();h.run("activePeerId='a';dmThreadPeer='a'");h.queued.push({data:[message('one')],count:1,error:null});h.rpcQueued.push({error:{message:'Temporary network problem'}});await h.run('loadDmThread(false)');assert.equal(h.run('dmReceiptsReady'),false);h.queued.push({data:[message('one')],count:1,error:null});h.rpcQueued.push({data:'2026-10-01T08:00:01Z',error:null});await h.run('loadDmThread(false)');assert.equal(h.run('dmReceiptsReady'),true);assert.equal(h.run("dmPeerReceipts.get('a')"),'2026-10-01T08:00:01Z');
+});
+test('A failed read confirmation preserves unread alerts, offers feedback and can retry',async()=>{
+ const h=dmReadHarness();h.context.console={...console,error(){}};h.rpcQueued.push({error:{code:'NETWORK',message:'Offline'}});await h.run("markDmRead('a')");assert.equal(h.run('cache.notifications[0].read_at'),null);assert.match(h.run('dmReadError'),/retry/);assert.equal(h.elements.get('#dmReadStatus').hidden,false);h.rpcQueued.push({data:{last_read_at:'2026-10-01T08:00:00Z',read_notice_ids:['covered'],counts:{direct_messages:{},direct_total:0}},error:null});await h.run("markDmRead('a')");assert.equal(h.run('dmReadError'),'');assert.equal(h.elements.get('#dmReadStatus').hidden,true);
+});
+test('A delayed read confirmation cannot write into another account’s workspace',async()=>{
+ const h=dmReadHarness(),pending=deferred();h.rpcQueued.push(pending.promise);const task=h.run("markDmRead('a')");h.run("session={user:{id:'other'}};authGeneration++;cache={};dmReadInFlight.clear()");pending.resolve({data:{last_read_at:'2026-10-01T08:00:00Z',counts:{direct_total:0}},error:null});await task;assert.equal(h.run('cache.direct_message_reads'),undefined);
 });
 let failed=0;
 for(const t of tests){try{await t.fn();console.log('PASS',t.name);}catch(e){failed++;console.log('FAIL',t.name,'\n',e.stack);}}

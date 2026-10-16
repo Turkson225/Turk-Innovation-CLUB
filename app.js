@@ -95,6 +95,7 @@ const dmReactionInFlight=new Set();
 const dmEmojis=['👍','❤️','😂','🎉','👀','🙌','✅','💡','🔧','🤖','🚀','😊'];
 const dmDrafts = new Map(), dmLatestMessages = new Map(), dmThreadCoveredNotices = new Map(), dmReadInFlight = new Set(), dmSendingPeers = new Set();
 let unreadCounts = {channels:{},direct_messages:{},direct_peers:[],direct_total:0}, unreadCountsReady = false;
+let unreadCountRequest=0,dmAtomicReads=null,dmReadError='';
 let calendarMonth = new Date(new Date().getFullYear(),new Date().getMonth(),1), calendarSelected = new Date();
 let calendarView='month',calendarSearch='',calendarAgendaPage=0,calendarPreferences={weekStart:1,compact:false,kinds:['event','course','course_due','task','meeting'],mine:false,track:'all',response:'all',online:false,hidePast:false};
 let workspaceLoading=false,workspaceHydrating=false,workspaceLoadError='';
@@ -159,11 +160,12 @@ let pendingAuthMode = sessionStorage.getItem('innovatex.pendingAuthMode') === 's
 let pendingProtectedPage = '';
 let founderPortraitReady = false;
 let toastTimer;
-const pages = ['shop','cart','orders','shop-admin','role-updates','classroom','meeting-room','project-board','home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','finance-reports','officers','office','discussions','courses','teaching','events','calendar','announcements','founder-room'];
+const pages = ['shop','cart','orders','order-desk','shop-admin','role-updates','classroom','meeting-room','project-board','home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','finance-reports','officers','office','discussions','courses','teaching','events','calendar','announcements','founder-room'];
 const workspacePageInfo={
   shop:{title:'Store / View products',section:'Club shop',aliases:'Buy merchandise T-shirts electronics kits'},
   cart:{title:'Basket',section:'Club shop'},
   orders:{title:'My orders',section:'Club shop',aliases:'Collection purchases order tracking'},
+  'order-desk':{title:'Orders & fulfilment',section:'Administration',aliases:'Incoming purchases process orders ready delivered receipts'},
   'shop-admin':{title:'Manage shop',section:'Administration',aliases:'Products sale stock prices orders'},
   'role-updates':{title:'Role updates',section:'Your workspace',aliases:'Assignment notes acknowledge responsibilities'},
   classroom:{title:'Classroom tools',section:'Learning & projects',aliases:'Lessons attendance gradebook certificates'},
@@ -224,7 +226,7 @@ function updateWorkspaceNavigation(){
   const links=[...nav.querySelectorAll('a[data-page]')];
   const allowed=target=>{
     if(['role-updates','notifications'].includes(target))return approved();
-    if(target==='shop-admin')return admin();
+    if(['shop-admin','order-desk'].includes(target))return admin();
     if(target==='application')return !!session&&!approved();
     if(target==='teaching')return teacher();
     if(target==='founder-room'||target==='investors')return founder();
@@ -333,7 +335,7 @@ function receiveMemberNotification(notification){
   if(!known&&['role','role_assignment'].includes(notification.kind))void refreshVisiblePage({force:true}).then(()=>{if(page==='home'||page==='office')render();});
   if(page==='notifications')render();
   if(!known&&notification.kind==='shop_product'&&page==='shop')void refreshVisiblePage({force:true});
-  if(!known&&notification.target_type==='shop_order'&&['orders','shop-admin'].includes(page))void refreshVisiblePage({force:true});
+  if(!known&&notification.target_type==='shop_order'&&['orders','shop-admin','order-desk'].includes(page))void refreshVisiblePage({force:true});
   if(!known&&notification.kind==='direct_message'&&notification.target_type==='direct_message')void refreshDmAfterNotification(notification.target_id);
   if(!known&&!(page==='messages'&&activePeerId===notification.target_id&&!document.hidden&&notification.kind==='direct_message'))showMemberAlert(notification);
 }
@@ -808,7 +810,7 @@ async function loadDmThread(renderAfter=true,earlier=false){
   const peer=activePeerId,owner=session.user.id,request=++dmRequest;
   const coveredNotices=new Set((cache.notifications||[]).filter(n=>n.kind==='direct_message'&&n.target_id===peer).map(n=>n.id));
   const stream=$('#dmStream'),priorTop=stream?.scrollTop||0,priorHeight=stream?.scrollHeight||0;
-  if(dmThreadPeer!==peer){dmThreadPeer=peer;dmPage=0;dmTotal=0;dmThreadRows=[];dmReactionRows=[];dmHasMore=false;dmReplyRows.clear();dmSearchOpen=false;dmSearchRows=[];}
+  if(dmThreadPeer!==peer){dmReadError='';dmThreadPeer=peer;dmPage=0;dmTotal=0;dmThreadRows=[];dmReactionRows=[];dmHasMore=false;dmReplyRows.clear();dmSearchOpen=false;dmSearchRows=[];}
   const oldest=earlier?dmThreadRows[dmThreadRows.length-1]:null;
   dmThreadLoading=!earlier;dmEarlierLoading=earlier;dmThreadError='';
   try{
@@ -820,7 +822,7 @@ async function loadDmThread(renderAfter=true,earlier=false){
     if(result.count===null)throw Error('Could not load conversation history. Please retry.');
     const rows=result.data||[];
     const merged=new Map(dmThreadRows.map(m=>[m.id,m]));for(const row of rows)merged.set(row.id,row);
-    dmThreadRows=[...merged.values()].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)||String(b.id).localeCompare(String(a.id)));
+    dmThreadRows=[...merged.values()].sort((a,b)=>dmTime(b.created_at)-dmTime(a.created_at)||String(b.id).localeCompare(String(a.id)));
     if(!earlier)dmTotal=result.count;
     dmHasMore=earlier?rows.length===50:dmThreadRows.length<dmTotal;
     dmThreadCoveredNotices.set(peer,coveredNotices);
@@ -833,7 +835,7 @@ async function loadDmThread(renderAfter=true,earlier=false){
       const reactions=await readRelatedRows('direct_message_reactions','message_id',dmThreadRows.map(m=>m.id),['message_id','user_id']);
       if(request===dmRequest)dmReactionRows=reactions;
     }
-    if(dmReceiptsReady||!dmReceiptsChecked){
+    { // Retry read receipts after transient failures; keep chat usable on older schemas.
       const receipt=await db.rpc('club_dm_peer_read_at',{p_peer_id:peer});
       if(request===dmRequest){dmReceiptsChecked=true;if(!receipt.error){dmReceiptsReady=true;dmPeerReceipts.set(peer,receipt.data);}}
     }
@@ -864,10 +866,13 @@ async function refreshDmAfterNotification(peerId){
 async function refreshUnreadCounts(){
   if(networkOffline())return;
   if(!session||!clubAccess())return;
-  const owner=session.user.id;
+  const owner=session.user.id,generation=authGeneration,request=++unreadCountRequest;
   const {data,error}=await db.rpc('club_unread_counts');
-  if(session?.user.id!==owner||!clubAccess())return;
+  if(session?.user.id!==owner||!clubAccess()||generation!==authGeneration||request!==unreadCountRequest)return;
   if(error){unreadCountsReady=false;console.error('Unread counts',error);return;}
+  applyUnreadCounts(data);
+}
+function applyUnreadCounts(data){
   if(!data||typeof data!=='object')return;
   unreadCounts={channels:data.channels||{},direct_messages:data.direct_messages||{},direct_peers:Array.isArray(data.direct_peers)?data.direct_peers:[],direct_total:Number(data.direct_total)||0};
   unreadCountsReady=true;
@@ -886,7 +891,7 @@ async function refreshUnreadCounts(){
 
 // Load the open page on demand. Exports fetch complete records independently.
 const pageRefreshDependencies={
-  shop:[],cart:[],orders:[],'shop-admin':[],'role-updates':[],
+  shop:[],cart:[],orders:[],'order-desk':[],'shop-admin':[],'role-updates':[],
   classroom:['courses','course_enrollments','course_submissions','course_completions','classroom_assignments','classroom_assignment_submissions'],'meeting-room':['profiles'],'project-board':['projects','project_tasks','project_members','project_milestones','profiles','topics','replies','documents'],
   home:['project_tasks','courses','course_enrollments','course_submissions','course_completions','events','announcements','activity_posts','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions'],
   about:[],founders:['founders'],investors:['founders','investor_updates'],
@@ -1243,7 +1248,7 @@ async function signedIn(newSession,showWelcome=false) {
   inboxUnreadCount=null;inboxCountRequest++;dismissMemberAlert();memberDeferredNotification=null;memberNotificationPrimed=false;
   unreadCounts={channels:{},direct_messages:{},direct_peers:[],direct_total:0};unreadCountsReady=false;
   for(const draft of dmDrafts.values())clearDmDraftFile(draft);
-  dmDrafts.clear();dmLatestMessages.clear();dmThreadCoveredNotices.clear();dmReplyRows.clear();dmPeerReceipts.clear();dmReactionRows=[];dmUpgradeChecked=false;dmRepliesReady=false;dmReactionsReady=false;dmInboxReady=false;dmReceiptsReady=false;dmReceiptsChecked=false;dmInboxOffset=0;dmInboxMore=false;dmInboxLoading=false;dmHasMore=false;dmEarlierLoading=false;dmReactionInFlight.clear();dmSearchTerm='';dmSearchBusy=false;dmSearchError='';dmListView='chats';dmEmojiOpen=false;dmSearchOpen=false;dmSearchRows=[];dmSearchRequest++;dmReadInFlight.clear();dmSendingPeers.clear();dmFilterTerm='';dmListScrollTop=0;activePeerId=null;dmRequest++;
+  dmDrafts.clear();dmLatestMessages.clear();dmThreadCoveredNotices.clear();dmReplyRows.clear();dmPeerReceipts.clear();dmReactionRows=[];dmUpgradeChecked=false;dmRepliesReady=false;dmReactionsReady=false;dmInboxReady=false;dmReceiptsReady=false;dmReceiptsChecked=false;dmInboxOffset=0;dmInboxMore=false;dmInboxLoading=false;dmHasMore=false;dmEarlierLoading=false;dmReactionInFlight.clear();dmSearchTerm='';dmSearchBusy=false;dmSearchError='';dmListView='chats';dmEmojiOpen=false;dmSearchOpen=false;dmSearchRows=[];dmSearchRequest++;dmReadInFlight.clear();dmAtomicReads=null;dmReadError='';unreadCountRequest++;dmSendingPeers.clear();dmFilterTerm='';dmListScrollTop=0;activePeerId=null;dmRequest++;
   applicationVerification=new Map();applicationsOwner=null;feedOwner=null;channelHistoryId=null;dmThreadPeer=null;
   applicationRows=[];approvedAccountRows=[];channelHistoryRows=[];dmThreadRows=[];
   authReady=!session;
@@ -1507,7 +1512,7 @@ function route() {
   if(page==='teaching'&&authReady&&!teacher()){page=clubAccess()?'courses':'home';history.replaceState(null,'','#'+page);}
   if(['finance','finance-review'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   if(page==='finance-review'&&admin()){page='finance';history.replaceState(null,'','#finance');}
-  if(['officers','shop-admin'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
+  if(['officers','shop-admin','order-desk'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   if(officerAccessChecked&&(page==='office'&&!officerAccess()||page==='finance-reports'&&!financeReportAccess())){page='home';history.replaceState(null,'','#home');}
   if(page==='founder-room'&&authReady&&!founder()){page='founders';history.replaceState(null,'','#founders');show('Founder access required.');}
   if(['admin','applications','moderation'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
@@ -1557,9 +1562,9 @@ function render() {
   if(session&&approved()&&load&&!load.hadData&&['loading','offline','error'].includes(load.status)&&!learningSelectionRequired()){
     $('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
   }
-  const views={...Object.fromEntries(['shop','cart','orders','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
+  const views={...Object.fromEntries(['shop','cart','orders','order-desk','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
-  $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'?(commerce?.homeRoleBanner()||'')+(commerce?.homeShopBanner?.()||''):'')+views[page]();
+  $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'?(commerce?.homeRoleBanner()||'')+(commerce?.homeShopBanner?.()||''):'')+(page==='admin'?'<a class="admin-order-shortcut" href="#order-desk"><strong>Orders &amp; fulfilment</strong><span>Process new purchases, update status and send receipts →</span></a>':'')+views[page]();
   commerce?.afterRender();
   if(page==='members'){hydrateDirectoryPhotos();openLinkedMemberProfile();}
   if(memberFocus&&page==='members'&&!$('#modal')?.open){const search=$('#memberSearch');search?.focus({preventScroll:true});search?.setSelectionRange?.(memberFocus.start,memberFocus.end);}
@@ -1586,7 +1591,7 @@ function workspaceSearchItems(){
   if(teacher())destinations.push(['teaching','Teaching studio','Workshops, students and feedback']);
   if(founder())destinations.push(['founder-room','Founder room','Meetings and decisions'],['investors','Investors','Club partnerships']);
   if(officerAccess())destinations.push(['office','My office','Officer duties and work records']);
-  if(admin())destinations.push(['shop-admin','Manage shop','Products prices sale stock and orders'],['officers','Roles & offices','Assign club responsibilities']);
+  if(admin())destinations.push(['order-desk','Orders & fulfilment','Process incoming orders update status and receipts'],['shop-admin','Manage shop','Products prices sale stock and orders'],['officers','Roles & offices','Assign club responsibilities']);
   if(financeReportAccess())destinations.push(['finance-reports','Finance reports','Approved monthly reports']);
   if(investor()||admin())destinations.push(['investor-portal','Investor portal','Approved investor updates']);
   if(admin())destinations.push(['admin','Admin dashboard','Club oversight'],['applications','Applications','Review new accounts'],['moderation','Moderation','Review reports'],['finance','Finance','Funds and records']);
@@ -2050,7 +2055,7 @@ function dmLastMessage(peerId,history){
   const recent=history.filter(m=>m.sender_id===peerId||m.recipient_id===peerId);
   if(dmThreadPeer===peerId&&dmPage===0)recent.push(...dmThreadRows);
   if(dmLatestMessages.has(peerId))recent.push(dmLatestMessages.get(peerId));
-  return recent.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)||String(b.id).localeCompare(String(a.id)))[0];
+  return recent.sort((a,b)=>dmTime(b.created_at)-dmTime(a.created_at)||String(b.id).localeCompare(String(a.id)))[0];
 }
 function dmThreadFor(peerId,history){
   const rows=dmThreadPeer===peerId?dmThreadRows:history.filter(m=>(m.sender_id===session.user.id&&m.recipient_id===peerId)||(m.recipient_id===session.user.id&&m.sender_id===peerId));
@@ -2060,6 +2065,10 @@ function dmDayLabel(value){
   const day=new Date(value),today=new Date(),yesterday=new Date(today);
   yesterday.setDate(today.getDate()-1);
   return day.toDateString()===today.toDateString()?'Today':day.toDateString()===yesterday.toDateString()?'Yesterday':date(value);
+}
+function dmTime(value){
+  const text=String(value||''),milliseconds=Date.parse(text),fraction=text.match(/\.(\d+)(?:Z|[+-]\d{2}:?\d{2})$/)?.[1]||'';
+  return Number.isFinite(milliseconds)?milliseconds*1000+Number((fraction+'000000').slice(3,6)):0;
 }
 
 function dmIcon(kind){
@@ -2077,7 +2086,7 @@ function dmMessageMarkup(message,peer,grouped=false){
   const image=message.image_path?(photo?`<a href="${esc(photo)}" data-action="viewImage" data-media-path="${esc(message.image_path)}" data-caption="Image shared in this conversation" target="_blank" rel="noopener noreferrer" aria-label="View private image full screen"><img class="dm-photo" src="${esc(photo)}" loading="lazy" alt="Image shared in this conversation"></a>`:'<span class="subtle">Loading photo…</span>'):'';
   const body=message.image_path&&message.body==='Shared an image'?'':`<p>${esc(message.body)}</p>`;
   const when=new Date(message.created_at).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
-  const read=mine&&dmReceiptsReady&&new Date(dmPeerReceipts.get(peer.id)||0)>=new Date(message.created_at);
+  const read=mine&&dmReceiptsReady&&dmTime(dmPeerReceipts.get(peer.id))>=dmTime(message.created_at);
   const groups=new Map();
   for(const reaction of dmReactionRows.filter(r=>r.message_id===message.id)){const item=groups.get(reaction.emoji)||{count:0,mine:false};item.count++;item.mine||=reaction.user_id===session.user.id;groups.set(reaction.emoji,item);}
   const reactions=groups.size?`<div class="dm-reactions">${[...groups].map(([emoji,r])=>`<button type="button" data-action="dmReact" data-id="${esc(message.id)}" data-emoji="${esc(emoji)}" aria-pressed="${r.mine}" aria-label="${esc(emoji)} reaction, ${r.count}">${esc(emoji)} <small>${r.count}</small></button>`).join('')}</div>`:'';
@@ -2147,6 +2156,7 @@ function messages(){
   ${dmInboxReady&&dmInboxMore&&dmListView==='chats'?`<div class="dm-history-loader"><button type="button" class="text-button" data-action="loadDmInboxMore" ${dmInboxLoading?'disabled':''}>${dmInboxLoading?'Loading…':'More conversations'}</button></div>`:''}</div>
   <div class="dm-conversation">${peer?`<div class="chat-head"><button type="button" class="dm-back dm-icon-button" data-action="closeDm" aria-label="Back to conversations">${dmIcon('back')}</button><div class="dm-head-person">${memberAvatar(peer.id)}<div class="dm-head-copy"><h2>${esc(peer.full_name)}</h2><p>${online?'Online':esc(peer.headline||peer.programme||'Club member')}</p></div></div><button type="button" class="dm-icon-button" data-action="toggleDmSearch" aria-label="Search conversation" aria-expanded="${dmSearchOpen}">${dmIcon('search')}</button>${spaceDmTools(peer)}${peer.private_placeholder?'':`<button type="button" class="text-button dm-profile-button" data-action="memberProfile" data-id="${esc(peer.id)}">Profile</button>`}</div>${dmSearchMarkup(peer)}${dmThreadError?`<div class="notice">${esc(dmThreadError)} <button class="text-button" data-action="reloadDmThread">Retry</button></div>`:''}
   <div id="dmStream" class="dm-stream" data-peer="${esc(peer.id)}" data-page="0" role="log" aria-label="Messages with ${esc(peer.full_name)}">${dmStreamMarkup(peer,history)}</div>
+  <p id="dmReadStatus" class="dm-read-feedback" role="status" ${dmReadError?'':'hidden'}>${esc(dmReadError)}</p>
   <form id="dmComposer" class="chat-composer" data-peer="${esc(peer.id)}">${reply}${preview}${spaceDmDocumentPreview(draft)}${dmEmojiOpen?`<div class="dm-emoji-picker" role="group" aria-label="Choose an emoji">${dmEmojis.map(emoji=>`<button type="button" data-action="insertDmEmoji" data-emoji="${esc(emoji)}" aria-label="Insert ${esc(emoji)}">${esc(emoji)}</button>`).join('')}</div>`:''}<div class="dm-compose-tools">${advancedReady?'<label class="gallery-picker dm-icon-button" title="Share a private file"><span aria-hidden="true">▤</span><span class="sr-only">Choose document</span><input name="dm_document" type="file" accept=".pdf,.txt,.csv,.zip,.docx,.xlsx,.pptx"></label>':''}<button type="button" class="dm-icon-button" data-action="toggleDmEmoji" aria-label="Choose emoji" aria-expanded="${dmEmojiOpen}">${dmIcon('emoji')}</button>${mediaReady?`<label class="gallery-picker dm-icon-button" title="Choose an image from your gallery">${dmIcon('image')}<span class="sr-only">Choose image</span><input name="dm_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>`:''}</div><label class="sr-only" for="dmBody">Message</label><textarea id="dmBody" name="body" rows="1" maxlength="3000" placeholder="Message ${esc(peer.full_name)}" aria-label="Write a message" enterkeyhint="send">${esc(draft.text)}</textarea><button class="button dm-send" type="submit" aria-label="Send message" ${dmSendingPeers.has(peer.id)?'disabled':''}>${dmIcon('send')}</button></form>`:`<div class="dm-empty"><span class="dm-empty-icon">${dmIcon('send')}</span><h2>A space for your team</h2><p>Share progress, swap ideas and keep your projects moving. Choose a conversation or find a club member.</p><button type="button" class="button button-outline" data-action="setDmListView" data-view="people">Find members</button></div>`}</div></div>`;
 }
 async function searchDmConversation(form){
@@ -2178,35 +2188,56 @@ async function setDmReaction(messageId,emoji){
   finally{dmReactionInFlight.delete(key);}
 }
 async function markDmRead(peerId) {
-  if(!dmReady||!session||!peerId||page!=='messages'||activePeerId!==peerId||document.hidden||dmPage!==0||dmThreadPeer!==peerId||dmThreadLoading||dmThreadError||dmReadInFlight.has(peerId))return;
+  const readKey=authGeneration+':'+peerId;
+  if(!dmReady||!session||!peerId||page!=='messages'||activePeerId!==peerId||document.hidden||dmPage!==0||dmThreadPeer!==peerId||dmThreadLoading||dmThreadError||dmReadInFlight.has(readKey))return;
   const stream=$('#dmStream');
   if(!stream||stream.dataset.peer!==peerId||stream.scrollHeight-stream.scrollTop-stream.clientHeight>=96)return;
   const latest=dmThreadRows.find(m=>m.sender_id===peerId);
-  const readAt=(cache.direct_message_reads||[]).find(r=>r.peer_id===peerId)?.last_read_at;
-  const unreadNotices=(cache.notifications||[]).filter(n=>n.kind==='direct_message'&&n.target_id===peerId&&!n.read_at);
-  const coveredNotices=dmThreadCoveredNotices.get(peerId);
-  if(unreadNotices.some(n=>!coveredNotices?.has(n.id)))return;
-  if(!unreadNotices.length&&(!latest||readAt&&new Date(latest.created_at)<=new Date(readAt)))return;
   if(!latest)return;
-  // A receipt covers the visible snapshot, never messages arriving after it.
-  const boundary=latest.created_at,stamp=readAt&&new Date(readAt)>new Date(boundary)?readAt:boundary,owner=session.user.id;
-  const noticeIds=unreadNotices.filter(n=>coveredNotices?.has(n.id)&&new Date(n.created_at)<=new Date(boundary)).map(n=>n.id);
-  dmReadInFlight.add(peerId);
+  const readAt=(cache.direct_message_reads||[]).find(r=>r.peer_id===peerId)?.last_read_at;
+  const coveredNotices=dmThreadCoveredNotices.get(peerId),noticeIds=(cache.notifications||[]).filter(n=>n.kind==='direct_message'&&n.target_id===peerId&&!n.read_at&&coveredNotices?.has(n.id)).map(n=>n.id).slice(0,1000);
+  if(readAt&&dmTime(readAt)>=dmTime(latest.created_at)&&!noticeIds.length)return;
+  const boundary=latest.created_at,owner=session.user.id,generation=authGeneration,countVersion=unreadCountRequest;
+  const valid=()=>session?.user.id===owner&&authGeneration===generation;
+  const readRequest=request=>requestWithDeadline(request,12000,'Read confirmation timed out. It will retry.');
+  let stamp=readAt&&dmTime(readAt)>dmTime(boundary)?readAt:boundary,marked=[],counts=null;
+  dmReadInFlight.add(readKey);
   try{
-    const {error}=await db.from('direct_message_reads').upsert({user_id:owner,peer_id:peerId,last_read_at:stamp},{onConflict:'user_id,peer_id'});if(error)throw error;
-    if(session?.user.id!==owner)return;
-    cache.direct_message_reads=(cache.direct_message_reads||[]).filter(r=>r.peer_id!==peerId).concat({user_id:owner,peer_id:peerId,last_read_at:stamp});
-    if(noticeIds.length){
-      const readStamp=new Date().toISOString();
-      const notices=await db.from('notifications').update({read_at:readStamp}).eq('user_id',owner).eq('kind','direct_message').eq('target_id',peerId).in('id',noticeIds).is('read_at',null).lte('created_at',boundary);
-      if(session?.user.id!==owner)return;
-      if(notices.error)console.error('Mark message alerts read',notices.error);
-      else for(const n of cache.notifications||[])if(noticeIds.includes(n.id)&&!n.read_at)n.read_at=readStamp;
+    if(dmAtomicReads!==false){
+      const result=await readRequest(()=>db.rpc('club_mark_dm_read',{p_peer:peerId,p_message:latest.id,p_notices:noticeIds}));
+      if(!valid())return;
+      if(result.error){if(['PGRST202','42883'].includes(result.error.code))dmAtomicReads=false;else throw result.error;}
+      else{if(!result.data?.last_read_at)throw Error('The read confirmation was incomplete.');dmAtomicReads=true;stamp=result.data.last_read_at;marked=result.data.read_notice_ids||[];counts=result.data.counts;}
     }
-    await refreshUnreadCounts();void refreshInboxUnreadCount();
-  }catch(e){console.error(e);}
-  finally{dmReadInFlight.delete(peerId);}
+    if(dmAtomicReads===false){
+      // Older projects grant UPDATE only on last_read_at. An upsert would also
+      // request UPDATE on user_id/peer_id and be rejected, even on first insert.
+      const existing=await readRequest(()=>db.from('direct_message_reads').select('last_read_at').eq('user_id',owner).eq('peer_id',peerId).maybeSingle());if(existing.error)throw existing.error;
+      if(existing.data?.last_read_at&&dmTime(existing.data.last_read_at)>dmTime(stamp))stamp=existing.data.last_read_at;
+      const update=()=>readRequest(()=>db.from('direct_message_reads').update({last_read_at:stamp}).eq('user_id',owner).eq('peer_id',peerId).lt('last_read_at',stamp));
+      const saved=existing.data?.last_read_at?await update():await readRequest(()=>db.from('direct_message_reads').insert({user_id:owner,peer_id:peerId,last_read_at:stamp}));
+      if(saved.error){if(saved.error.code==='23505'){const retry=await update();if(retry.error)throw retry.error;}else throw saved.error;}
+      if(!valid())return;
+      if(noticeIds.length){
+        const notices=await readRequest(()=>db.from('notifications').update({read_at:new Date().toISOString()}).eq('user_id',owner).eq('kind','direct_message').eq('target_id',peerId).in('id',noticeIds).is('read_at',null));
+        if(notices.error)throw notices.error;marked=noticeIds;
+      }
+    }
+    if(!valid())return;
+    cache.direct_message_reads=(cache.direct_message_reads||[]).filter(r=>r.peer_id!==peerId).concat({user_id:owner,peer_id:peerId,last_read_at:stamp});
+    const readStamp=new Date().toISOString();let cleared=0;
+    for(const n of cache.notifications||[])if(marked.includes(n.id)&&!n.read_at){n.read_at=readStamp;cleared++;}
+    if(inboxUnreadCount!==null)inboxUnreadCount=Math.max(0,inboxUnreadCount-cleared);
+    const countsFresh=counts&&countVersion===unreadCountRequest;
+    ++unreadCountRequest; // Discard count requests that started before this commit.
+    if(countsFresh)applyUnreadCounts(counts);else await refreshUnreadCounts();
+    if(!valid())return;
+    if(activePeerId===peerId){dmReadError='';const status=$('#dmReadStatus');if(status){status.hidden=true;status.textContent='';}}
+    updateInboxIndicators();void refreshInboxUnreadCount();
+  }catch(error){if(valid()&&activePeerId===peerId){dmReadError='Read confirmation is waiting for a connection. It will retry automatically.';const status=$('#dmReadStatus');if(status){status.textContent=dmReadError;status.hidden=false;}}console.error('Confirm message read',error);}
+  finally{dmReadInFlight.delete(readKey);}
 }
+
 function projects() {
   const list=cache.projects||[];
   projectListPage=Math.min(projectListPage,Math.max(0,Math.ceil(list.length/50)-1));
@@ -2386,7 +2417,7 @@ function classworkForStudent(courseId=null){
   const ids=new Set((cache.course_enrollments||[]).filter(e=>e.learner_id===session?.user.id).map(e=>e.course_id));
   return (cache.classroom_assignments||[]).filter(a=>ids.has(a.course_id)&&(!courseId||a.course_id===courseId)&&(!a.learner_id||a.learner_id===session?.user.id)).sort((a,b)=>new Date(a.due_at||'9999-12-31')-new Date(b.due_at||'9999-12-31')||new Date(b.created_at)-new Date(a.created_at));
 }
-function classworkAttempts(assignmentId,learnerId=session?.user.id){return (cache.classroom_assignment_submissions||[]).filter(s=>s.assignment_id===assignmentId&&s.learner_id===learnerId).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)||String(b.id).localeCompare(String(a.id)));}
+function classworkAttempts(assignmentId,learnerId=session?.user.id){return (cache.classroom_assignment_submissions||[]).filter(s=>s.assignment_id===assignmentId&&s.learner_id===learnerId).sort((a,b)=>dmTime(b.created_at)-dmTime(a.created_at)||String(b.id).localeCompare(String(a.id)));}
 function learningStudentDashboard(){
   const work=learningHubReady?classworkForStudent():[],latest=work.map(a=>classworkAttempts(a.id)[0]);
   const todo=work.filter((a,i)=>!latest[i]||latest[i].review_status==='revision_requested');
@@ -3790,7 +3821,7 @@ async function openNotification(id,button) {
   if(n.target_type==='certificate'){if(!certification)throw Error('Reload SPACE to open your certificate.');await certification.open(n.target_id);return;}
   if(n.target_type==='role_change'){if(!commerce)throw Error('Reload SPACE to open role updates.');await commerce.openRole(n.target_id);return;}
   if(n.target_type==='shop_product'){close();location.hash='#shop/'+n.target_id;route();return;}
-  if(n.target_type==='shop_order'){commerce?.clearOrderRoute?.();close();location.hash='#orders/'+n.target_id;route();return;}
+  if(n.target_type==='shop_order'){commerce?.clearOrderRoute?.();close();location.hash='#'+(admin()?'order-desk':'orders')+'/'+n.target_id;route();return;}
   if(n.kind==='membership'&&/^Your account role is now /i.test(n.title||'')){await refreshCurrentAccess();location.hash='#'+(commerce?.roleDestination()||'home');route();return;}
   if(n.target_type==='channel'){activeChannelId=n.target_id;location.hash='#channels';}
   else if(n.target_type==='project'){if(await openWorkspaceDestination('projects'))projectDetail(n.target_id);}
@@ -4058,7 +4089,7 @@ async function submit(e) {
         const older=sameThread&&!wasOnOlderPage?dmThreadRows:(cache.direct_messages||[]).filter(m=>m.id!==data.id&&((m.sender_id===owner&&m.recipient_id===peer)||(m.sender_id===peer&&m.recipient_id===owner)));
         const alreadyCounted=sameThread&&dmThreadRows.some(m=>m.id===data.id);
         dmThreadPeer=peer;dmPage=0;dmTotal=Math.max((sameThread?dmTotal:older.length)+(alreadyCounted?0:1),older.filter(m=>m.id!==data.id).length+1);
-        dmThreadRows=[data,...older.filter(m=>m.id!==data.id)].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)||String(b.id).localeCompare(String(a.id)));
+        dmThreadRows=[data,...older.filter(m=>m.id!==data.id)].sort((a,b)=>dmTime(b.created_at)-dmTime(a.created_at)||String(b.id).localeCompare(String(a.id)));
         if(path)await hydrateMedia([path]);
         dmShowThreadUpdate(true);
         if(wasOnOlderPage||!sameThread)void loadDmThread();

@@ -36,8 +36,8 @@ let checks=0,p,v,order,notice;
 async function check(name,fn){await fn();checks++;console.log('PASS',name);}
 try{
  await prepareFixture(db);
- for(const name of ['upgrade_role_acknowledgements.sql','upgrade_club_shop.sql','upgrade_shop_product_alerts.sql','upgrade_shop_order_tracking.sql'])await db.query(fs.readFileSync(new URL('../supabase/'+name,import.meta.url),'utf8'));
- await check('Migrations rerun without losing 2,000 accounts',async()=>{for(const name of ['upgrade_role_acknowledgements.sql','upgrade_club_shop.sql','upgrade_shop_product_alerts.sql','upgrade_shop_order_tracking.sql'])await db.query(fs.readFileSync(new URL('../supabase/'+name,import.meta.url),'utf8'));assert.equal(await count('profiles'),2000);});
+ for(const name of ['upgrade_role_acknowledgements.sql','upgrade_club_shop.sql','upgrade_shop_product_alerts.sql','upgrade_shop_order_tracking.sql','upgrade_order_desk_dm_reads.sql'])await db.query(fs.readFileSync(new URL('../supabase/'+name,import.meta.url),'utf8'));
+ await check('Migrations rerun without losing 2,000 accounts',async()=>{for(const name of ['upgrade_role_acknowledgements.sql','upgrade_club_shop.sql','upgrade_shop_product_alerts.sql','upgrade_shop_order_tracking.sql','upgrade_order_desk_dm_reads.sql'])await db.query(fs.readFileSync(new URL('../supabase/'+name,import.meta.url),'utf8'));assert.equal(await count('profiles'),2000);});
  await check('Only administrators can assign roles and every change carries the administrator note',async()=>{
   const args={p_user:uuid(11),p_role:'teacher',p_tracks:['AI & Machine Learning'],p_note:'Lead the practical AI workshops, please.'};
   await denied(()=>rpc(10,'space_assign_account_role',args));await rpc(1,'space_assign_account_role',args);
@@ -144,6 +144,49 @@ try{
   await db.query('alter table public.space_shop_orders disable trigger shop_receipt_after_delivery');try{await act(1,oo,'delivered','SYNTHETIC-HISTORIC');}finally{await db.query('alter table public.space_shop_orders enable trigger shop_receipt_after_delivery');}
   assert.equal(await rpc(53,'space_shop_order_receipt',{p_order:oo}),null);const before=await count('notifications');
   const migration=fs.readFileSync(new URL('../supabase/upgrade_shop_order_tracking.sql',import.meta.url),'utf8');await db.query(migration);assert(await rpc(53,'space_shop_order_receipt',{p_order:oo}));assert.equal(await count('notifications'),before);await db.query(migration);assert.equal(await count('space_shop_receipts','order_id=$1',[oo]),1);assert.equal(await count('notifications'),before);
+ });
+ await check('The order desk totals include every order and are administrator-only',async()=>{
+  const summary=await rpc(1,'space_shop_order_summary');assert.equal(summary.all,await count('space_shop_orders'));
+  for(const status of ['pending','confirmed','ready','collected','cancelled'])assert.equal(summary[status],await count('space_shop_orders','status=$1',[status]));
+  const sums=(await db.query("select coalesce(sum(total_cents) filter(where status in ('pending','confirmed','ready')),0) active,coalesce(sum(total_cents) filter(where status='collected' and payment_status='paid'),0) paid from space_shop_orders")).rows[0];assert.equal(summary.active_cents,Number(sums.active));assert.equal(summary.paid_cents,Number(sums.paid));
+  await denied(()=>rpc(10,'space_shop_order_summary'));await denied(()=>rpc(13,'space_shop_order_summary'));
+ });
+ let incoming,unseen,ownNotice,foreignNotice;
+ await check('The original column grants reject the old read-position upsert',async()=>{
+  await db.query('delete from direct_messages where sender_id in ($1,$2) and recipient_id in ($1,$2)',[uuid(1900),uuid(1901)]);await db.query('delete from direct_message_reads where user_id=$1 and peer_id=$2',[uuid(1901),uuid(1900)]);
+  await denied(()=>as(1901,"insert into direct_message_reads(user_id,peer_id,last_read_at) values(auth.uid(),$1,now()) on conflict(user_id,peer_id) do update set user_id=excluded.user_id,peer_id=excluded.peer_id,last_read_at=excluded.last_read_at",[uuid(1900)]),/permission/i);
+ });
+ await check('Atomic reading clears delayed alerts and keeps a newer unseen message unread',async()=>{
+  incoming=(await as(1900,"insert into direct_messages(sender_id,recipient_id,body,created_at) values(auth.uid(),$1,'Visible message',now()-interval '3 seconds') returning *",[uuid(1901)])).rows[0];
+  ownNotice=(await db.query("select * from notifications where user_id=$1 and target_id=$2 and kind='direct_message' and read_at is null order by created_at desc limit 1",[uuid(1901),uuid(1900)])).rows[0];
+  unseen=(await as(1900,"insert into direct_messages(sender_id,recipient_id,body,created_at) values(auth.uid(),$1,'Arrived after the visible snapshot',now()-interval '2 seconds') returning *",[uuid(1901)])).rows[0];
+  foreignNotice=(await db.query("insert into notifications(user_id,kind,title,target_type,target_id) values($1,'direct_message','Another account alert','direct_message',$2) returning *",[uuid(1902),uuid(1900)])).rows[0];
+  const result=await rpc(1901,'club_mark_dm_read',{p_peer:uuid(1900),p_message:incoming.id,p_notices:[ownNotice.id,foreignNotice.id]});
+  assert.equal(new Date(result.last_read_at).getTime(),new Date(incoming.created_at).getTime());assert.equal(result.counts.direct_messages[uuid(1900)],1);assert(result.read_notice_ids.includes(ownNotice.id));assert(!result.read_notice_ids.includes(foreignNotice.id));
+  assert.equal(await count('notifications','id=$1 and read_at is not null',[ownNotice.id]),1);assert.equal(await count('notifications','id=$1 and read_at is not null',[foreignNotice.id]),0);
+ });
+ await check('The sender receives a pair-scoped read receipt and cannot inspect unrelated receipts',async()=>{
+  const stamp=await rpc(1900,'club_dm_peer_read_at',{p_peer_id:uuid(1901)});assert.equal(new Date(stamp).getTime(),new Date(incoming.created_at).getTime());
+  await db.query('delete from direct_messages where sender_id=$1 and recipient_id=$2',[uuid(1902),uuid(1901)]);assert.equal(await rpc(1902,'club_dm_peer_read_at',{p_peer_id:uuid(1901)}),null);
+  await denied(()=>rpc(1902,'club_mark_dm_read',{p_peer:uuid(1900),p_message:incoming.id}),/unavailable/i);await denied(()=>rpc(1901,'club_mark_dm_read',{p_peer:uuid(1902),p_message:incoming.id}),/unavailable/i);await denied(()=>rpc(13,'club_mark_dm_read',{p_peer:uuid(1900),p_message:incoming.id}));
+ });
+ await check('Read retries cannot move the cursor backwards and already-read alerts are returned',async()=>{
+  const latest=await rpc(1901,'club_mark_dm_read',{p_peer:uuid(1900),p_message:unseen.id,p_notices:[ownNotice.id]});assert.equal(latest.counts.direct_messages[uuid(1900)],undefined);assert(latest.read_notice_ids.includes(ownNotice.id));
+  const retry=await rpc(1901,'club_mark_dm_read',{p_peer:uuid(1900),p_message:incoming.id});assert.equal(new Date(retry.last_read_at).getTime(),new Date(unseen.created_at).getTime());
+  const before=await count('space_shop_orders');await db.query(fs.readFileSync(new URL('../supabase/upgrade_order_desk_dm_reads.sql',import.meta.url),'utf8'));assert.equal(await count('space_shop_orders'),before);assert.equal((await db.query("select has_function_privilege('anon','public.club_mark_dm_read(uuid,uuid,uuid[])','execute') allowed")).rows[0].allowed,false);
+ });
+ await check('A future-dated incoming message cannot create a future read receipt',async()=>{
+  const future=(await as(1900,"insert into direct_messages(sender_id,recipient_id,body,created_at) values(auth.uid(),$1,'Synthetic future timestamp',now()+interval '1 hour') returning id",[uuid(1901)])).rows[0];
+  await rpc(1901,'club_mark_dm_read',{p_peer:uuid(1900),p_message:future.id});const allowed=(await db.query('select last_read_at<=now() allowed from direct_message_reads where user_id=$1 and peer_id=$2',[uuid(1901),uuid(1900)])).rows[0].allowed;assert.equal(allowed,true);
+ });
+ await check('Migration cleanup clears old covered alerts and retains later alerts',async()=>{
+  await db.query('update direct_message_reads set last_read_at=$1 where user_id=$2 and peer_id=$3',[unseen.created_at,uuid(1901),uuid(1900)]);
+  const rows=(await db.query("insert into notifications(user_id,kind,title,target_type,target_id,created_at) values($1,'direct_message','Covered legacy alert','direct_message',$2,$3::timestamptz-interval '1 second'),($1,'direct_message','Later legacy alert','direct_message',$2,$3::timestamptz+interval '1 second') returning id",[uuid(1901),uuid(1900),unseen.created_at])).rows;
+  await db.query(fs.readFileSync(new URL('../supabase/upgrade_order_desk_dm_reads.sql',import.meta.url),'utf8'));assert.equal(await count('notifications','id=$1 and read_at is not null',[rows[0].id]),1);assert.equal(await count('notifications','id=$1 and read_at is not null',[rows[1].id]),0);
+ });
+ if(native)await check('Concurrent read confirmations retain the latest visible message boundary',async()=>{
+  await db.query('delete from direct_message_reads where user_id=$1 and peer_id=$2',[uuid(1901),uuid(1900)]);
+  await Promise.all([rpc(1901,'club_mark_dm_read',{p_peer:uuid(1900),p_message:unseen.id}),rpc(1901,'club_mark_dm_read',{p_peer:uuid(1900),p_message:incoming.id})]);const stamp=await rpc(1900,'club_dm_peer_read_at',{p_peer_id:uuid(1901)});assert.equal(new Date(stamp).getTime(),new Date(unseen.created_at).getTime());
  });
  if(native)await check('Concurrent delivery retries issue one receipt and one stock deduction',async()=>{
   const pp=await product('Synthetic receipt delivery race'),vv=await option(pp,5),oo=await buy(54,vv);await Promise.all([act(1,oo,'delivered','SYNTHETIC-DELIVERY'),act(1,oo,'delivered','SYNTHETIC-DELIVERY')]);
