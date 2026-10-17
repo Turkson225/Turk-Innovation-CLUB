@@ -52,7 +52,7 @@ function migrateSavedAuth(){
 }
 migrateSavedAuth();
 const db = configured && !startupRecovery ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storageKey:authStorageKey, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
-let commerce=null,certification=null,mobileWorkspace=null,guidance=null,memberWall=null,bento=null,cardSwap=null;
+let commerce=null,certification=null,mobileWorkspace=null,guidance=null,memberWall=null,bento=null,cardSwap=null,memberId=null;
 let sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1204,7 +1204,7 @@ function completeLoginWelcome(generation){
 // Guard requests during explicit sign-out; there is no app-imposed idle timeout.
 function checkSessionExpiry(){return sessionEnding;}
 function expireSession(message,prompt=true) {
-  cardSwap?.reset();bento?.reset();memberWall?.reset();guidance?.reset();classroomView='overview';classroomPeoplePage=0;classroomProjectPage=0;classroomWorkPage=0;classroomTaskPage=0;
+  memberId?.reset();cardSwap?.reset();bento?.reset();memberWall?.reset();guidance?.reset();classroomView='overview';classroomPeoplePage=0;classroomProjectPage=0;classroomWorkPage=0;classroomTaskPage=0;
   if(!session||sessionEnding)return;
   sessionEnding=true;authStateRequest++;authFormEpoch++;authPersistentStorage.setItem(SIGNED_OUT_KEY,String(Date.now()));
   // Clear private UI and invalidate pending loads before waiting for any network.
@@ -1361,7 +1361,7 @@ async function init() {
   document.documentElement.dataset.theme=savedTheme==='dark'?'dark':'light';
   $('#themeButton').onclick=()=>{const next=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=next;try{localStorage.setItem('innovatex.theme',next);}catch{}updateThemeButton();};
   updateThemeButton();
-  mobileWorkspace=window.SpaceMobile?.create({get:mobileWorkspaceState,esc,icon:name=>iconSvg(name==='more'?'menu':name),menu:setSidebarOpen,viewportChange:updateWorkspaceNavigation,action:action=>{if(action==='theme')$('#themeButton').click();else if(action==='accounts')accountsDialog();else if(action==='sound')$('#adminSoundButton').click();else if(action==='signout')void signOut();else if(action==='signin')signInDialog('signin');}})||null;
+  mobileWorkspace=window.SpaceMobile?.create({get:mobileWorkspaceState,esc,icon:name=>iconSvg(name==='more'?'menu':name),menu:setSidebarOpen,viewportChange:updateWorkspaceNavigation,action:action=>{if(action==='theme')$('#themeButton').click();else if(action==='accounts')accountsDialog();else if(action==='memberId'){if(memberId)memberId.open();else show('Reload SPACE to open your member ID.');}else if(action==='sound')$('#adminSoundButton').click();else if(action==='signout')void signOut();else if(action==='signin')signInDialog('signin');}})||null;
   $('#todayLabel').textContent=new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
   $('#menuBtn').onclick=()=>setSidebarOpen(!$('#sidebar').classList.contains('open'));
   $('#sidebar').addEventListener('click',e=>{
@@ -1545,6 +1545,7 @@ function route() {
 }
 function render() {
   updateNetworkStatus();
+  memberId?.check();
   const memberFocus=page==='members'&&document.activeElement?.id==='memberSearch'?{start:document.activeElement.selectionStart,end:document.activeElement.selectionEnd}:null;
   const previousDmStream=page==='messages'?$('#dmStream'):null;
   const previousDmList=page==='messages'?$('.dm-list'):null;
@@ -2096,7 +2097,7 @@ function memberProfile(id){
   const p=directoryPeople().find(x=>x.id===id);if(!p)return;
   ensureMemberDirectory();
   const online=memberOnline(p),name=memberDisplayName(p),skills=memberSkills(p),shared=memberSharedSkills(p),own=p.id===session?.user.id;
-  modal(`<div class="member-profile-hero">${p.avatar_path?`<button type="button" class="profile-photo-trigger" data-action="viewProfilePhoto" data-id="${esc(p.id)}" aria-label="View ${esc(name)}’s profile photo full screen">${memberAvatar(p.id,true)}<span class="profile-photo-hint">Tap to enlarge</span></button>`:memberAvatar(p.id,true)}<span class="tag ${online?'':'blue'}">${online?'Online now':memberAvailability(p)}</span></div><h2>${esc(name)}</h2>${roleBadge(p)}${memberNew(p)?'<span class="member-new">New here</span>':''}<p class="profile-headline">${esc(p.headline||p.programme||'Club member')}</p><p class="subtle">${p.handle?'@'+esc(p.handle)+' · ':''}${esc(p.programme||'TURK INNOVATION CLUB')}</p><div class="profile-facts"><div><small>Role</small><strong>${esc(p.role||'member')}</strong></div><div><small>Availability</small><strong>${memberAvailability(p)}</strong></div><div><small>Joined</small><strong>${date(p.created_at)}</strong></div></div><h3>About</h3><p class="profile-bio">${esc(p.bio||'This member has not added a bio yet.')}</p><h3>Skills & interests</h3><div class="member-profile-skills">${skills.length?skills.map(s=>`<button type="button" class="member-skill ${shared.some(x=>memberText(x)===memberText(s))?'is-shared':''}" data-action="memberSkill" data-skill="${esc(s)}">${esc(s)}</button>`).join(''):'<span class="subtle">Not listed yet.</span>'}</div>${shared.length?`<p class="member-shared-note">${memberDirectoryIcon('spark')} You share ${shared.length} ${shared.length===1?'interest':'interests'}: ${esc(shared.join(', '))}.</p>`:''}<div class="profile-buttons member-profile-tools">${own?`${avatarReady?button('Change photo','avatarForm','button-outline'):''}${button('Edit my profile','profileForm')}`:dmReady?`<button class="button" data-action="openDm" data-id="${esc(p.id)}">${iconSvg('messages')} Message ${esc(name.split(/\s+/)[0])}</button>`:''}${!own?`<button type="button" class="button button-outline" data-action="memberSave" data-id="${esc(p.id)}" data-modal="true" aria-pressed="${memberSavedIds.has(p.id)}">${memberDirectoryIcon('save')} ${memberSavedIds.has(p.id)?'Saved':'Save member'}</button>`:''}${memberProfileId(p.id)&&p.profile_visibility!=='private'?`<button type="button" class="button button-outline" data-action="memberCopyLink" data-id="${esc(p.id)}">${memberDirectoryIcon('link')} Copy profile link</button>`:''}</div><p class="subtle member-profile-note">${p.profile_visibility==='private'?'This profile is private.':'Profile links require an approved club account.'} Saved members stay on this device.</p>`);
+  modal(`<div class="member-profile-hero">${p.avatar_path?`<button type="button" class="profile-photo-trigger" data-action="viewProfilePhoto" data-id="${esc(p.id)}" aria-label="View ${esc(name)}’s profile photo full screen">${memberAvatar(p.id,true)}<span class="profile-photo-hint">Tap to enlarge</span></button>`:memberAvatar(p.id,true)}<span class="tag ${online?'':'blue'}">${online?'Online now':memberAvailability(p)}</span></div><h2>${esc(name)}</h2>${roleBadge(p)}${memberNew(p)?'<span class="member-new">New here</span>':''}<p class="profile-headline">${esc(p.headline||p.programme||'Club member')}</p><p class="subtle">${p.handle?'@'+esc(p.handle)+' · ':''}${esc(p.programme||'TURK INNOVATION CLUB')}</p><div class="profile-facts"><div><small>Role</small><strong>${esc(p.role||'member')}</strong></div><div><small>Availability</small><strong>${memberAvailability(p)}</strong></div><div><small>Joined</small><strong>${date(p.created_at)}</strong></div></div><h3>About</h3><p class="profile-bio">${esc(p.bio||'This member has not added a bio yet.')}</p><h3>Skills & interests</h3><div class="member-profile-skills">${skills.length?skills.map(s=>`<button type="button" class="member-skill ${shared.some(x=>memberText(x)===memberText(s))?'is-shared':''}" data-action="memberSkill" data-skill="${esc(s)}">${esc(s)}</button>`).join(''):'<span class="subtle">Not listed yet.</span>'}</div>${shared.length?`<p class="member-shared-note">${memberDirectoryIcon('spark')} You share ${shared.length} ${shared.length===1?'interest':'interests'}: ${esc(shared.join(', '))}.</p>`:''}<div class="profile-buttons member-profile-tools">${own?`${avatarReady?button('Change photo','avatarForm','button-outline'):''}${button('Edit my profile','profileForm')}${approved()?button('My member ID','memberId','button-outline'):''}`:dmReady?`<button class="button" data-action="openDm" data-id="${esc(p.id)}">${iconSvg('messages')} Message ${esc(name.split(/\s+/)[0])}</button>`:''}${!own?`<button type="button" class="button button-outline" data-action="memberSave" data-id="${esc(p.id)}" data-modal="true" aria-pressed="${memberSavedIds.has(p.id)}">${memberDirectoryIcon('save')} ${memberSavedIds.has(p.id)?'Saved':'Save member'}</button>`:''}${memberProfileId(p.id)&&p.profile_visibility!=='private'?`<button type="button" class="button button-outline" data-action="memberCopyLink" data-id="${esc(p.id)}">${memberDirectoryIcon('link')} Copy profile link</button>`:''}</div><p class="subtle member-profile-note">${p.profile_visibility==='private'?'This profile is private.':'Profile links require an approved club account.'} Saved members stay on this device.</p>`);
   if(p.avatar_path&&!mediaUrl(p.avatar_path))void hydrateMedia([p.avatar_path]).then(changed=>{
     const trigger=$('#modal .profile-photo-trigger');
     if(changed&&trigger?.dataset.id===id&&trigger.querySelector('.avatar'))trigger.querySelector('.avatar').outerHTML=memberAvatar(id,true);
@@ -3221,11 +3222,11 @@ function accountTabUrl(separate=false){
 }
 function accountsDialog(){
   const email=session?.user.email||me?.email||'',name=me?.full_name||'SPACE account';
-  modal(`<span class="eyebrow">ACCOUNTS</span><h2>Choose how to sign in</h2><div class="account-current"><strong>${esc(name)}</strong>${email?`<span>${esc(email)}</span>`:''}${me?roleBadge(me):''}<small>${separateAccountTab?'This account stays in this tab. Refreshing keeps you signed in.':'Your main account is remembered on this browser.'}</small></div><div class="account-choices"><a class="button" href="${esc(accountTabUrl(true))}" target="_blank" rel="noopener noreferrer">Open another account in a new tab ↗</a><button class="button button-outline" type="button" data-action="separateAccountHere">Sign in to another account here</button>${separateAccountTab?`<button class="text-button" type="button" data-action="mainAccountHere">Return to my main account</button>`:''}</div><p class="hint">Keep your admin, teacher and member accounts open side by side. Each separate tab has its own sign-in and sign-out. Separate account sessions end when their tab is closed.</p>`);
+  modal(`<span class="eyebrow">ACCOUNTS</span><h2>Choose how to sign in</h2><div class="account-current"><strong>${esc(name)}</strong>${email?`<span>${esc(email)}</span>`:''}${me?roleBadge(me):''}<small>${separateAccountTab?'This account stays in this tab. Refreshing keeps you signed in.':'Your main account is remembered on this browser.'}</small></div><div class="account-choices">${approved()?button('My member ID','memberId','button-outline'):''}<a class="button" href="${esc(accountTabUrl(true))}" target="_blank" rel="noopener noreferrer">Open another account in a new tab ↗</a><button class="button button-outline" type="button" data-action="separateAccountHere">Sign in to another account here</button>${separateAccountTab?`<button class="text-button" type="button" data-action="mainAccountHere">Return to my main account</button>`:''}</div><p class="hint">Keep your admin, teacher and member accounts open side by side. Each separate tab has its own sign-in and sign-out. Separate account sessions end when their tab is closed.</p>`);
 }
 function changeAccountTab(separate=true){
   if(accountNavigationPending)return;
-  accountNavigationPending=true;authStateRequest++;authFormEpoch++;authGeneration++;sessionEnding=true;
+  memberId?.reset();accountNavigationPending=true;authStateRequest++;authFormEpoch++;authGeneration++;sessionEnding=true;
   void db?.auth.stopAutoRefresh().catch(console.error);
   // Detach this tab without revoking the account in another window.
   for(const suffix of ['', '-code-verifier','-user','-space-signed-out'])authTabStorage.removeItem(separateSessionKey+suffix);
@@ -3291,6 +3292,7 @@ function actions(e) {
   if(['onboardingDismiss','onboardingShow','onboardingReload','healthReload','healthReview'].includes(action)){void guidance?.action(action,el);return;}
   if(action==='onboardingTeachingProfile'&&teacher()){teachingTab='profile';location.hash='#teaching';render();return;}
   if(['classroomPeoplePage','classroomProjectPage','classroomWorkPage','classroomTaskPage'].includes(action)&&page==='classroom'&&courseManager((cache.courses||[]).find(c=>c.id===activeCourseId))){if(action==='classroomPeoplePage')classroomPeoplePage=Math.max(0,Number(el.dataset.page)||0);else if(action==='classroomProjectPage')classroomProjectPage=Math.max(0,Number(el.dataset.page)||0);else if(action==='classroomWorkPage')classroomWorkPage=Math.max(0,Number(el.dataset.page)||0);else classroomTaskPage=Math.max(0,Number(el.dataset.page)||0);render();return;}
+  if(action==='memberId'){if(approved()){if(memberId)return memberId.open();show('Reload SPACE to open your member ID.');}return;}
   if(action==='accounts')return accountsDialog();
   if(action==='separateAccountHere')return changeAccountTab(true);
   if(action==='mainAccountHere')return changeAccountTab(false);
@@ -5026,6 +5028,16 @@ async function refreshCurrentAccess(){
   if(session?.user.id!==currentSession.user.id)return;
   await loadOwnOfficerAccess(authGeneration);updateWorkspaceNavigation();render();
 }
+function memberIdState(){
+ const teaches=me?.role==='teacher'||me?.role==='founder'&&teacher();
+ return {id:session?.user.id||'',generation:authGeneration,page,approved:!!session&&!sessionEnding&&approved(),teacher:teaches,tracks:teaches?allowedTeachingTracks():ownLearningTracks,profile:me?{id:me.id,full_name:me.full_name,role:me.role,handle:me.handle,created_at:me.created_at}:null};
+}
+memberId=window.SpaceMemberID?.create({modal,close,get:memberIdState,photo:async()=>{
+ const owner=session?.user.id,generation=authGeneration,path=me?.avatar_path;if(!owner||!approved()||!mediaReady||!path)return '';
+ const saved=mediaUrls.get(path);if(saved&&saved.expires>Date.now()+60000)return saved.url;
+ const {data,error}=await db.storage.from('club-media').createSignedUrl(path,900);
+ if(error||session?.user.id!==owner||authGeneration!==generation||!approved())return '';return data?.signedUrl||'';
+}})||null;
 cardSwap=window.SpaceCardSwap?.create({get:()=>({id:session?.user.id||'guest',generation:authGeneration,page})})||null;
 bento=window.SpaceBento?.create({get:()=>({id:session?.user.id||'guest',generation:authGeneration,page})})||null;
 memberWall=window.SpaceMemberWall?.create({esc,get:()=>({id:session?.user.id||'',generation:authGeneration,allowed:clubAccess(),page}),photo:id=>{const p=directoryResults().find(p=>p.id===id);return p?mediaUrl(p.avatar_path):'';}})||null;
