@@ -52,7 +52,7 @@ function migrateSavedAuth(){
 }
 migrateSavedAuth();
 const db = configured && !startupRecovery ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storageKey:authStorageKey, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
-let commerce=null,certification=null,mobileWorkspace=null,guidance=null,memberWall=null,bento=null,cardSwap=null,memberId=null;
+let commerce=null,certification=null,mobileWorkspace=null,guidance=null,memberWall=null,bento=null,cardSwap=null,memberId=null,sharedGlow=null;
 let sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1204,7 +1204,7 @@ function completeLoginWelcome(generation){
 // Guard requests during explicit sign-out; there is no app-imposed idle timeout.
 function checkSessionExpiry(){return sessionEnding;}
 function expireSession(message,prompt=true) {
-  memberId?.reset();cardSwap?.reset();bento?.reset();memberWall?.reset();guidance?.reset();classroomView='overview';classroomPeoplePage=0;classroomProjectPage=0;classroomWorkPage=0;classroomTaskPage=0;
+  sharedGlow?.reset();memberId?.reset();cardSwap?.reset();bento?.reset();memberWall?.reset();guidance?.reset();classroomView='overview';classroomPeoplePage=0;classroomProjectPage=0;classroomWorkPage=0;classroomTaskPage=0;
   if(!session||sessionEnding)return;
   sessionEnding=true;authStateRequest++;authFormEpoch++;authPersistentStorage.setItem(SIGNED_OUT_KEY,String(Date.now()));
   // Clear private UI and invalidate pending loads before waiting for any network.
@@ -1573,19 +1573,20 @@ function render() {
   $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
   if(workspaceLoadError||workspaceLoading||workspaceHydrating&&!learningSelectionRequired()&&!(pageRefreshDependencies[page]||[]).every(name=>Object.hasOwn(cache,name))){
     $('#content').classList.remove('dm-view');
-    window.SpaceChatWaves?.sync(null);memberWall?.sync(null);bento?.sync(null);cardSwap?.sync(null);
+    sharedGlow?.sync(null);window.SpaceChatWaves?.sync(null);memberWall?.sync(null);bento?.sync(null);cardSwap?.sync(null);
     const load=workspacePageLoads.get(page);
     $('#content').innerHTML=workspaceLoadError?`<section class="workspace-start"><h1>Let’s open your workspace</h1><p>${esc(workspaceLoadError)}</p><button class="button" data-action="retryWorkspace">Retry account check</button></section>`:workspaceSkeleton(page,{account:workspaceLoading,slow:load?.slow,error:load?.status==='error'});
     return;
   }
   const load=workspacePageLoads.get(page);
   if(session&&approved()&&load&&!load.hadData&&['loading','offline','error'].includes(load.status)&&!learningSelectionRequired()){
-    window.SpaceChatWaves?.sync(null);memberWall?.sync(null);bento?.sync(null);cardSwap?.sync(null);$('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
+    sharedGlow?.sync(null);window.SpaceChatWaves?.sync(null);memberWall?.sync(null);bento?.sync(null);cardSwap?.sync(null);$('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
   }
   const views={'getting-started':()=>guidance?.welcome()||head('WELCOME','Getting started','Reload SPACE to open your welcome guide.'),'system-health':()=>admin()?(guidance?.healthView()||head('ADMINISTRATION','System health','Reload SPACE to open the checks.')):'',...Object.fromEntries(['shop','cart','orders','order-desk','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
   $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'?(guidance?.banner()||'')+(commerce?.homeRoleBanner()||'')+(commerce?.homeShopBanner?.()||''):'')+(page==='admin'?'<a class="admin-order-shortcut" href="#order-desk"><strong>Orders &amp; fulfilment</strong><span>Process new purchases, update status and send receipts →</span></a>':'')+views[page]();
   window.SpaceChatWaves?.sync($('#content'));
+  sharedGlow?.sync($('#content'));
   memberWall?.sync($('#content'));
   bento?.sync($('#content'));
   cardSwap?.sync($('#content'));
@@ -2220,7 +2221,7 @@ function messages(){
   }).join('')||(dmListView==='chats'?`<div class="dm-empty"><h3>Your next conversation</h3><p>Find a member to share ideas or talk about a project.</p><button type="button" class="button button-outline button-sm" data-action="setDmListView" data-view="people">Find members</button></div>`:empty('No members yet','Approved members will appear here.'))}
   ${dmInboxReady&&dmInboxMore&&dmListView==='chats'?`<div class="dm-history-loader"><button type="button" class="text-button" data-action="loadDmInboxMore" ${dmInboxLoading?'disabled':''}>${dmInboxLoading?'Loading…':'More conversations'}</button></div>`:''}</div>
   <div class="dm-conversation">${peer?`<div class="chat-head"><button type="button" class="dm-back dm-icon-button" data-action="closeDm" aria-label="Back to conversations">${dmIcon('back')}</button><div class="dm-head-person">${memberAvatar(peer.id)}<div class="dm-head-copy"><h2>${esc(peer.full_name)}</h2><p>${online?'Online':esc(peer.headline||peer.programme||'Club member')}</p></div></div><button type="button" class="dm-icon-button" data-action="toggleDmSearch" aria-label="Search conversation" aria-expanded="${dmSearchOpen}">${dmIcon('search')}</button>${window.SpaceChatWaves?.control()||''}${spaceDmTools(peer)}${peer.private_placeholder?'':`<button type="button" class="text-button dm-profile-button" data-action="memberProfile" data-id="${esc(peer.id)}">Profile</button>`}</div>${dmSearchMarkup(peer)}${dmThreadError?`<div class="notice">${esc(dmThreadError)} <button class="text-button" data-action="reloadDmThread">Retry</button></div>`:''}
-  <div class="chat-wave-surface" data-chat-waves><div id="dmStream" class="dm-stream" data-peer="${esc(peer.id)}" data-page="0" role="log" aria-label="Messages with ${esc(peer.full_name)}">${dmStreamMarkup(peer,history)}</div></div>
+  ${sharedGlow?.markup()||''}<div class="chat-wave-surface" data-chat-waves><div id="dmStream" class="dm-stream" data-peer="${esc(peer.id)}" data-page="0" role="log" aria-label="Messages with ${esc(peer.full_name)}">${dmStreamMarkup(peer,history)}</div></div>
   <p id="dmReadStatus" class="dm-read-feedback" role="status" ${dmReadError?'':'hidden'}>${esc(dmReadError)}</p>
   <form id="dmComposer" class="chat-composer" data-peer="${esc(peer.id)}">${reply}${preview}${spaceDmDocumentPreview(draft)}${dmEmojiOpen?`<div class="dm-emoji-picker" role="group" aria-label="Choose an emoji">${dmEmojis.map(emoji=>`<button type="button" data-action="insertDmEmoji" data-emoji="${esc(emoji)}" aria-label="Insert ${esc(emoji)}">${esc(emoji)}</button>`).join('')}</div>`:''}<div class="dm-compose-tools">${advancedReady?'<label class="gallery-picker dm-icon-button" title="Share a private file"><span aria-hidden="true">▤</span><span class="sr-only">Choose document</span><input name="dm_document" type="file" accept=".pdf,.txt,.csv,.zip,.docx,.xlsx,.pptx"></label>':''}<button type="button" class="dm-icon-button" data-action="toggleDmEmoji" aria-label="Choose emoji" aria-expanded="${dmEmojiOpen}">${dmIcon('emoji')}</button>${mediaReady?`<label class="gallery-picker dm-icon-button" title="Choose an image from your gallery">${dmIcon('image')}<span class="sr-only">Choose image</span><input name="dm_image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"></label>`:''}</div><label class="sr-only" for="dmBody">Message</label><textarea id="dmBody" name="body" rows="1" maxlength="3000" placeholder="Message ${esc(peer.full_name)}" aria-label="Write a message" enterkeyhint="send">${esc(draft.text)}</textarea><button class="button dm-send" type="submit" aria-label="Send message" ${dmSendingPeers.has(peer.id)?'disabled':''}>${dmIcon('send')}</button></form>`:`<div class="dm-empty"><span class="dm-empty-icon">${dmIcon('send')}</span><h2>A space for your team</h2><p>Share progress, swap ideas and keep your projects moving. Choose a conversation or find a club member.</p><button type="button" class="button button-outline" data-action="setDmListView" data-view="people">Find members</button></div>`}</div></div>`;
 }
@@ -3226,7 +3227,7 @@ function accountsDialog(){
 }
 function changeAccountTab(separate=true){
   if(accountNavigationPending)return;
-  memberId?.reset();accountNavigationPending=true;authStateRequest++;authFormEpoch++;authGeneration++;sessionEnding=true;
+  sharedGlow?.reset();memberId?.reset();accountNavigationPending=true;authStateRequest++;authFormEpoch++;authGeneration++;sessionEnding=true;
   void db?.auth.stopAutoRefresh().catch(console.error);
   // Detach this tab without revoking the account in another window.
   for(const suffix of ['', '-code-verifier','-user','-space-signed-out'])authTabStorage.removeItem(separateSessionKey+suffix);
@@ -5032,6 +5033,7 @@ function memberIdState(){
  const teaches=me?.role==='teacher'||me?.role==='founder'&&teacher();
  return {id:session?.user.id||'',generation:authGeneration,page,approved:!!session&&!sessionEnding&&approved(),teacher:teaches,tracks:teaches?allowedTeachingTracks():ownLearningTracks,profile:me?{id:me.id,full_name:me.full_name,role:me.role,handle:me.handle,created_at:me.created_at}:null};
 }
+sharedGlow=window.SpaceSharedGlow?.create({db,get:()=>({id:session?.user.id||'',generation:authGeneration,page,peer:activePeerId||'',allowed:!!session&&!sessionEnding&&clubAccess()})})||null;
 memberId=window.SpaceMemberID?.create({modal,close,get:memberIdState,photo:async()=>{
  const owner=session?.user.id,generation=authGeneration,path=me?.avatar_path;if(!owner||!approved()||!mediaReady||!path)return '';
  const saved=mediaUrls.get(path);if(saved&&saved.expires>Date.now()+60000)return saved.url;

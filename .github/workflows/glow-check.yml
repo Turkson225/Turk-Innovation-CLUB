@@ -1,0 +1,23 @@
+name: Check private shared chat drawing
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/upgrade_shared_chat_glow.sql'
+      - 'scripts/check_shared_glow_database.mjs'
+      - '.github/workflows/glow-check.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  database:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install isolated PostgreSQL engine
+        run: npm install --prefix "$RUNNER_TEMP/glow-check" --no-package-lock --ignore-scripts @electric-sql/pglite@0.3.14
+      - name: Verify pair authorization and namespace policies
+        run: SPACE_PGLITE_MODULE="$RUNNER_TEMP/glow-check/node_modules/@electric-sql/pglite" node scripts/check_shared_glow_database.mjs

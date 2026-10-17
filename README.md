@@ -5,6 +5,14 @@
 
 A responsive workspace for a practical engineering and technology club. The site is static and can be hosted on GitHub Pages. Supabase provides email sign-in and a database protected by row level security.
 
+## Draw together in direct messages — 17 October 2026
+
+The supplied GlowCursor idea is now a lightweight shared glow canvas behind one-to-one messages. Open a conversation and choose **Draw together**; the other person opens that same conversation and chooses **Join drawing**. Both can use **Draw mode**, four colors, a keyboard-accessible **Sparkle**, **Clear glow**, **Chat mode** and **Done**. Touch drawing is captured only in Draw mode; the composer stays usable. Strokes fade and are never saved as messages or files. Reduced motion and data saving use short static trails. A centered square preserves drawing proportions across phones and laptops.
+
+**Required Supabase step:** run the entire [`supabase/upgrade_shared_chat_glow.sql`](supabase/upgrade_shared_chat_glow.sql) in **SQL Editor → New query → Run**, then refresh both accounts. This adds a room-authorizing RPC and private Broadcast policies, with restrictive guards against broad existing policies. No new key, secret, bucket, global Realtime change or message-table migration is needed. Without setup, only the drawing tool shows a setup message; normal messages continue to work. Do not disable public Realtime globally for this feature, because existing platform subscriptions use their current configuration.
+
+See [`docs/shared_chat_glow.md`](docs/shared_chat_glow.md) for consent, permission limits, resource budgets and the two-account acceptance test. Automated checks use API/Canvas doubles and an isolated PostgreSQL engine; live Supabase delivery and physical-phone visual/performance checks remain outstanding.
+
 ## Member wall — 17 October 2026
 
 Open **Members → Wall** beside the Grid and List view buttons. The new view adapts the supplied React Bits DriftWall into SPACE's existing buildless app. It uses the current filtered page of up to 24 approved, visible profiles and their authorized signed avatar URLs. It does not fetch all members, add demo faces, reveal private peer profiles or change database permissions.

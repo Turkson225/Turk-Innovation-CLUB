@@ -186,12 +186,14 @@ void main() {
 const KEY = 'space.chat-waves.v1';
 const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)');
 const small = window.matchMedia?.('(max-width: 740px)');
+const holds = new Set();
 let enabled = true, renderer = null, host = null, unsupported = false;
 try { enabled = localStorage.getItem(KEY) !== 'still'; } catch {}
 const restricted = () => !!(reduced?.matches || navigator.connection?.saveData || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2) || (navigator.deviceMemory && navigator.deviceMemory <= 2));
-const mayAnimate = () => enabled && !restricted() && !unsupported;
+const mayAnimate = () => enabled && !holds.size && !restricted() && !unsupported;
 const icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 6c3-4 6 4 9 0s6 4 9 0M3 12c3-4 6 4 9 0s6 4 9 0M3 18c3-4 6 4 9 0s6 4 9 0"/></svg>';
 function label() {
+  if (holds.size) return 'Animated wallpaper paused while shared drawing is active';
   if (reduced?.matches) return 'Still chat background: reduced motion is enabled on your device';
   if (unsupported) return 'Still chat background: animation is unavailable on this device';
   if (restricted()) return 'Still chat background: saving device resources';
@@ -202,7 +204,7 @@ function controls() {
     button.setAttribute('aria-label', label());
     button.setAttribute('title', label());
     button.setAttribute('aria-pressed', String(mayAnimate()));
-    button.disabled = restricted() || unsupported;
+    button.disabled = restricted() || unsupported || !!holds.size;
   });
 }
 function release() {
@@ -357,10 +359,11 @@ function createRenderer(initialHost) {
 }
 window.SpaceChatWaves = {
   sync,
-  control() { return `<button type="button" class="dm-icon-button chat-wave-toggle" data-chat-wave-toggle aria-pressed="${mayAnimate()}" aria-label="${label()}" title="${label()}" ${restricted() || unsupported ? 'disabled' : ''}>${icon}</button>`; }
+  hold(key, paused) { const before=holds.size; if(paused)holds.add(key);else holds.delete(key);if(before!==holds.size)refresh(); },
+  control() { return `<button type="button" class="dm-icon-button chat-wave-toggle" data-chat-wave-toggle aria-pressed="${mayAnimate()}" aria-label="${label()}" title="${label()}" ${restricted() || unsupported || !!holds.size ? 'disabled' : ''}>${icon}</button>`; }
 };
 document.addEventListener('click', event => {
-  if (!event.target.closest?.('[data-chat-wave-toggle]') || restricted() || unsupported) return;
+  if (!event.target.closest?.('[data-chat-wave-toggle]') || restricted() || unsupported || !!holds.size) return;
   event.preventDefault(); enabled = !enabled;
   try { localStorage.setItem(KEY, enabled ? 'animated' : 'still'); } catch {}
   refresh();

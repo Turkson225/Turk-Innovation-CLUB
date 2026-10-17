@@ -45,6 +45,8 @@ jobs:
           node scripts/check_club_guidance.mjs
           node --check mobile-workspace.js
           node scripts/check_mobile_workspace.mjs
+          node --check shared-chat-glow.js
+          node scripts/check_shared_chat_glow.mjs
           node --check chat-waves.js
           node scripts/check_chat_waves.mjs
           node --check club-certificates.js
@@ -59,7 +61,7 @@ jobs:
       - name: Prepare static site
         run: |
           mkdir -p _site
-          cp index.html reset-password.html reset-password.js club-certificates.js club-certificates.css certificate.html certificate.js styles.css public-pages.css club-commerce.css club-commerce.js app.js config.js sitemap.xml .nojekyll manifest.webmanifest sw.js offline.html pwa-register.js chat-waves.js chat-waves.css mobile-workspace.js mobile-workspace.css club-guidance.js club-guidance.css member-wall.js member-wall.css space-bento.js space-bento.css card-swap.js card-swap.css member-id.js member-id.css member-id-lanyard.js _site/
+          cp index.html reset-password.html reset-password.js club-certificates.js club-certificates.css certificate.html certificate.js styles.css public-pages.css club-commerce.css club-commerce.js app.js config.js sitemap.xml .nojekyll manifest.webmanifest sw.js offline.html pwa-register.js chat-waves.js chat-waves.css shared-chat-glow.js shared-chat-glow.css mobile-workspace.js mobile-workspace.css club-guidance.js club-guidance.css member-wall.js member-wall.css space-bento.js space-bento.css card-swap.js card-swap.css member-id.js member-id.css member-id-lanyard.js _site/
           cp -R assets about founders icons vendor _site/
       - uses: actions/upload-pages-artifact@v3
         with:

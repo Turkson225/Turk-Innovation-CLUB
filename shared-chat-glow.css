@@ -1,0 +1,19 @@
+/* Small controls outside the scrollable messages; no composer or header changes. */
+.shared-glow-bar{flex:0 0 auto;padding:8px 14px;border-bottom:1px solid var(--line,#e2e7ef);background:var(--white,#fff);font-size:12px}
+.shared-glow-caption{display:flex;align-items:center;gap:7px;color:var(--muted,#64748b)}
+.shared-glow-caption>span{color:#6d65df;font-size:17px}.shared-glow-caption p{margin:0;line-height:1.4;font-size:12px}
+.shared-glow-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:5px}
+.shared-glow-controls button{font:inherit;font-weight:600;border:1px solid var(--line,#dbe2ed);border-radius:7px;background:var(--surface-soft,#f4f6fb);color:var(--text,#21324a);padding:5px 9px;min-height:32px;cursor:pointer}
+.shared-glow-controls button:disabled{opacity:.6;cursor:wait}.shared-glow-controls button:focus-visible{outline:2px solid #8574ee;outline-offset:2px}
+.shared-glow-controls [data-glow-action=join],.shared-glow-controls [data-glow-action=mode][aria-pressed=true]{background:#6250c4;border-color:#6250c4;color:#fff}
+.shared-glow-controls [hidden]{display:none!important}.shared-glow-controls [data-glow-palette]{display:inline-flex;gap:3px;align-items:center}
+.shared-glow-controls .shared-glow-color{width:28px;height:32px;padding:0;position:relative;background:transparent;border-color:transparent}
+.shared-glow-color::after{content:"";display:block;width:15px;height:15px;margin:auto;border-radius:50%;background:var(--glow)}
+.shared-glow-color[aria-pressed=true]{outline:1px solid var(--glow);outline-offset:-3px}
+.glow-color-0{--glow:#78a7ff}.glow-color-1{--glow:#ffb35c}.glow-color-2{--glow:#e78aff}.glow-color-3{--glow:#62e3c2}
+.shared-glow-live .shared-glow-caption>span{color:#a185ec}.shared-glow-ready{background:#101b32!important;background-image:radial-gradient(ellipse at 0 100%,#28355c,transparent 70%)!important}
+.shared-glow-canvas{position:absolute;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
+.shared-glow-pad{position:absolute;inset:0;z-index:3;touch-action:none;cursor:crosshair;overflow:hidden}
+.shared-glow-pad[hidden]{display:none}.shared-glow-pad::after{content:"";position:absolute;width:min(100cqw,100cqh);aspect-ratio:1;left:50%;top:50%;transform:translate(-50%,-50%);border:1px dashed #a9bdf04d;border-radius:12px;pointer-events:none}
+.shared-glow-ready{container-type:size}.shared-glow-drawing>.dm-stream{opacity:.12;pointer-events:none;user-select:none}
+@media(max-width:740px){.shared-glow-bar{padding:6px 10px}.shared-glow-caption p{font-size:11px}.shared-glow-controls{gap:4px}.shared-glow-controls button{min-height:34px;padding:5px 7px}.shared-glow-controls .shared-glow-color{width:26px}}

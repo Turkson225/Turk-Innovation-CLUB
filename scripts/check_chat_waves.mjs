@@ -138,6 +138,14 @@ test('Changing the preference in another tab updates this conversation', () => {
 test('Page cache exit releases resources and returning can recreate the wallpaper', () => {
   const h = harness(); h.sync(); h.window.fire('pagehide'); assert.equal(h.frames.size, 0); h.window.fire('pageshow'); h.step(0); assert.equal(h.stats.draws, 1);
 });
+
+test('Shared drawing holds wallpaper resources without changing its saved preference', () => {
+  const h=harness();h.sync();h.api.hold('shared-glow',true);assert.equal(h.stats.contexts,1);assert.equal(h.frames.size,0);assert.equal(h.items.size,0);assert.equal(h.button.disabled,true);h.click();assert.equal(h.items.size,0);h.api.hold('shared-glow',false);assert.equal(h.stats.contexts,2);assert.equal(h.button.disabled,false);
+});
+test('Releasing shared drawing respects a previously paused wallpaper', () => {
+  const h=harness({still:true});h.sync();h.api.hold('shared-glow',true);h.api.hold('shared-glow',false);assert.equal(h.stats.contexts,0);assert.equal(h.items.get('space.chat-waves.v1'),'still');
+});
+
 let passed = 0;
 for (const [name, fn] of tests) { try { fn(); passed++; console.log('PASS', name); } catch (error) { console.error('FAIL', name, error); process.exitCode = 1; } }
 console.log(`${passed}/${tests.length} chat wave checks passed`);
