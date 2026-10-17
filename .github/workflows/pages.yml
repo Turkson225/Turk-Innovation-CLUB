@@ -31,6 +31,8 @@ jobs:
       - name: Check application and public verification
         run: |
           node --check app.js
+          node --check chat-waves.js
+          node scripts/check_chat_waves.mjs
           node --check club-certificates.js
           node scripts/check_course_certificates_ui.mjs
           node --check reset-password.js
@@ -43,7 +45,7 @@ jobs:
       - name: Prepare static site
         run: |
           mkdir -p _site
-          cp index.html reset-password.html reset-password.js club-certificates.js club-certificates.css certificate.html certificate.js styles.css public-pages.css club-commerce.css club-commerce.js app.js config.js sitemap.xml .nojekyll manifest.webmanifest sw.js offline.html pwa-register.js _site/
+          cp index.html reset-password.html reset-password.js club-certificates.js club-certificates.css certificate.html certificate.js styles.css public-pages.css club-commerce.css club-commerce.js app.js config.js sitemap.xml .nojekyll manifest.webmanifest sw.js offline.html pwa-register.js chat-waves.js chat-waves.css _site/
           cp -R assets about founders icons _site/
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -1,0 +1,18 @@
+/* A quiet wallpaper behind the scrollable conversation, never over its controls. */
+.chat-wave-surface{position:relative;isolation:isolate;flex:1;min-height:0;overflow:hidden;background:#edf3fb;background-image:radial-gradient(ellipse at 15% 110%,#bcdcf1 0,transparent 55%),radial-gradient(ellipse at 110% 60%,#cbd4ed 0,transparent 64%),linear-gradient(155deg,#f4f7fc,#e7eff9)}
+.chat-wave-surface::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:linear-gradient(172deg,transparent 30%,#ffffff65 31%,transparent 48%,#ffffff45 49%,transparent 74%)}
+.chat-wave-canvas{position:absolute;inset:0;z-index:0;display:block;width:100%;height:100%;pointer-events:none;opacity:.72}
+.chat-wave-surface>.dm-stream,.chat-wave-surface>.message-stream{position:relative;z-index:1;box-sizing:border-box;height:100%;max-height:none;min-height:0;background:transparent}
+.chat-panel>.chat-wave-surface{height:440px;max-height:60vh}
+.chat-wave-surface .chat-message>div{min-width:0;padding:11px 13px;border-radius:12px;background:var(--white);box-shadow:0 1px 3px #17294a0a}
+.chat-wave-toggle{width:34px;height:34px;flex:0 0 34px}
+.chat-wave-toggle[aria-pressed=true]{color:var(--deep);background:var(--surface-soft)}
+.chat-wave-toggle:focus-visible{outline:2px solid var(--deep);outline-offset:3px}
+.chat-wave-toggle:disabled{opacity:.55;cursor:default}
+[data-theme=dark] .chat-wave-surface{background:#121d2c;background-image:radial-gradient(ellipse at 15% 110%,#1d3e54 0,transparent 55%),radial-gradient(ellipse at 110% 60%,#302e50 0,transparent 64%),linear-gradient(155deg,#161e2c,#152334)}
+[data-theme=dark] .chat-wave-surface::before{opacity:.07}
+[data-theme=dark] .chat-wave-canvas{opacity:.55}
+[data-theme=dark] .chat-wave-surface>.dm-stream,[data-theme=dark] .chat-wave-surface>.message-stream{background:transparent}
+@media(max-width:740px){.dm-conversation .chat-wave-toggle{width:32px;height:34px;flex-basis:32px}}
+@media(max-width:660px){.chat-panel>.chat-wave-surface{height:350px}.chat-wave-surface .chat-message>div{padding:9px 10px}}
+@media(prefers-reduced-motion:reduce){.chat-wave-canvas{display:none}}
