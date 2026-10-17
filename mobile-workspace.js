@@ -13,7 +13,7 @@
     const primary=state=>state.admin?['admin','Manage']:state.teacher?['teaching','Teach']:state.founder?['founder-room','Lead']:state.investor?['investor-portal','Portal']:['courses','Learn'];
     function tabs(state) {
       if(!state.approved)return '';
-      const work=primary(state),groups={home:['home'],messages:['messages','channels'],courses:['courses','classroom'],teaching:['teaching','classroom'],admin:['admin','applications','officers','moderation','shop-admin','order-desk','finance'],calendar:['calendar','events'],'founder-room':['founder-room'],'investor-portal':['investor-portal']};
+      const work=primary(state),groups={home:['home'],messages:['messages','channels'],courses:['courses','classroom'],teaching:['teaching','classroom'],admin:['admin','applications','officers','moderation','shop-admin','order-desk','finance','system-health'],calendar:['calendar','events'],'founder-room':['founder-room'],'investor-portal':['investor-portal']};
       const rows=[['home','Home'],...(state.club?[['messages','Chat']]:[]),work,...(state.club?[['calendar','Calendar']]:state.investor?[['notifications','Updates']]:[])].filter(([page])=>allowed(state,'#'+page));
       let matched=false;
       const links=rows.map(([page,label])=>{

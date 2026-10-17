@@ -226,7 +226,7 @@
           if(file?.size){
             if(file.size>2097152||!['image/png','image/jpeg','image/webp'].includes(file.type))throw Error('Upload a PNG, JPEG or WebP signature up to 2 MB.');
             const ext={'image/png':'png','image/jpeg':'jpg','image/webp':'webp'}[file.type];path=s.owner+'/'+crypto.randomUUID()+'.'+ext;
-            const result=await db.storage.from(BUCKET).upload(path,file,{contentType:file.type,upsert:false});if(result.error)throw result.error;uploaded=path;
+            const result=await db.storage.from(BUCKET).upload(path,file,{contentType:file.type,upsert:false}).catch(error=>{if(valid(s))void ctx.report?.('upload',error,s.owner);throw error;});if(result.error){if(valid(s))void ctx.report?.('upload',result.error,s.owner);throw result.error;}uploaded=path;
           }
           if(!path)throw Error('Draw your signature, type your initials, or upload your signature image.');
           if(!valid(s)||(signingEditor&&(editor!==signingEditor||!form.isConnected)))return;

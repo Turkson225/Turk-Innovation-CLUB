@@ -1,0 +1,24 @@
+name: Check welcome progress and administrator health
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/upgrade_guidance_system_health.sql'
+      - 'scripts/check_guidance_database.mjs'
+      - 'scripts/load_test_fixture.mjs'
+      - '.github/workflows/guidance-check.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  database:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install isolated PostgreSQL engine
+        run: npm install --prefix "$RUNNER_TEMP/guidance-check" --no-package-lock --ignore-scripts @electric-sql/pglite@0.3.14
+      - name: Verify own-account progress, private reports and administrator review boundaries
+        run: SPACE_PGLITE_MODULE="$RUNNER_TEMP/guidance-check/node_modules/@electric-sql/pglite" node scripts/check_guidance_database.mjs

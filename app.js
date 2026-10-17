@@ -52,7 +52,7 @@ function migrateSavedAuth(){
 }
 migrateSavedAuth();
 const db = configured && !startupRecovery ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storageKey:authStorageKey, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
-let commerce=null,certification=null,mobileWorkspace=null;
+let commerce=null,certification=null,mobileWorkspace=null,guidance=null;
 let sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -136,12 +136,17 @@ async function hydrateMedia(extraPaths=[]) {
   for(const [i,item] of (data||[]).entries())if(item.signedUrl)mediaUrls.set(item.path||missing[i],{url:item.signedUrl,expires:Date.now()+900000});
   return true;
 }
+async function monitoredUpload(bucket,path,file,options){
+ const owner=session?.user.id;
+ try{const result=await db.storage.from(bucket).upload(path,file,options);if(result.error)void guidance?.report('upload',result.error,owner);return result;}
+ catch(error){void guidance?.report('upload',error,owner);throw error;}
+}
 async function uploadClubImage(file){
   if(!mediaReady)throw Error('Run the Supabase media migration before sharing images.');
   const ext={'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif'}[file?.type];
   if(!ext||file.size<1||file.size>5242880)throw Error('Choose a JPG, PNG, WebP or GIF image up to 5 MB.');
   const path=`${session.user.id}/${crypto.randomUUID()}.${ext}`;
-  const {error}=await db.storage.from('club-media').upload(path,file,{upsert:false,contentType:file.type});
+  const {error}=await monitoredUpload('club-media',path,file,{upsert:false,contentType:file.type});
   if(error)throw error;return path;
 }
 async function removeAvatar(){
@@ -160,15 +165,17 @@ let pendingAuthMode = sessionStorage.getItem('innovatex.pendingAuthMode') === 's
 let pendingProtectedPage = '';
 let founderPortraitReady = false;
 let toastTimer;
-const pages = ['shop','cart','orders','order-desk','shop-admin','role-updates','classroom','meeting-room','project-board','home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','finance-reports','officers','office','discussions','courses','teaching','events','calendar','announcements','founder-room'];
+const pages = ['getting-started','system-health','shop','cart','orders','order-desk','shop-admin','role-updates','classroom','meeting-room','project-board','home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','finance-reports','officers','office','discussions','courses','teaching','events','calendar','announcements','founder-room'];
 const workspacePageInfo={
+  'getting-started':{title:'Getting started',section:'Your workspace',aliases:'Welcome checklist onboarding teacher setup'},
+  'system-health':{title:'System health',section:'Administration',aliases:'Email delivery push notifications upload failures diagnostics'},
   shop:{title:'Store / View products',section:'Club shop',aliases:'Buy merchandise T-shirts electronics kits'},
   cart:{title:'Basket',section:'Club shop'},
   orders:{title:'My orders',section:'Club shop',aliases:'Collection purchases order tracking'},
   'order-desk':{title:'Orders & fulfilment',section:'Administration',aliases:'Incoming purchases process orders ready delivered receipts'},
   'shop-admin':{title:'Manage shop',section:'Administration',aliases:'Products sale stock prices orders'},
   'role-updates':{title:'Role updates',section:'Your workspace',aliases:'Assignment notes acknowledge responsibilities'},
-  classroom:{title:'Classroom tools',section:'Learning & projects',aliases:'Lessons attendance gradebook certificates'},
+  classroom:{title:'Classrooms',section:'Learning & projects',aliases:'Lessons attendance gradebook certificates'},
   'meeting-room':{title:'Meetings & actions',section:'Club activities',aliases:'Secretary minutes agenda attendance'},
   'project-board':{title:'Project workspace',section:'Learning & projects',aliases:'Kanban board progress evidence'},
   home:{title:'Home',section:'Your workspace'},
@@ -225,6 +232,8 @@ function updateWorkspaceNavigation(){
   const nav=$('#nav');if(!nav)return;
   const links=[...nav.querySelectorAll('a[data-page]')];
   const allowed=target=>{
+    if(target==='system-health')return admin();
+    if(target==='getting-started')return approved();
     if(['role-updates','notifications'].includes(target))return approved();
     if(['shop-admin','order-desk'].includes(target))return admin();
     if(target==='application')return !!session&&!approved();
@@ -894,8 +903,9 @@ function applyUnreadCounts(data){
 
 // Load the open page on demand. Exports fetch complete records independently.
 const pageRefreshDependencies={
+  'getting-started':['courses','course_enrollments','activity_posts','learning_materials','member_learning_paths','classroom_assignments','classroom_assignment_submissions','teaching_track_assignments'],'system-health':[],
   shop:[],cart:[],orders:[],'order-desk':[],'shop-admin':[],'role-updates':[],
-  classroom:['courses','course_enrollments','course_submissions','course_completions','classroom_assignments','classroom_assignment_submissions'],'meeting-room':['profiles'],'project-board':['projects','project_tasks','project_members','project_milestones','profiles','topics','replies','documents'],
+  classroom:['courses','learning_materials','course_enrollments','course_submissions','course_completions','classroom_assignments','classroom_assignment_submissions'],'meeting-room':['profiles'],'project-board':['projects','project_tasks','project_members','project_milestones','profiles','topics','replies','documents'],
   home:['project_tasks','courses','course_enrollments','course_submissions','course_completions','events','announcements','activity_posts','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions'],
   about:[],founders:['founders'],investors:['founders','investor_updates'],
   privacy:['privacy_requests','profiles'],application:[],
@@ -981,7 +991,7 @@ async function refresh(mode='page',requestedPage=page) {
     await detectFounderPortraits();
     if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
     communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=results[2].status==='fulfilled';inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
-    if(previous!==accessSignature(me)||!['home','about','founders','investors','investor-portal','privacy','role-updates','notifications'].includes(targetPage)) {route();return;}
+    if(previous!==accessSignature(me)||!['home','about','founders','investors','investor-portal','privacy','role-updates','notifications','getting-started'].includes(targetPage)) {route();return;}
     if(['role-updates','notifications','home'].includes(targetPage)){
       const notices=await db.from('notifications').select('*').eq('user_id',owner).order('created_at',{ascending:false}).limit(100);
       if(session?.user.id!==owner||generation!==authGeneration)return;
@@ -1012,7 +1022,7 @@ async function refresh(mode='page',requestedPage=page) {
   }
   const records=new Set(['profiles','projects','project_tasks','topics','replies','courses','learning_materials','events','announcements','founders','channels','documents','news_posts','founder_invites','founder_meetings','notifications','project_members','project_milestones','event_rsvps','founder_meeting_rsvps','document_versions','reports','audit_events','investor_updates','investor_inquiries','course_enrollments','course_submissions','course_completions','privacy_requests','inventory_items','inventory_movements','finance_entries','finance_reviews','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions','officer_assignments','officer_work_items','officer_work_events','finance_receipts','finance_monthly_reviews']);
   const previews={channel_messages:120,direct_messages:120,activity_posts:50,activity_comments:1,activity_likes:1,message_reactions:1,notifications:100};
-  const checkTeacherProfile=teacher()&&!admin()&&(!scoped||targetPage==='teaching');
+  const checkTeacherProfile=teacher()&&!admin()&&(!scoped||['teaching','getting-started'].includes(targetPage));
   const [results,teachingProfileResult]=await Promise.all([
     settledMapLimit(names,6,n=>requestWithDeadline(()=>records.has(n)?readRecords(n):read(n,q=>{
       if(n!=='channel_reads')q=q.order('created_at',{ascending:false});
@@ -1122,6 +1132,7 @@ async function refresh(mode='page',requestedPage=page) {
   if(targetPage==='members')await loadMemberDirectory();
   await loadAdvancedPage(targetPage,generation);
   await commerce?.load(targetPage);
+  if(guidance){if(['getting-started','system-health'].includes(targetPage))await guidance.load(targetPage);else void guidance.load(targetPage).then(()=>{if(session?.user.id===owner&&generation===authGeneration&&workspacePageVersions.get(targetPage)===version&&page===targetPage&&!document.activeElement?.closest('#teacherProfileForm'))render();});}
   if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
   await hydrateMedia();
   if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
@@ -1193,6 +1204,7 @@ function completeLoginWelcome(generation){
 // Guard requests during explicit sign-out; there is no app-imposed idle timeout.
 function checkSessionExpiry(){return sessionEnding;}
 function expireSession(message,prompt=true) {
+  guidance?.reset();classroomView='overview';classroomPeoplePage=0;classroomProjectPage=0;classroomWorkPage=0;classroomTaskPage=0;
   if(!session||sessionEnding)return;
   sessionEnding=true;authStateRequest++;authFormEpoch++;authPersistentStorage.setItem(SIGNED_OUT_KEY,String(Date.now()));
   // Clear private UI and invalidate pending loads before waiting for any network.
@@ -1288,7 +1300,7 @@ async function signedIn(newSession,showWelcome=false) {
     if(approved())void touchPresence().catch(console.error);
   } else { me=null;applicationAnswersReady=false;roleReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;cache={};mediaUrls.clear(); await loadPublic(); }
   if(session&&!approved()&&!['about','founders','investors','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
-  if(investor()&&!['home','about','founders','investors','investor-portal','privacy','role-updates','notifications'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
+  if(investor()&&!['home','about','founders','investors','investor-portal','privacy','role-updates','notifications','getting-started'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='founder-room'&&!founder()) {page='founders';history.replaceState(null,'','#founders');}
   if(['finance','finance-review'].includes(page)&&!admin()){page='home';history.replaceState(null,'','#home');}
   if(page==='finance-review'&&admin()){page='finance';history.replaceState(null,'','#finance');}
@@ -1493,8 +1505,8 @@ function setSidebarOpen(open){
 }
 function route() {
   const requested=location.hash.slice(1).split('/')[0] || 'home';page=pages.includes(requested)?requested:'home';
-  if(learningSelectionRequired()&&!['courses','privacy','application','role-updates','notifications','shop','cart','orders'].includes(page)){page='courses';history.replaceState(null,'','#courses');}
-  if(page==='classroom')activeCourseId=location.hash.slice(1).split('/')[1]||activeCourseId;
+  if(learningSelectionRequired()&&!['courses','privacy','application','role-updates','notifications','shop','cart','orders','getting-started'].includes(page)){page='courses';history.replaceState(null,'','#courses');}
+  if(page==='classroom'){const [,id,tab]=location.hash.slice(1).split('/');if(id&&id!==activeCourseId){classroomPeoplePage=0;classroomProjectPage=0;classroomWorkPage=0;classroomTaskPage=0;advancedClassPage=0;advancedSessionPage=0;}activeCourseId=id||activeCourseId;classroomView=classroomTabAliases[tab]||(['overview','learn','work','sessions','students','certificates'].includes(tab)?tab:'overview');}
   if(page==='meeting-room')activeMeetingId=location.hash.slice(1).split('/')[1]||activeMeetingId;
   if(page==='project-board')activeProject=location.hash.slice(1).split('/')[1]||activeProject;
   if(page==='calendar'){
@@ -1512,7 +1524,7 @@ function route() {
     }
   }else if(!session&&authReady)pendingProtectedPage='';
   if(session&&!approved()&&!['about','founders','investors','application','privacy'].includes(page)){page='application';history.replaceState(null,'','#application');}
-  if(investor()&&!['home','about','founders','investors','investor-portal','privacy','role-updates','notifications'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
+  if(investor()&&!['home','about','founders','investors','investor-portal','privacy','role-updates','notifications','getting-started'].includes(page)){page='investor-portal';history.replaceState(null,'','#investor-portal');}
   if(page==='investor-portal'&&authReady&&!investor()&&!admin()){page='investors';history.replaceState(null,'','#investors');}
   if(page==='teaching'&&authReady&&!teacher()){page=clubAccess()?'courses':'home';history.replaceState(null,'','#'+page);}
   if(['finance','finance-review'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
@@ -1520,7 +1532,7 @@ function route() {
   if(['officers','shop-admin','order-desk'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   if(officerAccessChecked&&(page==='office'&&!officerAccess()||page==='finance-reports'&&!financeReportAccess())){page='home';history.replaceState(null,'','#home');}
   if(page==='founder-room'&&authReady&&!founder()){page='founders';history.replaceState(null,'','#founders');show('Founder access required.');}
-  if(['admin','applications','moderation'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
+  if(['admin','applications','moderation','system-health'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   if(page==='messages'){const peer=location.hash.slice(1).split('/')[1]||'';const next=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(peer)?peer:null;if(next!==activePeerId){activePeerId=next;dmRequest++;dmSearchRequest++;dmThreadLoading=false;dmEarlierLoading=false;dmSearchOpen=false;dmSearchBusy=false;dmReactionTarget=null;dmEmojiOpen=false;}}
   setSidebarOpen(false);
   if(session&&authReady&&approved()&&!workspaceHydrating)void refreshVisiblePage({force:true});
@@ -1569,9 +1581,9 @@ function render() {
   if(session&&approved()&&load&&!load.hadData&&['loading','offline','error'].includes(load.status)&&!learningSelectionRequired()){
     window.SpaceChatWaves?.sync(null);$('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
   }
-  const views={...Object.fromEntries(['shop','cart','orders','order-desk','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
+  const views={'getting-started':()=>guidance?.welcome()||head('WELCOME','Getting started','Reload SPACE to open your welcome guide.'),'system-health':()=>admin()?(guidance?.healthView()||head('ADMINISTRATION','System health','Reload SPACE to open the checks.')):'',...Object.fromEntries(['shop','cart','orders','order-desk','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
-  $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'?(commerce?.homeRoleBanner()||'')+(commerce?.homeShopBanner?.()||''):'')+(page==='admin'?'<a class="admin-order-shortcut" href="#order-desk"><strong>Orders &amp; fulfilment</strong><span>Process new purchases, update status and send receipts →</span></a>':'')+views[page]();
+  $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'?(guidance?.banner()||'')+(commerce?.homeRoleBanner()||'')+(commerce?.homeShopBanner?.()||''):'')+(page==='admin'?'<a class="admin-order-shortcut" href="#order-desk"><strong>Orders &amp; fulfilment</strong><span>Process new purchases, update status and send receipts →</span></a>':'')+views[page]();
   window.SpaceChatWaves?.sync($('#content'));
   commerce?.afterRender();
   if(page==='members'){hydrateDirectoryPhotos();openLinkedMemberProfile();}
@@ -1593,13 +1605,13 @@ function workspaceSearchItems(){
   const result=[],add=(key,label,meta,page,action='',id='',text='')=>result.push({key,label,meta,page,action,id,text:label+' '+meta+' '+text});
   const destinations=[['home','Home','Your workspace'],['about','About the club','Our mission and vision'],['founders','Founders','Meet the founding team'],['privacy','Privacy & conduct','Profile choices and data requests']];
   if(session&&!approved())destinations.push(['application','My application','Check your membership request']);
-  if(approved())destinations.push(['role-updates','Role updates','Assignment notes and acknowledgements']);
+  if(approved())destinations.push(['getting-started','Getting started','Welcome and setup checklist'],['role-updates','Role updates','Assignment notes and acknowledgements']);
   if(investor())destinations.push(['notifications','Notifications','Personal role and club updates']);
-  if(clubAccess())destinations.push(['shop','SPACE shop','Club merchandise components and kits'],['cart','Basket','Review items and collection'],['orders','My orders','Order tracking and messages'],['classroom','Classroom tools','Lessons attendance gradebook certificates'],['meeting-room','Meetings & actions','Club agendas minutes and follow-up'],['project-board','Project workspace','Task boards and build evidence'],['feed','Activity feed','Build updates and conversations'],['messages','Messages','Private conversations'],['channels','Team channels','Discuss and share files'],['members','Members','Find a collaborator'],['courses','Courses','Your practical learning plan'],['projects','Projects','Plans, tasks and progress'],['library','Document library','Shared resources'],['news','Technology news','Ideas worth exploring'],['calendar','Calendar','Workshops and deadlines'],['events','Events','Club meetups and sessions'],['notifications','Inbox','Your notifications'],['announcements','Alerts','Club announcements'],['discussions','Discussions','Questions and ideas'],['inventory','Inventory','Club tools and components']);
+  if(clubAccess())destinations.push(['shop','SPACE shop','Club merchandise components and kits'],['cart','Basket','Review items and collection'],['orders','My orders','Order tracking and messages'],['classroom','Classrooms','Lessons files assignments feedback attendance gradebook certificates'],['meeting-room','Meetings & actions','Club agendas minutes and follow-up'],['project-board','Project workspace','Task boards and build evidence'],['feed','Activity feed','Build updates and conversations'],['messages','Messages','Private conversations'],['channels','Team channels','Discuss and share files'],['members','Members','Find a collaborator'],['courses','Courses','Your practical learning plan'],['projects','Projects','Plans, tasks and progress'],['library','Document library','Shared resources'],['news','Technology news','Ideas worth exploring'],['calendar','Calendar','Workshops and deadlines'],['events','Events','Club meetups and sessions'],['notifications','Inbox','Your notifications'],['announcements','Alerts','Club announcements'],['discussions','Discussions','Questions and ideas'],['inventory','Inventory','Club tools and components']);
   if(teacher())destinations.push(['teaching','Teaching studio','Workshops, students and feedback']);
   if(founder())destinations.push(['founder-room','Founder room','Meetings and decisions'],['investors','Investors','Club partnerships']);
   if(officerAccess())destinations.push(['office','My office','Officer duties and work records']);
-  if(admin())destinations.push(['order-desk','Orders & fulfilment','Process incoming orders update status and receipts'],['shop-admin','Manage shop','Products prices sale stock and orders'],['officers','Roles & offices','Assign club responsibilities']);
+  if(admin())destinations.push(['system-health','System health','Delivery queues and configuration'],['order-desk','Orders & fulfilment','Process incoming orders update status and receipts'],['shop-admin','Manage shop','Products prices sale stock and orders'],['officers','Roles & offices','Assign club responsibilities']);
   if(financeReportAccess())destinations.push(['finance-reports','Finance reports','Approved monthly reports']);
   if(investor()||admin())destinations.push(['investor-portal','Investor portal','Approved investor updates']);
   if(admin())destinations.push(['admin','Admin dashboard','Club oversight'],['applications','Applications','Review new accounts'],['moderation','Moderation','Review reports'],['finance','Finance','Funds and records']);
@@ -1629,6 +1641,7 @@ function openWorkspaceSearch(){
   updateWorkspaceSearch($('#workspaceSearchInput')?.value||'');$('#workspaceSearchInput')?.focus();
 }
 function openWorkspaceCourse(id,detailView='overview'){
+  if(clubAccess()&&advancedCourses().some(c=>c.id===id)){activeCourseId=id;courseView='mine';courseDetailView=['overview','materials','classwork','submit','feedback'].includes(detailView)?detailView:'overview';return navigateClassroom(id,classroomTabAliases[courseDetailView]||'overview');}
   if(!clubAccess()||!(cache.courses||[]).some(c=>c.id===id))return;
   if($('#modal').open)close();
   const enrolled=(cache.course_enrollments||[]).some(e=>e.course_id===id&&e.learner_id===session?.user.id);
@@ -1651,6 +1664,14 @@ function homeAgendaMarkup(userId,activeIds,assigned){
 }
 function homeFocusCard(icon,label,title,detail,href,action='Open details',urgent=false,priority=false,courseId='',detailView='overview'){
   return `<a class="home-focus-card ${urgent?'is-urgent':''} ${urgent||priority?'is-priority':''}" href="${href}"${courseId?` data-action="focusCourse" data-id="${esc(courseId)}" data-view="${esc(detailView)}"`:''}><span class="home-focus-icon">${iconSvg(icon)}</span><span class="home-focus-label">${esc(label)}</span><strong>${esc(title)}</strong><span class="home-focus-detail">${esc(detail)}</span><span class="home-focus-action">${esc(action)} →</span></a>`;
+}
+function guidanceState(){
+ const id=session?.user.id||'',ownCourses=(cache.courses||[]).filter(c=>c.instructor_id===id),ownIds=new Set(ownCourses.map(c=>c.id));
+ return {id,generation:authGeneration,approved:!!id&&approved(),club:!!id&&clubAccess(),admin:admin(),teacher:teacher(),profileDone:!!(me?.headline?.trim()||me?.bio?.trim())&&memberSkills(me).length>0,
+  tracksDone:ownLearningTracks.length?true:learningChoicesReady?false:null,enrolled:courseReady?(cache.course_enrollments||[]).some(x=>x.learner_id===id):null,
+  firstPost:(cache.activity_posts||[]).some(p=>p.author_id===id&&!p.deleted_at)?true:null,teachingProfile:teacherProfileReady?!!teacherProfile:null,
+  hasWorkshop:Object.hasOwn(cache,'courses')?ownCourses.some(courseOpen):null,hasMaterial:Object.hasOwn(cache,'learning_materials')?(cache.learning_materials||[]).some(m=>m.uploaded_by===id&&ownIds.has(m.course_id)&&!m.hidden_at):null,
+  hasAssignment:learningHubReady?(cache.classroom_assignments||[]).some(a=>ownIds.has(a.course_id)):null};
 }
 function mobileWorkspaceState(){
   const id=session?.user.id||'',now=Date.now(),name=me?.full_name||session?.user.email||'member';
@@ -2481,12 +2502,14 @@ function teachingStudentsPanel(){
     return `<article class="card learning-student-card"><div>${memberAvatar(s.id)}<h3>${esc(s.name||'Student')}</h3></div><div class="pill-row">${s.tracks.map(track=>`<span class="tag blue">${esc(track)}</span>`).join('')}</div><small class="subtle">${classes.length} class${classes.length===1?'':'es'} with you</small>${classes.some(courseOpen)?`<button class="button button-outline button-sm" data-action="classworkForm" data-learner="${esc(s.id)}">Assign work →</button>`:'<p class="subtle">Publish a class in this course to start teaching this student.</p>'}</article>`;
   }).join('')||empty('No matching students yet',tracks.length?'Learners will appear after choosing your courses and receiving account approval.':'Ask an administrator to assign your teaching courses.')}</div>${matched.length>24?`<div class="records-toolbar"><small>${teachingStudentPage*24+1}–${Math.min((teachingStudentPage+1)*24,matched.length)} of ${matched.length}</small><div><button class="button button-outline button-sm" data-action="teachingStudentPage" data-page="${teachingStudentPage-1}" ${teachingStudentPage?'':'disabled'}>Previous</button><button class="button button-outline button-sm" data-action="teachingStudentPage" data-page="${teachingStudentPage+1}" ${(teachingStudentPage+1)*24>=matched.length?'disabled':''}>Next</button></div></div>`:''}`;
 }
-function teacherClassworkPanel(){
-  const work=managedClasswork(),ids=new Set(work.map(a=>a.id));
+function teacherClassworkPanel(courseId=null){
+  const work=managedClasswork().filter(a=>!courseId||a.course_id===courseId),ids=new Set(work.map(a=>a.id));
   const submissions=(cache.classroom_assignment_submissions||[]).filter(s=>ids.has(s.assignment_id)&&s.learner_id!==session?.user.id).sort((a,b)=>Number(a.review_status!=='submitted')-Number(b.review_status!=='submitted')||new Date(b.created_at)-new Date(a.created_at));
-  return `<div class="learning-dashboard-heading"><div><span class="eyebrow">TEACHING DASHBOARD</span><h2>Classwork & feedback</h2><p class="subtle">Assign a practical, project or exercise to the whole class or one enrolled student.</p></div><button class="button button-sm" data-action="classworkForm">+ Assign work</button></div><div class="learning-dashboard-stats">${recordsStat('Published tasks',work.length,'In your classes')}${recordsStat('Awaiting review',submissions.filter(s=>s.review_status==='submitted').length,'Read, mark as seen and give feedback')}${recordsStat('Accepted',submissions.filter(s=>s.review_status==='accepted').length,'Accepted attempts')}${recordsStat('Revisions',submissions.filter(s=>s.review_status==='revision_requested').length,'Learners can submit improved attempts')}</div><div class="grid grid-2">${submissions.map(s=>{
+  if(courseId){classroomWorkPage=Math.min(classroomWorkPage,Math.max(0,Math.ceil(submissions.length/24)-1));classroomTaskPage=Math.min(classroomTaskPage,Math.max(0,Math.ceil(work.length/24)-1));}
+  const shownSubmissions=courseId?submissions.slice(classroomWorkPage*24,(classroomWorkPage+1)*24):submissions,shownWork=courseId?work.slice(classroomTaskPage*24,(classroomTaskPage+1)*24):work;
+  return `<div class="learning-dashboard-heading"><div><span class="eyebrow">TEACHING DASHBOARD</span><h2>Classwork & feedback</h2><p class="subtle">Assign a practical, project or exercise to the whole class or one enrolled student.</p></div><button class="button button-sm" data-action="classworkForm" ${courseId?`data-id="${esc(courseId)}"`:""}>+ Assign work</button></div><div class="learning-dashboard-stats">${recordsStat('Published tasks',work.length,'In your classes')}${recordsStat('Awaiting review',submissions.filter(s=>s.review_status==='submitted').length,'Read, mark as seen and give feedback')}${recordsStat('Accepted',submissions.filter(s=>s.review_status==='accepted').length,'Accepted attempts')}${recordsStat('Revisions',submissions.filter(s=>s.review_status==='revision_requested').length,'Learners can submit improved attempts')}</div><div class="grid grid-2">${shownSubmissions.map(s=>{
     const a=work.find(a=>a.id===s.assignment_id);return `<article class="card classwork-card"><div class="row"><span class="tag ${s.review_status==='submitted'?'gold':'blue'}">${esc(s.review_status.replaceAll('_',' '))}</span><small>${s.seen_at?'Seen':'New'}</small></div><h3>${esc(a.title)}</h3><strong>${esc(courseLearnerName(a.course_id,s.learner_id))}</strong><small class="subtle">${esc((cache.courses||[]).find(c=>c.id===a.course_id)?.title||'Class')} · ${dateTime(s.created_at)}</small><p class="learning-preserve-lines">${esc(s.details)}</p>${cleanUrl(s.evidence_url)?`<a class="link" href="${esc(cleanUrl(s.evidence_url))}" target="_blank" rel="noopener noreferrer">Open evidence ↗</a>`:''}${s.teacher_feedback?`<div class="classwork-feedback"><strong>Your feedback</strong><p>${esc(s.teacher_feedback)}</p></div>`:''}${s.review_status==='submitted'?`<div class="profile-buttons">${!s.seen_at?`<button class="button button-outline button-sm" data-action="classworkSeen" data-id="${esc(s.id)}">Mark as seen</button>`:''}<button class="button button-sm" data-action="classworkReviewForm" data-id="${esc(s.id)}">Give feedback →</button></div>`:''}</article>`;
-  }).join('')||empty('No submissions yet','Assign work to a class. Student submissions will appear here.')}</div><div class="section-heading"><h2>Published classwork</h2></div><div class="grid grid-2">${work.map(a=>`<article class="card classwork-card"><span class="tag blue">${esc(a.kind)}</span><h3>${esc(a.title)}</h3><small class="subtle">${esc((cache.courses||[]).find(c=>c.id===a.course_id)?.title||'Class')} · ${a.learner_id?esc(courseLearnerName(a.course_id,a.learner_id)):'Whole class'}</small><p class="learning-preserve-lines">${esc(a.instructions)}</p><small>${a.due_at?'Due '+dateTime(a.due_at):'No deadline'}</small></article>`).join('')||empty('Create your first assignment','Add a clear build outcome, instructions, useful resource and deadline.')}</div>`;
+  }).join('')||empty('No submissions yet','Assign work to a class. Student submissions will appear here.')}</div>${courseId?advancedPageButtons('classroomWorkPage',classroomWorkPage,submissions.length):''}<div class="section-heading"><h2>Published classwork</h2></div><div class="grid grid-2">${shownWork.map(a=>`<article class="card classwork-card"><span class="tag blue">${esc(a.kind)}</span><h3>${esc(a.title)}</h3><small class="subtle">${esc((cache.courses||[]).find(c=>c.id===a.course_id)?.title||'Class')} · ${a.learner_id?esc(courseLearnerName(a.course_id,a.learner_id)):'Whole class'}</small><p class="learning-preserve-lines">${esc(a.instructions)}</p><small>${a.due_at?'Due '+dateTime(a.due_at):'No deadline'}</small></article>`).join('')||empty('Create your first assignment','Add a clear build outcome, instructions, useful resource and deadline.')}</div>${courseId?advancedPageButtons('classroomTaskPage',classroomTaskPage,work.length):''}`;
 }
 function classworkForm(courseId='',learnerId=''){
   if(!teacher()||!learningHubReady)return;
@@ -2511,34 +2534,12 @@ function courses() {
   const myCourses=enrolled.map(e=>({enrollment:e,course:list.find(c=>c.id===e.course_id)})).filter(x=>x.course)
     .sort((a,b)=>Number(a.enrollment.status==='completed')-Number(b.enrollment.status==='completed')||(new Date(a.course.starts_at||'9999-12-31')-new Date(b.course.starts_at||'9999-12-31')));
   const chosen=myCourses.find(x=>x.course.id===activeCourseId)||myCourses[0];
-  const selected=chosen?.course, enrollment=chosen?.enrollment;
-  const brief=courseBrief(selected);
-  const attempts=selected?courseAttempts(selected.id):[];
-  const latest=attempts[0],selectedMaterials=selected?materials.filter(m=>m.course_id===selected.id):[];
-  const completedProject=enrollment?.status==='completed'||latest?.review_status==='accepted';
+  const selected=chosen?.course;
   const tab=(key,label,count='')=>`<button type="button" class="course-view-button ${courseView===key?'selected':''}" data-action="courseView" data-view="${key}" aria-pressed="${courseView===key}" aria-controls="course-view-panel">${label}${count?` <span class="course-tab-count">${count}</span>`:''}</button>`;
-  const detailTab=(key,label,count='')=>`<button type="button" class="course-detail-button ${courseDetailView===key?'selected':''}" data-action="courseDetailView" data-view="${key}" aria-pressed="${courseDetailView===key}" aria-controls="course-detail-panel">${label}${count?` <span class="course-tab-count">${count}</span>`:''}</button>`;
-  const overview=selected?`<section id="course-detail-panel" class="course-classroom-panel" aria-label="Workshop overview">
-    <h3>What you will build</h3><p>${esc(brief.goal||'Your teacher will add the project brief soon.')}</p>
-    ${brief.practice?`<h4>Hands-on activities and tests</h4><p>${esc(brief.practice)}</p>`:''}
-    ${brief.tools?`<h4>Tools and components</h4><p>${esc(brief.tools)}</p>`:''}
-    <div class="course-next-step"><strong>${completedProject?'Your build is complete':latest?.review_status==='submitted'?'Your teacher is reviewing your work':latest?.review_status==='revision_requested'?'Your next step: improve your build':'Your next step: prepare and build'}</strong><p>${completedProject?'Read the teacher’s final feedback and keep your completion record.':latest?.review_status==='submitted'?'Open My submissions to see the work you sent.':latest?.review_status==='revision_requested'?'Open Teacher feedback for specific improvements, then submit a revision.':'Download the workshop materials, test your project, and submit your results.'}</p><div class="course-next-actions"><button class="button button-sm" data-action="courseDetailView" data-view="${completedProject||latest?.review_status==='revision_requested'?'feedback':latest?.review_status==='submitted'?'submit':'materials'}">${completedProject||latest?.review_status==='revision_requested'?'See feedback':latest?.review_status==='submitted'?'View submitted work':'Open materials'} →</button>${!completedProject&&latest?.review_status!=='submitted'?`<button class="button button-outline button-sm" data-action="courseDetailView" data-view="submit">Submit project</button>`:''}</div></div>
-  </section>`:'';
-  const materialPanel=selected?`<section id="course-detail-panel" class="course-classroom-panel" aria-label="Workshop materials"><h3>Materials and slides</h3><p class="subtle">Use these resources as you build and test your project.</p>
-    ${selected.resource_url&&cleanUrl(selected.resource_url)?`<a class="course-resource-link" href="${esc(cleanUrl(selected.resource_url))}" target="_blank" rel="noopener noreferrer"><strong>Workshop resource link</strong><span>Open resource ↗</span></a>`:''}
-    ${selectedMaterials.length?`<div class="course-material-list">${selectedMaterials.map(materialRow).join('')}</div>`:learningReady?empty('No slides or files yet','Your teacher can upload a guide, worksheet or slides for this workshop.'):`<div class="notice">Learning files will appear after the materials setup is complete.</div>`}
-  </section>`:'';
-  const feedbackCount=selected?attempts.filter(s=>s.review_status!=='submitted'&&s.teacher_feedback).length:0;
-  const classroom=selected?`<article class="course-classroom" id="course-${esc(selected.id)}">
-    <div class="course-classroom-head"><div><span class="eyebrow">YOUR CLASSROOM · ${esc(courseTrackFor(selected))}</span><h2 tabindex="-1">${esc(selected.title)}</h2><p>${esc(brief.goal||'Build and test a real project with your teacher.')}</p></div><div class="course-classroom-status">${courseLifecycleReady&&!courseOpen(selected)?`<span class="tag gold">${esc(courseStateLabel(selected))} · no new enrollments</span>`:''}<span class="tag ${completedProject?'blue':latest?.review_status==='revision_requested'?'gold':''}">${esc(courseProgress(enrollment))}</span></div></div>
-    <div class="course-classroom-meta"><span><b>Teacher</b> ${esc(selected.instructor_id?memberName(selected.instructor_id):'To be assigned')}</span>${courseTimeline(selected,enrollment.status==='enrolled')}</div>
-    <div class="course-detail-switch" role="group" aria-label="Inside this workshop">${advancedReady?`<button class="course-detail-button" data-action="spaceOpenClassroom" data-id="${esc(selected.id)}">Lesson plan & records ↗</button>`:''}${detailTab('overview','Overview')}${detailTab('materials','Materials & slides',selectedMaterials.length)}${learningHubReady?detailTab('classwork','Classwork',classworkForStudent(selected.id).length):''}${detailTab('submit','My submissions',attempts.length)}${detailTab('feedback','Teacher feedback',feedbackCount)}</div>
-    ${courseDetailView==='materials'?materialPanel:courseDetailView==='classwork'?studentClassworkPanel(selected.id):courseDetailView==='submit'?courseJourney(selected):courseDetailView==='feedback'?courseFeedback(selected):overview}
-  </article>`:'';
   const myLearning=`<section id="course-view-panel" class="course-view-panel" aria-label="My learning">
     ${courseReady?`<div class="course-summary"><strong>${enrolled.length} workshop${enrolled.length===1?'':'s'} joined</strong><span>${completed.length} completed</span>${teacher()?'<a href="#teaching">Open teaching studio →</a>':''}</div>`:`<div class="notice">Course enrollment and project submissions need the course journey database setup. You can still explore published workshops.</div>`}
     <div class="section-heading"><div><span class="eyebrow">YOUR LEARNING PLAN</span><h2>My workshops</h2></div><p>Choose a classroom to see its brief, materials, submissions and feedback.</p></div>
-    ${myCourses.length?`<div class="course-classroom-layout"><div class="course-class-list" role="group" aria-label="My enrolled workshops">${myCourses.map(({course:c,enrollment:e})=>`<button type="button" class="course-class-choice ${selected?.id===c.id?'selected':''}" data-action="courseSelect" data-id="${esc(c.id)}" aria-pressed="${selected?.id===c.id}"><small>${esc(courseTrackFor(c))}${courseLifecycleReady&&!courseOpen(c)?` · ${esc(courseStateLabel(c))}`:''}</small><strong>${esc(c.title)}</strong><span>${esc(courseProgress(e))} · ${courseDeadline(c)?`Due ${date(c.submission_due_at)}`:'Deadline to be announced'}</span></button>`).join('')}</div>${classroom}</div>`:`<div class="course-empty-state"><h3>No workshops joined yet</h3><p>Explore the four tracks, choose a practical build, and it will appear here with your materials and teacher feedback.</p><button class="button" data-action="courseView" data-view="explore">Explore workshops →</button></div>`}
+    ${myCourses.length?`<div class="course-classroom-layout"><div class="course-class-list" role="group" aria-label="My enrolled workshops">${myCourses.map(({course:c,enrollment:e})=>`<button type="button" class="course-class-choice ${selected?.id===c.id?'selected':''}" data-action="courseSelect" data-id="${esc(c.id)}" aria-pressed="${selected?.id===c.id}"><small>${esc(courseTrackFor(c))}${courseLifecycleReady&&!courseOpen(c)?` · ${esc(courseStateLabel(c))}`:''}</small><strong>${esc(c.title)}</strong><span>${esc(courseProgress(e))} · ${courseDeadline(c)?`Due ${date(c.submission_due_at)}`:'Deadline to be announced'}</span></button>`).join('')}</div>${selected?`<article class="journey-classroom-entry"><span class="eyebrow">YOUR COURSE WORKSPACE</span><h2>${esc(selected.title)}</h2><p>Lessons, files, assignments, project reviews, sessions and certificates are together in your classroom.</p><a class="button" href="#classroom/${esc(selected.id)}/overview">Open classroom →</a></article>`:""}</div>`:`<div class="course-empty-state"><h3>No workshops joined yet</h3><p>Explore the four tracks, choose a practical build, and it will appear here with your materials and teacher feedback.</p><button class="button" data-action="courseView" data-view="explore">Explore workshops →</button></div>`}
     ${materials.some(m=>!m.course_id)?`<section class="course-general-library"><div class="section-heading"><div><span class="eyebrow">FOR EVERY MEMBER</span><h2>Club learning library</h2></div><p>General notes and guides for any workshop.</p></div><div class="grid grid-2">${materials.filter(m=>!m.course_id).map(m=>`<div class="card">${materialRow(m)}</div>`).join('')}</div></section>`:''}
   </section>`;
   const visible=courseTrack==='all'?available:available.filter(c=>courseTrackFor(c)===courseTrack);
@@ -2566,7 +2567,7 @@ function teachingWorkshopCard(c,enrollments,pending){
     <div class="course-summary"><strong>${students.length} student${students.length===1?'':'s'}</strong><span>${waiting} awaiting feedback</span><span>${students.filter(e=>e.status==='completed').length} completed</span></div>
     <div class="teacher-roster-list">${students.length?students.slice(0,3).map(e=>`<div class="teacher-roster-row">${memberAvatar(e.learner_id)}<div><strong>${esc(courseLearnerName(c.id,e.learner_id))}</strong><small>${esc(courseProgress(e))}</small></div></div>`).join(''):empty('No students yet',active?'Members can enroll themselves, or you can add an approved member by email.':'This workshop had no enrolled students.')}</div>
     ${!active?'<p class="subtle">Closed to new students. Enrolled students can still submit work and receive feedback.</p>':''}
-    <div class="teacher-workshop-actions">
+    <div class="teacher-workshop-actions"><a class="button" href="#classroom/${esc(c.id)}/overview">Open classroom →</a>
       ${coursePlanningReady&&active?`<button class="button button-sm" data-action="assignLearnerForm" data-id="${esc(c.id)}">+ Add student</button>`:''}
       ${coursePlanningReady?`<button class="button button-outline button-sm" data-action="courseRoster" data-id="${esc(c.id)}">View all ${students.length} students</button>`:''}
       ${coursePlanningReady&&active?`<button class="button button-outline button-sm" data-action="editCourseScheduleForm" data-id="${esc(c.id)}">Set dates</button>`:''}
@@ -2697,7 +2698,7 @@ async function uploadFinanceReceipt(entryId,file){
  if(!admin()||!financeAdminReady)throw Error('Administrator access required');
  const ext={'application/pdf':'pdf','image/jpeg':'jpg','image/png':'png','image/webp':'webp'}[file?.type];if(!ext||file.size<1||file.size>10485760)throw Error('Choose a PDF, JPG, PNG or WebP receipt up to 10 MB.');
  const path=session.user.id+'/'+entryId+'/'+crypto.randomUUID()+'.'+ext;
- const {error}=await db.storage.from('club-finance-receipts').upload(path,file,{upsert:false,contentType:file.type});if(error)throw error;
+ const {error}=await monitoredUpload('club-finance-receipts',path,file,{upsert:false,contentType:file.type});if(error)throw error;
  try{const result=await db.rpc('register_finance_receipt',{p_entry:entryId,p_path:path,p_name:file.name.slice(0,160),p_size:file.size,p_mime:file.type});if(result.error)throw result.error;return result.data;}
  catch(error){await db.storage.from('club-finance-receipts').remove([path]);throw error;}
 }
@@ -3092,7 +3093,7 @@ async function togglePushNotifications(){
     if(session?.user.id!==owner)return;
     show(next.subscribed?'Device alerts enabled.':'Device alerts turned off.');
   }catch(error){
-    if(session?.user.id===owner)fail(error);
+    if(session?.user.id===owner){const state=client.state();if(state.supported&&state.permission!=='denied')void guidance?.report('notifications',error,owner);fail(error);}
   }finally{pushBusy=false;if(session?.user.id===owner&&page==='notifications')render();}
 }
 function notifications() {
@@ -3282,6 +3283,9 @@ async function deleteAnnouncement(id){
 function actions(e) {
   if(session&&checkSessionExpiry()){e.preventDefault();return;}
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
+  if(['onboardingDismiss','onboardingShow','onboardingReload','healthReload','healthReview'].includes(action)){void guidance?.action(action,el);return;}
+  if(action==='onboardingTeachingProfile'&&teacher()){teachingTab='profile';location.hash='#teaching';render();return;}
+  if(['classroomPeoplePage','classroomProjectPage','classroomWorkPage','classroomTaskPage'].includes(action)&&page==='classroom'&&courseManager((cache.courses||[]).find(c=>c.id===activeCourseId))){if(action==='classroomPeoplePage')classroomPeoplePage=Math.max(0,Number(el.dataset.page)||0);else if(action==='classroomProjectPage')classroomProjectPage=Math.max(0,Number(el.dataset.page)||0);else if(action==='classroomWorkPage')classroomWorkPage=Math.max(0,Number(el.dataset.page)||0);else classroomTaskPage=Math.max(0,Number(el.dataset.page)||0);render();return;}
   if(action==='accounts')return accountsDialog();
   if(action==='separateAccountHere')return changeAccountTab(true);
   if(action==='mainAccountHere')return changeAccountTab(false);
@@ -3493,14 +3497,11 @@ function actions(e) {
   }
   if(action==='courseSelect'&&clubAccess()&&courseReady){
     if(!(cache.course_enrollments||[]).some(e=>e.course_id===id&&e.learner_id===session.user.id))return;
-    activeCourseId=id;courseDetailView='overview';courseView='mine';render();
-    document.querySelector('.course-classroom h2')?.focus({preventScroll:true});
-    document.getElementById(`course-${id}`)?.scrollIntoView({behavior:'smooth',block:'start'});
-    return;
+    activeCourseId=id;courseDetailView='overview';courseView='mine';navigateClassroom(id,'overview');return;
   }
   if(action==='courseDetailView'&&clubAccess()&&courseReady){
     const view=el.dataset.view;if(!['overview','materials','classwork','submit','feedback'].includes(view))return;
-    courseDetailView=view;render();
+    courseDetailView=view;if(page==='classroom'){navigateClassroom(activeCourseId,classroomTabAliases[view]||'overview');return;}render();
     document.querySelector(`.course-detail-button[data-view="${view}"]`)?.focus();
     return;
   }
@@ -4394,7 +4395,7 @@ async function submit(e) {
       if(file?.size&&(!ext||file.size>10485760))throw Error('Choose a PDF, JPG, PNG or WebP evidence file up to 10 MB.');
       const path=file?.size?`${session.user.id}/${courseId}/${crypto.randomUUID()}.${ext}`:null;
       try{
-        if(path){const {error}=await db.storage.from('club-course-evidence').upload(path,file,{upsert:false,contentType:file.type});if(error)throw error;}
+        if(path){const {error}=await monitoredUpload('club-course-evidence',path,file,{upsert:false,contentType:file.type});if(error)throw error;}
         const {error}=await db.from('course_submissions').insert({course_id:courseId,learner_id:session.user.id,details,evidence_url:url,evidence_path:path,evidence_name:path?file.name.slice(0,240):null});
         if(error)throw error;
       }catch(error){if(path){const removed=await db.storage.from('club-course-evidence').remove([path]);if(removed.error)console.error(removed.error);}throw error;}
@@ -4551,7 +4552,7 @@ async function submit(e) {
       if(!file||!mime||file.size<1||file.size>20971520||file.name.length>240)throw Error('Choose a PDF, PPT, PPTX, DOC or DOCX file up to 20 MB.');
       if(file.type&&file.type!=='application/octet-stream'&&file.type!==mime)throw Error('The selected file type does not match its extension.');
       const path=`${session.user.id}/${crypto.randomUUID()}.${ext}`;
-      const {error:uploadError}=await db.storage.from('club-learning').upload(path,file,{upsert:false,contentType:mime});
+      const {error:uploadError}=await monitoredUpload('club-learning',path,file,{upsert:false,contentType:mime});
       if(uploadError)throw uploadError;
       const record={course_id:payload.course_id||null,uploaded_by:session.user.id,title:String(payload.title).trim(),description:String(payload.description||'').trim(),kind:payload.kind,file_name:file.name,storage_path:path,file_size:file.size};
       try{
@@ -4628,7 +4629,7 @@ async function submit(e) {
       const file=formEl.querySelector('[name=revision_file]').files[0],ext=file?.name.split('.').pop().toLowerCase();
       if(!file||file.size<1||file.size>10485760||!['pdf','doc','docx','ppt','pptx','xls','xlsx','txt','csv','zip','png','jpg','jpeg','stl'].includes(ext))throw Error('Choose a supported file up to 10 MB.');
       const path=`${session.user.id}/${crypto.randomUUID()}.${ext}`;
-      const {error:uploadError}=await db.storage.from('club-documents').upload(path,file,{upsert:false,contentType:file.type||'application/octet-stream'});
+      const {error:uploadError}=await monitoredUpload('club-documents',path,file,{upsert:false,contentType:file.type||'application/octet-stream'});
       if(uploadError)throw uploadError;
       const {error:updateError}=await db.from('documents').update({storage_path:path,file_size:file.size,file_type:ext.toUpperCase()}).eq('id',doc.id);
       if(updateError){await db.storage.from('club-documents').remove([path]);throw updateError;}
@@ -4639,7 +4640,7 @@ async function submit(e) {
       const ext=file?.name.split('.').pop().toLowerCase();
       if(!file||file.size<1||file.size>10485760||!['pdf','doc','docx','ppt','pptx','xls','xlsx','txt','csv','zip','png','jpg','jpeg','stl'].includes(ext))throw Error('Choose a supported file up to 10 MB.');
       const path=`${session.user.id}/${crypto.randomUUID()}.${ext}`;
-      const {error:uploadError}=await db.storage.from('club-documents').upload(path,file,{upsert:false,contentType:file.type||'application/octet-stream'});
+      const {error:uploadError}=await monitoredUpload('club-documents',path,file,{upsert:false,contentType:file.type||'application/octet-stream'});
       if(uploadError)throw uploadError;
       const channel_id=payload.channel_id||null;
       const {data:doc,error:docError}=await db.from('documents').insert({channel_id,author_id:session.user.id,title:file.name,storage_path:path,file_type:ext.toUpperCase(),file_size:file.size}).select('id').single();
@@ -4671,7 +4672,7 @@ async function submit(e) {
         }
         if(file){
           uploaded=`${id}/${crypto.randomUUID()}.${ext}`;
-          const {error}=await db.storage.from('club-founder-portraits').upload(uploaded,file,{upsert:false,contentType:file.type});
+          const {error}=await monitoredUpload('club-founder-portraits',uploaded,file,{upsert:false,contentType:file.type});
           if(error)throw error;
         }
         if(existing||uploaded){
@@ -4782,11 +4783,11 @@ async function loadAdvancedPage(target,generation=authGeneration){
   if(!advancedPreferenceTask)advancedPreferenceTask=requestWithDeadline(()=>db.from('space_notification_preferences').select('*').eq('user_id',owner).maybeSingle(),6000,'Notification preferences could not load.').finally(()=>{if(authGeneration===generation)advancedPreferenceTask=null;});
   const pref=await advancedPreferenceTask;if(!valid())return;if(pref.error){if(schemaUnavailable(pref.error)){advancedChecked=true;advancedReady=false;}return;}advancedChecked=true;advancedReady=true;advancedPreferences={muted_categories:[],popups:true,sound:false,push_enabled:true,...pref.data};
   const tables=[...(advancedTables[target]||[])];if(['meeting-room','office'].includes(target)&&!profilesComplete)tables.push('profiles');
-  if(target==='classroom'){const course=advancedCourses().find(c=>c.id===activeCourseId)||advancedCourses()[0];if(course)activeCourseId=course.id;}
+  if(target==='classroom'){const course=activeCourseId?advancedCourses().find(c=>c.id===activeCourseId):advancedCourses()[0];if(course)activeCourseId=course.id;}
   if(target==='project-board')activeProject=(cache.projects||[]).find(p=>p.id===activeProject)?.id||(cache.projects||[])[0]?.id||null;
-  const scopeCourse=activeCourseId,scopeProject=activeProject,rowsFor=async n=>{
+  const scopeCourse=advancedCourses().some(c=>c.id===activeCourseId)?activeCourseId:null,scopeProject=activeProject,rowsFor=async n=>{
    if(target==='classroom'&&['space_lesson_checkins','space_class_attendance'].includes(n))return null;
-   if(target==='classroom'&&n.startsWith('space_'))return scopeCourse?readAdvancedRows(n,{eq:{course_id:scopeCourse,...(!teacher()&&['space_practical_grades','space_grade_history','space_certificates'].includes(n)?{learner_id:owner}:{})}}):[];
+   if(target==='classroom'&&n.startsWith('space_'))return scopeCourse?readAdvancedRows(n,{eq:{course_id:scopeCourse,...(!courseManager((cache.courses||[]).find(c=>c.id===scopeCourse))&&['space_practical_grades','space_grade_history','space_certificates'].includes(n)?{learner_id:owner}:{})}}):[];
    if(target==='project-board'&&n==='space_project_updates')return scopeProject?readAdvancedRows(n,{eq:{project_id:scopeProject}}):[];
    if(target==='home'&&n==='space_meeting_actions')return readAdvancedRows(n,{eq:{assignee_id:owner},neq:{status:'done'},limit:20,order:'due_at'});
    if(target==='home'&&n==='space_class_sessions')return readAdvancedRows(n,{gte:{ends_at:new Date().toISOString()},limit:20,order:'starts_at'});
@@ -4798,7 +4799,7 @@ async function loadAdvancedPage(target,generation=authGeneration){
   const failed=[];results.forEach((r,i)=>{if(r.status==='fulfilled'){if(r.value!==null)cache[tables[i]]=r.value;}else failed.push(tables[i]);});advancedLoadError=failed.length?'Some advanced records could not load. Use Reload workspace to retry.':'';
   if(target==='classroom'){
    const childTables=[['space_lesson_checkins','lesson_id',(cache.space_course_lessons||[]).filter(l=>l.course_id===scopeCourse).map(l=>l.id)],['space_class_attendance','session_id',(cache.space_class_sessions||[]).filter(l=>l.course_id===scopeCourse).map(l=>l.id)]];
-   const children=await settledMapLimit(childTables,2,async([table,key,ids])=>{const rows=[];for(let i=0;i<ids.length;i+=100)rows.push(...await requestWithDeadline(()=>readAdvancedRows(table,{in:{[key]:ids.slice(i,i+100)},...(!teacher()?{eq:{learner_id:owner}}:{})}),8000,'Classroom progress could not load.'));return rows;});if(!valid()||activeCourseId!==scopeCourse)return;children.forEach((r,i)=>{if(r.status==='fulfilled')cache[childTables[i][0]]=r.value;else advancedLoadError='Some attendance or lesson progress could not load. Reload the workspace to retry.';});
+   const children=await settledMapLimit(childTables,2,async([table,key,ids])=>{const rows=[];for(let i=0;i<ids.length;i+=100)rows.push(...await requestWithDeadline(()=>readAdvancedRows(table,{in:{[key]:ids.slice(i,i+100)},...(!courseManager((cache.courses||[]).find(c=>c.id===scopeCourse))?{eq:{learner_id:owner}}:{})}),8000,'Classroom progress could not load.'));return rows;});if(!valid()||activeCourseId!==scopeCourse)return;children.forEach((r,i)=>{if(r.status==='fulfilled')cache[childTables[i][0]]=r.value;else advancedLoadError='Some attendance or lesson progress could not load. Reload the workspace to retry.';});
   }
   if(target==='messages'&&activePeerId)await loadAdvancedDmAssets(false);
   if(target==='events')await loadSpaceEventSummaries();
@@ -4810,20 +4811,52 @@ function advancedAlertAllowed(n){return !advancedReady||advancedPreferences.popu
 function advancedMyDay(){
  if(!advancedReady||!clubAccess())return '';const now=Date.now(),uid=session.user.id,items=[];
  for(const a of cache.space_meeting_actions||[])if(a.assignee_id===uid&&a.status!=='done')items.push({title:a.title,detail:'Meeting action'+(a.due_at?' · due '+date(a.due_at):''),href:'#meeting-room/'+a.meeting_id,at:a.due_at?new Date(a.due_at).getTime():Infinity});
- for(const s of cache.space_class_sessions||[])if(new Date(s.ends_at)>now&&(courseManager((cache.courses||[]).find(c=>c.id===s.course_id))||(cache.course_enrollments||[]).some(e=>e.course_id===s.course_id&&e.learner_id===uid)))items.push({title:s.title,detail:'Class session · '+dateTime(s.starts_at),href:'#classroom/'+s.course_id,at:new Date(s.starts_at).getTime()});
+ for(const s of cache.space_class_sessions||[])if(new Date(s.ends_at)>now&&(courseManager((cache.courses||[]).find(c=>c.id===s.course_id))||(cache.course_enrollments||[]).some(e=>e.course_id===s.course_id&&e.learner_id===uid)))items.push({title:s.title,detail:'Class session · '+dateTime(s.starts_at),href:'#classroom/'+s.course_id+'/sessions',at:new Date(s.starts_at).getTime()});
  for(const w of cache.officer_work_items||[])if(w.assignee_id===uid&&w.status!=='done')items.push({title:w.title,detail:officerTitle(w.position)+' · '+w.status.replaceAll('_',' '),href:'#office',at:w.due_at?new Date(w.due_at).getTime():Infinity});
  if(teacher()){const waiting=managedClasswork().flatMap(a=>(cache.classroom_assignment_submissions||[]).filter(s=>s.assignment_id===a.id&&s.review_status==='submitted'&&s.learner_id!==uid));if(waiting.length)items.unshift({title:waiting.length+' classwork submissions need feedback',detail:'Teaching studio · review student work',href:'#teaching',at:0});}
  if(admin()&&adminPendingCount)items.unshift({title:adminPendingCount+' membership applications',detail:'Administrator · review applications',href:'#applications',at:0});
  if(admin()){const reviews=cache.finance_monthly_reviews||[],month=financeMonth;const review=reviews.find(r=>String(r.month).slice(0,7)===month);if(!review)items.push({title:'Review '+month+' finances',detail:'Resolve pending records and compare the actual balance',href:'#finance',at:1});}
  items.sort((a,b)=>a.at-b.at);return `<section class="space-my-day card"><div class="section-heading"><div><span class="eyebrow">YOUR NEXT ACTIONS</span><h2>Today & next</h2></div><a class="link" href="#calendar">Full schedule →</a></div>${items.length?items.slice(0,6).map(i=>`<a class="space-action-row" href="${esc(i.href)}"><span class="space-action-dot ${i.at<now?'urgent':''}"></span><span><strong>${esc(i.title)}</strong><small>${esc(i.detail)}</small></span><span aria-hidden="true">↗</span></a>`).join(''):'<p class="subtle">Your immediate work is clear. Explore your classroom, projects or the calendar for your next activity.</p>'}</section>`;
 }
-function advancedCourses(){return (cache.courses||[]).filter(c=>courseManager(c)||(cache.course_enrollments||[]).some(e=>e.course_id===c.id&&e.learner_id===session?.user.id));}
+let classroomView='overview',classroomPeoplePage=0,classroomProjectPage=0,classroomWorkPage=0,classroomTaskPage=0;
+const classroomTabAliases={lessons:'learn',materials:'learn',classwork:'work',submit:'work',feedback:'work',grades:'work'};
+function navigateClassroom(id,tab='overview'){
+ if(!clubAccess()||!advancedCourses().some(c=>c.id===id))return;
+ activeCourseId=id;advancedClassPage=0;advancedSessionPage=0;classroomView=['overview','learn','work','sessions','students','certificates'].includes(tab)?tab:'overview';classroomPeoplePage=0;classroomProjectPage=0;classroomWorkPage=0;classroomTaskPage=0;
+ const hash='#classroom/'+id+'/'+classroomView;
+ if(location.hash===hash)render();else location.hash=hash;
+}
 function classroomWorkspace(){
- if(!clubAccess())return '';const choices=advancedCourses();let c=choices.find(c=>c.id===activeCourseId)||choices[0];if(c)activeCourseId=c.id;
- const top=head('PRACTICAL LEARNING','Classroom tools','Lessons, attendance, practical assessments and completion records.',`<a class="button button-outline" href="${teacher()?'#teaching':'#courses'}">${teacher()?'Teaching studio':'My learning'} →</a>`);if(!advancedReady)return top+advancedSetup();if(!c)return top+empty('Join a workshop first','Choose your learning tracks and enroll from My learning. Teachers can publish workshops in Teaching studio.');
- const manage=courseManager(c),tabs=[['lessons','Lesson plan'],['sessions','Sessions & attendance'],['grades',manage?'Gradebook':'My assessments'],['certificates','Certificates']];if(!tabs.some(t=>t[0]===advancedTab))advancedTab='lessons';
- advancedSessionPage=Math.max(0,advancedSessionPage);
+ if(!clubAccess())return '';
+ const choices=advancedCourses(),c=choices.find(x=>x.id===activeCourseId)||(!activeCourseId?choices[0]:null);
+ const top=head('LEARNING','Classroom','Your course, teaching resources and progress in one place.',`<a class="button button-outline" href="${teacher()?'#teaching':'#courses'}">${teacher()?'Teaching studio':'My learning'} →</a>`);
+ if(!c)return top+empty('Choose a classroom','Open a workshop you have joined or teach. If a shared link is unavailable, ask its teacher to check your enrollment.')+`<div class="profile-buttons"><a class="button" href="#courses">My learning</a>${teacher()?'<a class="button button-outline" href="#teaching">Teaching studio</a>':''}</div>`;
+ activeCourseId=c.id;
+ const manage=courseManager(c),enrollment=(cache.course_enrollments||[]).find(e=>e.course_id===c.id&&e.learner_id===session.user.id);
+ const tabs=[['overview','Overview'],['learn','Lessons & files'],['work','Work & feedback'],['sessions','Sessions'],...(manage?[['students','Students']]:[]),['certificates','Certificates']];
+ if(!tabs.some(([key])=>key===classroomView))classroomView='overview';
+ const brief=courseBrief(c),materials=(cache.learning_materials||[]).filter(m=>m.course_id===c.id&&!m.hidden_at);
+ const courseSubmissions=(cache.course_submissions||[]).filter(x=>x.course_id===c.id&&(manage||x.learner_id===session.user.id));
+ let content='';
+ if(classroomView==='overview')content=`<article class="card journey-course-brief"><h2>What you will build</h2><p class="space-preserve">${esc(brief.goal||'Your teacher will share the course brief here.')}</p>${brief.practice?`<h3>Practice and testing</h3><p class="space-preserve">${esc(brief.practice)}</p>`:''}${brief.tools?`<h3>Tools and components</h3><p class="space-preserve">${esc(brief.tools)}</p>`:''}<div class="profile-buttons"><a class="button" href="#classroom/${esc(c.id)}/learn">${manage?'Prepare lessons & files':'Start learning'} →</a><a class="button button-outline" href="#classroom/${esc(c.id)}/work">${manage?'Review student work':'My work & feedback'} →</a></div></article><section class="journey-course-steps" aria-label="Course journey"><span>1. Learn & practice</span><span>2. Submit work</span><span>3. Improve with feedback</span><span>4. Teacher confirms completion</span></section>${manage?`<details class="card journey-course-settings"><summary>Course settings & enrollment</summary><div class="profile-buttons">${courseOpen(c)?`<button class="button button-outline" data-action="editCourseContentForm" data-id="${esc(c.id)}">Edit course brief</button><button class="button button-outline" data-action="editCourseScheduleForm" data-id="${esc(c.id)}">Set dates</button>`:""}${courseOpen(c)?`<button class="text-button" data-action="endCourseForm" data-id="${esc(c.id)}">End enrollment</button>`:''}${courseLifecycleReady&&c.status!=='archived'?`<button class="text-button" data-action="deleteCourseForm" data-id="${esc(c.id)}">${enrollment||courseSubmissions.length?'Archive / remove':'Remove course'}</button>`:''}</div></details>`:''}`;
+ if(classroomView==='learn')content=`<section class="card journey-course-files"><div class="section-heading"><div><h2>Materials & slides</h2><p>Resources for this course.</p></div>${manage&&learningReady?`<button class="button button-sm" data-action="learningForm" data-course="${esc(c.id)}">+ Add file</button>`:''}</div>${cleanUrl(c.resource_url)?`<a class="link" href="${esc(cleanUrl(c.resource_url))}" target="_blank" rel="noopener noreferrer">Open course resource ↗</a>`:''}${materials.map(materialRow).join('')||'<p class="subtle">Your teacher will share files here.</p>'}</section>${classroomRecords(c,'lessons')}`;
+ if(classroomView==='work'){
+  if(manage){const pending=courseSubmissions.filter(s=>s.review_status==='submitted'&&s.learner_id!==session.user.id),reviewed=courseSubmissions.filter(s=>s.review_status!=='submitted');classroomProjectPage=Math.min(classroomProjectPage,Math.max(0,Math.ceil(pending.length/24)-1));
+   content=`${learningHubReady?teacherClassworkPanel(c.id):'<div class="notice">Classwork is being prepared. Course completion projects remain below.</div>'}<section class="journey-final-project"><div class="section-heading"><div><h2>Course completion projects</h2><p>Accept a completed project with your saved signature to issue its certificate.</p></div><button class="button button-outline" data-action="certificateSettings">My certificate signature</button></div><div class="grid grid-2">${pending.slice(classroomProjectPage*24,(classroomProjectPage+1)*24).map(s=>courseSubmissionCard(s,true)).join('')||empty('No projects awaiting review','Student course completion projects will appear here.')}</div>${advancedPageButtons('classroomProjectPage',classroomProjectPage,pending.length)}<details class="card journey-reviewed-projects"><summary>Reviewed projects · ${reviewed.length}</summary>${reviewed.slice(0,24).map(s=>courseSubmissionCard(s,false)).join('')||'<p>No reviewed projects yet.</p>'}${reviewed.length>24?'<p>Latest 24 shown. Full project history remains in Teaching studio → To review.</p>':''}</details></section><details class="card journey-practical-assessment"><summary>Practical assessment & grade history</summary>${classroomRecords(c,'grades')}</details>`;
+  }else content=`${learningHubReady?studentClassworkPanel(c.id):'<div class="notice">Assigned classwork will appear here once course setup is complete.</div>'}<section class="journey-final-project"><div class="section-heading"><div><h2>Course completion project</h2><p>Share your final build or learning evidence here when your teacher asks. Their completion confirmation issues your certificate.</p></div></div>${courseJourney(c)}${courseFeedback(c)}</section><details class="card journey-practical-assessment"><summary>My practical assessments</summary>${classroomRecords(c,'grades')}</details>`;
+ }
+ if(classroomView==='sessions')content=classroomRecords(c,'sessions');
+ if(classroomView==='certificates')content=classroomRecords(c,'certificates');
+ if(classroomView==='students'&&manage){const rows=(cache.course_roster||[]).filter(r=>r.course_id===c.id),ids=new Set(rows.map(r=>r.learner_id));for(const item of cache.course_enrollments||[])if(item.course_id===c.id&&!ids.has(item.learner_id)){rows.push({...item,full_name:courseLearnerName(c.id,item.learner_id)});ids.add(item.learner_id);}classroomPeoplePage=Math.min(classroomPeoplePage,Math.max(0,Math.ceil(rows.length/24)-1));content=`<div class="section-heading"><div><h2>Enrolled students</h2><p>${rows.length} in this course</p></div>${courseOpen(c)?`<button class="button button-sm" data-action="assignLearnerForm" data-id="${esc(c.id)}">+ Add student</button>`:''}</div><div class="grid grid-2">${rows.slice(classroomPeoplePage*24,(classroomPeoplePage+1)*24).map(r=>`<article class="card"><strong>${esc(r.full_name||'Student')}</strong><small class="subtle">${esc(r.status||'Enrolled')}</small><div class="profile-buttons">${courseOpen(c)&&learningHubReady?`<button class="button button-outline button-sm" data-action="classworkForm" data-id="${esc(c.id)}" data-learner="${esc(r.learner_id)}">Assign work</button>`:''}<button class="text-button" data-action="certificateComplete" data-course="${esc(c.id)}" data-learner="${esc(r.learner_id)}">Confirm completion</button></div></article>`).join('')||empty('No students enrolled yet','Add an approved learner or invite members to join this workshop.')}</div>${advancedPageButtons('classroomPeoplePage',classroomPeoplePage,rows.length)}`;}
+ content=content.replaceAll(' id="course-detail-panel"','');
+ return top+`<header class="journey-classroom-heading"><div><span class="eyebrow">${esc(courseTrackFor(c))} · ${manage?'TEACHING':'MY CLASSROOM'}</span><h2>${esc(c.title)}</h2><p>${manage?'You manage this course.':`Teacher: ${esc(c.instructor_id?memberName(c.instructor_id):'To be assigned')}`}${!courseOpen(c)?' · Closed to new enrollment':''}</p></div><form id="spaceCoursePicker"><label class="sr-only" for="journeyCourse">Switch classroom</label><select id="journeyCourse" name="course">${choices.map(x=>`<option value="${esc(x.id)}" ${x.id===c.id?'selected':''}>${esc(x.title)}</option>`).join('')}</select><button class="button button-outline button-sm" type="submit">Switch</button></form></header><nav class="journey-classroom-tabs" aria-label="Inside this classroom">${tabs.map(([key,label])=>`<a href="#classroom/${esc(c.id)}/${key}" ${key===classroomView?'aria-current="page"':''}>${label}</a>`).join('')}</nav>${advancedLoadError?`<div class="notice">Some lesson records could not load. <button class="text-button" data-action="spaceReload">Retry</button></div>`:''}<div class="journey-classroom-content">${content}</div>`;
+}
+function advancedCourses(){return (cache.courses||[]).filter(c=>courseManager(c)||(cache.course_enrollments||[]).some(e=>e.course_id===c.id&&e.learner_id===session?.user.id));}
+function classroomRecords(c,recordTab){
+ if(!advancedReady)return '<div class="notice">Lesson records and sessions are being prepared. Materials and work are available in this classroom.</div>';
+ const manage=courseManager(c),advancedTab=recordTab;
  const lessons=(cache.space_course_lessons||[]).filter(l=>l.course_id===c.id).sort((a,b)=>a.position-b.position),checks=cache.space_lesson_checkins||[],sessions=(cache.space_class_sessions||[]).filter(s=>s.course_id===c.id).sort((a,b)=>new Date(b.starts_at)-new Date(a.starts_at)),grades=(cache.space_practical_grades||[]).filter(g=>g.course_id===c.id&&(manage||g.learner_id===session.user.id));
+ advancedSessionPage=Math.min(Math.max(0,advancedSessionPage),Math.max(0,Math.ceil(sessions.length/24)-1));
  let content='';
  if(advancedTab==='lessons')content=`<div class="section-heading"><div><h2>Learn, build, test</h2><p class="subtle">Lesson checkmarks track personal progress. Your teacher confirms final completion.</p></div>${manage?`<button class="button button-sm" data-action="spaceLessonForm" data-course="${esc(c.id)}">+ Lesson</button>`:''}</div><div class="space-stack">${lessons.map(l=>{const done=checks.some(x=>x.lesson_id===l.id&&x.learner_id===session.user.id&&x.done);return `<article class="card space-lesson"><span class="eyebrow">LESSON ${l.position}</span><h3>${esc(l.title)}</h3><p><strong>Build outcome</strong> ${esc(l.outcome)}</p><div class="space-preserve">${esc(l.instructions)}</div>${cleanUrl(l.resource_url)?`<p><a class="link" href="${esc(cleanUrl(l.resource_url))}" target="_blank" rel="noopener noreferrer">Open lesson resource ↗</a></p>`:''}<div class="profile-buttons">${manage?`<button class="text-button" data-action="spaceLessonForm" data-id="${esc(l.id)}" data-course="${esc(c.id)}">Edit lesson</button>`:`<button class="button button-outline button-sm" data-action="spaceLessonCheck" data-id="${esc(l.id)}" data-done="${!done}">${done?'✓ Finished this lesson':'Mark lesson finished'}</button>`}</div></article>`;}).join('')||empty('The lesson plan is being prepared',manage?'Add the first lesson with a practical outcome and clear instructions.':'Your teacher will publish lessons here. Materials and classwork remain available in My learning.')}</div>`;
  if(advancedTab==='sessions')content=`<div class="section-heading"><h2>Class sessions</h2>${manage?`<button class="button button-sm" data-action="spaceSessionForm" data-course="${esc(c.id)}">+ Schedule session</button>`:''}</div><div class="space-stack">${sessions.slice(advancedSessionPage*24,(advancedSessionPage+1)*24).map(s=>`<article class="card"><div class="section-heading"><div><h3>${esc(s.title)}</h3><p>${dateTime(s.starts_at)} – ${dateTime(s.ends_at)}</p></div>${manage?`<button class="button button-outline button-sm" data-action="spaceAttendance" data-id="${esc(s.id)}">Attendance register</button>`:`<span class="tag">${esc((cache.space_class_attendance||[]).find(a=>a.session_id===s.id&&a.learner_id===session.user.id)?.status||'Not recorded')}</span>`}</div>${cleanUrl(s.meet_url)?`<a class="link" href="${esc(cleanUrl(s.meet_url))}" target="_blank" rel="noopener noreferrer">Join class meeting ↗</a>`:''}</article>`).join('')||empty('No class sessions scheduled','Session dates and attendance will appear here.')} ${advancedPageButtons('spaceSessionPage',advancedSessionPage,sessions.length)}</div>`;
@@ -4836,8 +4869,9 @@ function classroomWorkspace(){
   content=`<div class="notice">Your teacher confirms course completion. A certificate is issued automatically, with the member’s name, completion date and the teacher’s saved signature. Public verification remains optional.</div>${manage?`<div class="certificate-completion-actions"><button class="button button-sm" data-action="certificateComplete" data-course="${esc(c.id)}">Confirm a course completion</button><button class="text-button" data-action="certificateSettings">My certificate signature</button></div>`:''}<div class="space-stack">${completions.map(x=>{const cert=(cache.space_certificates||[]).find(v=>v.completion_id===x.id);return `<article class="card"><div class="section-heading"><div><h3>${esc(courseLearnerName(c.id,x.learner_id))}</h3><p>Completed ${date(x.completed_at)}${cert?.revoked_at?' · Certificate revoked':''}</p></div><div class="profile-buttons">${cert?`<button class="button button-outline button-sm" data-action="certificateView" data-id="${esc(cert.id)}">View and download certificate</button>${x.learner_id===session.user.id?`<button class="text-button" data-action="spaceCertificateForm" data-course="${esc(c.id)}">Sharing settings</button>`:''}${admin()&&!cert.revoked_at?`<button class="text-button" data-action="spaceCertificateRevoke" data-id="${esc(cert.id)}">Revoke</button>`:''}`:'<span class="subtle">Awaiting teacher certificate confirmation.</span>'}${manage&&!cert?.signed_by&&!cert?.revoked_at?`<button class="text-button" data-action="certificateComplete" data-course="${esc(c.id)}" data-learner="${esc(x.learner_id)}">Confirm and sign this completion</button>`:''}</div></div></article>`;}).join('')||empty('Your completion certificate will appear here','Complete the learning or practical requirements. Your teacher will confirm completion and issue your certificate.')}</div>`;
  }
 
- return top+`<form id="spaceCoursePicker" class="officer-toolbar"><label class="field">Workshop<select name="course">${choices.map(x=>`<option value="${esc(x.id)}" ${x.id===c.id?'selected':''}>${esc(x.title)}${courseManager(x)?' · teaching':''}</option>`).join('')}</select></label><button class="button button-outline" type="submit">Open classroom</button></form><div class="records-tabs" role="group" aria-label="Classroom tools">${tabs.map(([key,label])=>`<button class="${key===advancedTab?'active':''}" data-action="spaceClassTab" data-tab="${key}">${label}</button>`).join('')}</div>${advancedLoadError?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:''}${content}`;
+ return content;
 }
+
 function advancedMeetingWorkspace(){
  const top=head('CLUB RECORDS','Meetings & actions','Agendas, attendance, decisions and clear follow-up.',advancedSecretary()?button('+ Plan meeting','spaceMeetingForm'):'');if(!advancedReady)return top+advancedSetup();
  const meetings=(cache.space_meetings||[]).slice().sort((a,b)=>new Date(b.starts_at)-new Date(a.starts_at)),selected=meetings.find(m=>m.id===activeMeetingId)||meetings[0];if(selected)activeMeetingId=selected.id;const manage=advancedSecretary();
@@ -4910,7 +4944,7 @@ async function sendAdvancedDm(form){
  const image=draft.file,documentFile=draft.document,reply=draft.reply,sentText=input.value;draft.text=sentText;draft.token||=crypto.randomUUID();const token=draft.token;
  let imagePath=draft.imagePath||null,documentPath=draft.documentPath||null,documentMime=null,data,sent=false;spaceSaveDmDraft(peer,draft);dmSendingPeers.add(peer);send.disabled=true;
  try{
-  if(documentFile){const {ext,mime}=validateDmFile(documentFile);documentMime=mime;if(!documentPath){documentPath=owner+'/'+peer+'/'+crypto.randomUUID()+'.'+ext;const result=await db.storage.from('club-direct-files').upload(documentPath,documentFile,{upsert:false,contentType:mime});if(result.error)throw result.error;if(draft.document===documentFile){draft.documentPath=documentPath;draft.documentMime=mime;}}}
+  if(documentFile){const {ext,mime}=validateDmFile(documentFile);documentMime=mime;if(!documentPath){documentPath=owner+'/'+peer+'/'+crypto.randomUUID()+'.'+ext;const result=await monitoredUpload('club-direct-files',documentPath,documentFile,{upsert:false,contentType:mime});if(result.error)throw result.error;if(draft.document===documentFile){draft.documentPath=documentPath;draft.documentMime=mime;}}}
   if(image&&!imagePath){imagePath=await uploadClubImage(image);if(draft.file===image)draft.imagePath=imagePath;}
   if(session?.user.id!==owner)return;
   const result=await db.rpc('space_send_dm',{p_peer:peer,p_body:body||(documentFile?'Shared a file: '+documentFile.name:'Shared an image'),p_reply:reply?.id||null,p_image:imagePath,p_token:token,p_path:documentPath,p_name:documentFile?.name||null,p_size:documentFile?.size||null,p_mime:documentMime});if(result.error)throw result.error;
@@ -4925,7 +4959,7 @@ async function sendAdvancedDm(form){
 }
 async function advancedMutation(name,args,after=null){if(!clubAccess()||!advancedReady)return;const owner=session.user.id,generation=authGeneration;try{const result=await db.rpc(name,args);if(result.error)throw result.error;if(owner!==session?.user.id||generation!==authGeneration)return;await refresh();if(after)after(result.data);else render();}catch(error){if(owner===session?.user.id)fail(error);}}
 async function advancedSubmit(e){const f=e.target;if(f.id==='dmComposer'&&advancedReady&&dmReady){e.preventDefault();await sendAdvancedDm(f);return true;}if(!clubAccess())return false;
- const simple=['spaceCoursePicker','spaceProjectPicker','spaceLibrarySearch','spaceNotificationPreferences','spaceEventSearch'];if(simple.includes(f.id)){e.preventDefault();const data=[...new FormData(f)],v=Object.fromEntries(data);if(f.id==='spaceCoursePicker'){activeCourseId=v.course;advancedClassPage=0;advancedSessionPage=0;location.hash='#classroom/'+v.course;render();}if(f.id==='spaceProjectPicker'){activeProject=v.project;advancedProjectPage=0;location.hash='#project-board/'+v.project;render();}if(f.id==='spaceLibrarySearch'){advancedFileSearch=String(v.search||'').slice(0,120).trim();advancedFileType=v.type||'all';advancedFilePage=0;render();}if(f.id==='spaceEventSearch'){spaceEventRosterSearch=String(v.search||'').slice(0,120).trim();spaceEventRosterPage=0;spaceOpenEventDesk(v.event);}if(f.id==='spaceNotificationPreferences'){const selected=data.filter(([key])=>key==='category').map(([,value])=>value);await advancedMutation('space_save_notification_preferences',{p_muted:['messages','learning','projects','events','office','club'].filter(c=>!selected.includes(c)),p_popups:!!v.popups,p_sound:!!v.sound,p_push:!!v.push},()=>show('Notification preferences saved.'));}return true;}
+ const simple=['spaceCoursePicker','spaceProjectPicker','spaceLibrarySearch','spaceNotificationPreferences','spaceEventSearch'];if(simple.includes(f.id)){e.preventDefault();const data=[...new FormData(f)],v=Object.fromEntries(data);if(f.id==='spaceCoursePicker'){navigateClassroom(v.course,'overview');}if(f.id==='spaceProjectPicker'){activeProject=v.project;advancedProjectPage=0;location.hash='#project-board/'+v.project;render();}if(f.id==='spaceLibrarySearch'){advancedFileSearch=String(v.search||'').slice(0,120).trim();advancedFileType=v.type||'all';advancedFilePage=0;render();}if(f.id==='spaceEventSearch'){spaceEventRosterSearch=String(v.search||'').slice(0,120).trim();spaceEventRosterPage=0;spaceOpenEventDesk(v.event);}if(f.id==='spaceNotificationPreferences'){const selected=data.filter(([key])=>key==='category').map(([,value])=>value);await advancedMutation('space_save_notification_preferences',{p_muted:['messages','learning','projects','events','office','club'].filter(c=>!selected.includes(c)),p_popups:!!v.popups,p_sound:!!v.sound,p_push:!!v.push},()=>show('Notification preferences saved.'));}return true;}
  const kind=f.dataset.kind;if(f.id!=='editor'||!kind?.startsWith('space'))return false;e.preventDefault();if(!advancedReady)return true;const v=Object.fromEntries(new FormData(f)),send=f.querySelector('[type=submit]'),draftKey=spaceDraftKey(f);if(send.disabled)return true;send.disabled=true;
  try{let name,args;const dateTimeValue=value=>{const d=new Date(value);if(!value||!Number.isFinite(d.getTime()))throw Error('Choose a valid date and time.');return d.toISOString();};
   if(kind==='spaceLesson'){name='space_save_lesson';args={p_id:v.id||null,p_course:v.course,p_title:v.title,p_position:Number(v.position),p_outcome:v.outcome,p_instructions:v.instructions,p_url:v.url||null};}
@@ -4948,9 +4982,9 @@ function advancedActions(action,id,el){if(!action.startsWith('space'))return fal
  const pages={spaceClassPage:'advancedClassPage',spaceMeetingPage:'advancedMeetingPage',spaceNotificationPage:'advancedNotificationPage',spaceFilePage:'advancedFilePage',spaceProjectPage:'advancedProjectPage'};
  if(Object.hasOwn(pages,action)){const p=Math.max(0,Number(el.dataset.page)||0);if(action==='spaceClassPage')advancedClassPage=p;if(action==='spaceMeetingPage')advancedMeetingPage=p;if(action==='spaceNotificationPage')advancedNotificationPage=p;if(action==='spaceFilePage')advancedFilePage=p;if(action==='spaceProjectPage')advancedProjectPage=p;render();return true;}
  if(action==='spaceSessionPage'){advancedSessionPage=Math.max(0,Number(el.dataset.page)||0);render();}
- if(action==='spaceClassTab'){if(['lessons','sessions','grades','certificates'].includes(el.dataset.tab)){advancedTab=el.dataset.tab;advancedClassPage=0;render();}}
+ if(action==='spaceClassTab'){if(['lessons','sessions','grades','certificates'].includes(el.dataset.tab)){advancedTab=el.dataset.tab;advancedClassPage=0;navigateClassroom(activeCourseId,classroomTabAliases[el.dataset.tab]||el.dataset.tab);}}
  if(action==='spaceOpenMeeting'){activeMeetingId=id;location.hash='#meeting-room/'+id;render();}
- if(action==='spaceOpenClassroom'){activeCourseId=id;location.hash='#classroom/'+id;}
+ if(action==='spaceOpenClassroom'){navigateClassroom(id,'overview');}
  if(action==='spaceOpenProject'){advancedBoardPages={};activeProject=id;location.hash='#project-board/'+id;close();}
  if(action==='spaceLessonCheck')void advancedMutation('space_check_lesson',{p_lesson:id,p_done:el.dataset.done==='true'});
  if(action==='spaceAttendance'){spaceAttendanceForm(id);spaceRestoreFormDraft();}
@@ -4986,10 +5020,11 @@ async function refreshCurrentAccess(){
   if(session?.user.id!==currentSession.user.id)return;
   await loadOwnOfficerAccess(authGeneration);updateWorkspaceNavigation();render();
 }
-certification=window.SpaceCertificates?.create({db,esc,modal,close,show,refresh,memberName,
+guidance=window.SpaceGuidance?.create({db,esc,deadline:requestWithDeadline,render,show,get:guidanceState,dashboard:configured?'https://supabase.com/dashboard/project/'+new URL(cfg.supabaseUrl).hostname.split('.')[0]:'https://supabase.com/dashboard',runbook:'https://github.com/Turkson225/Turk-Innovation-CLUB/blob/main/docs/system_health.md'})||null;
+certification=window.SpaceCertificates?.create({db,esc,modal,close,show,refresh,memberName,report:(category,error,owner)=>guidance?.report(category,error,owner),
  get:()=>({session,me,generation:authGeneration,club:clubAccess(),teacher:teacher(),admin:admin(),cache})
 })||null;
-commerce=window.SpaceClubShop?.create({db,esc,deadline:requestWithDeadline,modal,close,show,fail,render,
+commerce=window.SpaceClubShop?.create({db,esc,report:(category,error,owner)=>guidance?.report(category,error,owner),deadline:requestWithDeadline,modal,close,show,fail,render,
  get:()=>({session,me,page,admin:admin(),approved:approved(),club:clubAccess(),offices:ownOfficerRoles}),
  openOrderId:()=>$('#modal').open?$('#modalContent .shop-order-detail[data-shop-order-id]')?.dataset.shopOrderId:'',
  go:target=>{setSidebarOpen(false);location.hash='#'+target;route();},refreshAccess:refreshCurrentAccess

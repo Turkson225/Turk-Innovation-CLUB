@@ -192,7 +192,7 @@
      initialStock={p_id:null,p_sku:sku||'SPACE-'+crypto.randomUUID().replaceAll('-','').slice(0,12).toUpperCase(),p_label:label,p_price:Math.round(Number(price)*100),p_stock:stock,p_unit:unit,p_low:3,p_active:true,p_note:'Opening stock added with product'};
     }
     let path=values.remove_image==='on'?null:p.image_path||null,uploaded=null,id=null;
-    if(file){if(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size<1||file.size>5242880)throw Error('Use a JPG, PNG or WebP image up to 5 MB.');const ext={'image/jpeg':'jpg','image/png':'png','image/webp':'webp'}[file.type];uploaded=uid+'/'+crypto.randomUUID()+'.'+ext;const r=await db.storage.from('club-shop-images').upload(uploaded,file,{contentType:file.type,upsert:false});if(r.error)throw r.error;path=uploaded;}
+    if(file){if(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size<1||file.size>5242880)throw Error('Use a JPG, PNG or WebP image up to 5 MB.');const ext={'image/jpeg':'jpg','image/png':'png','image/webp':'webp'}[file.type];uploaded=uid+'/'+crypto.randomUUID()+'.'+ext;const r=await db.storage.from('club-shop-images').upload(uploaded,file,{contentType:file.type,upsert:false}).catch(error=>{if(valid(uid,seq))void ctx.report?.('upload',error,uid);throw error;});if(r.error){if(valid(uid,seq))void ctx.report?.('upload',r.error,uid);throw r.error;}path=uploaded;}
     if(!valid(uid,seq)){if(uploaded)await db.storage.from('club-shop-images').remove([uploaded]);return;}
     const fields={p_id:values.id||null,p_title:String(values.title||'').trim(),p_category:values.category,p_description:String(values.description||'').trim(),p_image:path,p_published:initial?false:published,p_archived:false};
     try{

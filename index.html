@@ -24,6 +24,7 @@
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=space-logo-20261001">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?v=space-logo-20261001">
   <link rel="stylesheet" href="styles.css?v=space-orderdesk-dm-read-20261016">
+  <link rel="stylesheet" href="club-guidance.css?v=space-learning-guidance-20261017">
   <link rel="stylesheet" href="mobile-workspace.css?v=space-mobile-simple-20261017">
   <link rel="stylesheet" href="chat-waves.css?v=space-chat-waves-20261017">
   <link rel="stylesheet" href="club-certificates.css?v=space-signature-pad-20261016">
@@ -41,6 +42,7 @@
         <div class="nav-primary">
           <a href="#home" data-page="home"><span>◫</span> Home</a>
           <a href="#application" data-page="application" data-pending hidden><span>✧</span> My application</a>
+          <a href="#getting-started" data-page="getting-started" hidden><span>✓</span> Getting started</a>
           <a href="#notifications" data-page="notifications" data-private hidden><span>◉</span> Notifications <i id="notificationBadge">0</i></a>
           <a href="#role-updates" data-page="role-updates" hidden><span>✓</span> Role updates</a>
           <a href="#messages" data-page="messages" data-private hidden><span>◍</span> Direct messages <i id="dmBadge" hidden>0</i></a>
@@ -54,7 +56,7 @@
           <div class="nav-section-links">
             <a href="#courses" data-page="courses" data-private hidden><span>▤</span> My learning</a>
             <a href="#teaching" data-page="teaching" data-teacher hidden><span>▤</span> Teaching studio</a>
-            <a href="#classroom" data-page="classroom" data-private hidden><span>▧</span> Classroom tools</a>
+            <a href="#classroom" data-page="classroom" data-private hidden><span>▧</span> Classrooms</a>
             <a href="#project-board" data-page="project-board" data-private hidden><span>▥</span> Project workspace</a>
             <a href="#projects" data-page="projects" data-private hidden><span>▥</span> Projects</a>
             <a href="#library" data-page="library" data-private hidden><span>▤</span> Shared files</a>
@@ -97,6 +99,7 @@
         <details class="nav-section" data-nav-group="administration" hidden>
           <summary><span>Administration</span></summary>
           <div class="nav-section-links">
+            <a href="#system-health" data-page="system-health" data-admin hidden><span>◉</span> System health</a>
             <a href="#admin" data-page="admin" data-admin hidden><span>▧</span> Admin overview</a>
             <a href="#applications" data-page="applications" data-admin hidden><span>✓</span> Membership approvals</a>
             <a href="#officers" data-page="officers" data-admin hidden><span>▧</span> Roles &amp; offices</a>
@@ -195,11 +198,12 @@
 })();
 
   </script>
-  <script src="club-certificates.js?v=space-signature-pad-20261016"></script>
-  <script src="club-commerce.js?v=space-orderdesk-dm-read-20261016"></script>
-  <script src="mobile-workspace.js?v=space-mobile-simple-20261017" defer></script>
+  <script src="club-certificates.js?v=space-learning-guidance-20261017"></script>
+  <script src="club-commerce.js?v=space-learning-guidance-20261017"></script>
+  <script src="club-guidance.js?v=space-learning-guidance-20261017" defer></script>
+  <script src="mobile-workspace.js?v=space-learning-guidance-20261017" defer></script>
   <script src="chat-waves.js?v=space-chat-waves-20261017" defer></script>
-  <script type="module" src="app.js?v=space-mobile-simple-20261017"></script>
+  <script type="module" src="app.js?v=space-learning-guidance-20261017"></script>
 </body>
 </html>
 
