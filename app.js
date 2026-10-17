@@ -52,7 +52,7 @@ function migrateSavedAuth(){
 }
 migrateSavedAuth();
 const db = configured && !startupRecovery ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storageKey:authStorageKey, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
-let commerce=null,certification=null,mobileWorkspace=null,guidance=null;
+let commerce=null,certification=null,mobileWorkspace=null,guidance=null,memberWall=null;
 let sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1204,7 +1204,7 @@ function completeLoginWelcome(generation){
 // Guard requests during explicit sign-out; there is no app-imposed idle timeout.
 function checkSessionExpiry(){return sessionEnding;}
 function expireSession(message,prompt=true) {
-  guidance?.reset();classroomView='overview';classroomPeoplePage=0;classroomProjectPage=0;classroomWorkPage=0;classroomTaskPage=0;
+  memberWall?.reset();guidance?.reset();classroomView='overview';classroomPeoplePage=0;classroomProjectPage=0;classroomWorkPage=0;classroomTaskPage=0;
   if(!session||sessionEnding)return;
   sessionEnding=true;authStateRequest++;authFormEpoch++;authPersistentStorage.setItem(SIGNED_OUT_KEY,String(Date.now()));
   // Clear private UI and invalidate pending loads before waiting for any network.
@@ -1572,19 +1572,20 @@ function render() {
   $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
   if(workspaceLoadError||workspaceLoading||workspaceHydrating&&!learningSelectionRequired()&&!(pageRefreshDependencies[page]||[]).every(name=>Object.hasOwn(cache,name))){
     $('#content').classList.remove('dm-view');
-    window.SpaceChatWaves?.sync(null);
+    window.SpaceChatWaves?.sync(null);memberWall?.sync(null);
     const load=workspacePageLoads.get(page);
     $('#content').innerHTML=workspaceLoadError?`<section class="workspace-start"><h1>Let’s open your workspace</h1><p>${esc(workspaceLoadError)}</p><button class="button" data-action="retryWorkspace">Retry account check</button></section>`:workspaceSkeleton(page,{account:workspaceLoading,slow:load?.slow,error:load?.status==='error'});
     return;
   }
   const load=workspacePageLoads.get(page);
   if(session&&approved()&&load&&!load.hadData&&['loading','offline','error'].includes(load.status)&&!learningSelectionRequired()){
-    window.SpaceChatWaves?.sync(null);$('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
+    window.SpaceChatWaves?.sync(null);memberWall?.sync(null);$('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
   }
   const views={'getting-started':()=>guidance?.welcome()||head('WELCOME','Getting started','Reload SPACE to open your welcome guide.'),'system-health':()=>admin()?(guidance?.healthView()||head('ADMINISTRATION','System health','Reload SPACE to open the checks.')):'',...Object.fromEntries(['shop','cart','orders','order-desk','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
   $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'?(guidance?.banner()||'')+(commerce?.homeRoleBanner()||'')+(commerce?.homeShopBanner?.()||''):'')+(page==='admin'?'<a class="admin-order-shortcut" href="#order-desk"><strong>Orders &amp; fulfilment</strong><span>Process new purchases, update status and send receipts →</span></a>':'')+views[page]();
   window.SpaceChatWaves?.sync($('#content'));
+  memberWall?.sync($('#content'));
   commerce?.afterRender();
   if(page==='members'){hydrateDirectoryPhotos();openLinkedMemberProfile();}
   if(memberFocus&&page==='members'&&!$('#modal')?.open){const search=$('#memberSearch');search?.focus({preventScroll:true});search?.setSelectionRange?.(memberFocus.start,memberFocus.end);}
@@ -1852,7 +1853,7 @@ function ensureMemberDirectory(){
   if(!owner)return;
   try{
     const saved=JSON.parse(localStorage.getItem(`space.members.${owner}`)||'{}');
-    if(['grid','list'].includes(saved.view))memberDirectory.view=saved.view;
+    if(['grid','list','wall'].includes(saved.view))memberDirectory.view=saved.view;
     memberDirectory.compact=saved.compact===true;
     if(Array.isArray(saved.saved))memberSavedIds=new Set(saved.saved.filter(id=>typeof id==='string'&&id.length<=64).slice(0,500));
   }catch{}
@@ -1932,6 +1933,7 @@ function memberProfileCompletion(){
   const done=fields.filter(([,ready])=>ready).length;
   return {fields,done,percent:fields.length?Math.round(done/fields.length*100):100};
 }
+function memberWallItem(p){return {id:p.id,name:memberDisplayName(p),role:p.role,detail:memberSkills(p)[0]||p.headline||p.programme||'SPACE member',online:memberOnline(p),image:mediaUrl(p.avatar_path)};}
 function members(){
   if(!clubAccess())return empty('Member access required','Sign in with an approved club account to explore members.');
   ensureMemberDirectory();
@@ -1946,12 +1948,12 @@ function members(){
     <div class="member-directory-intro"><div><span class="eyebrow">YOUR COMMUNITY</span><h2>A little curiosity.<br>A great connection.</h2><p>Explore the people and interests behind the builds.</p><div class="member-intro-stats"><span><strong>${peopleTotal}</strong> visible members</span><button type="button" data-action="memberPresence" data-presence="online"><i aria-hidden="true"></i><strong>${online}</strong> online now</button></div></div><div class="member-intro-actions"><span class="member-spark" aria-hidden="true">${memberDirectoryIcon('spark')}</span><strong>Make room for someone new.</strong><p>Discover a member from your current results.</p><button type="button" class="button" data-action="memberDiscover" ${results.some(p=>p.id!==session?.user.id)?'':'disabled'}>${memberDirectoryIcon('spark')} Meet a member</button></div></div>
     ${completion.percent<100?`<aside class="member-completion"><div class="member-completion-ring" style="--completion:${completion.percent}%" aria-hidden="true"><span>${completion.percent}%</span></div><div><strong>Let your profile introduce you.</strong><p>Add ${completion.fields.filter(([,ready])=>!ready).map(([label])=>label.toLowerCase()).join(', ')} to help people find common ground.</p></div><button type="button" data-action="memberCompletion">Finish my profile ${memberDirectoryIcon('arrow')}</button></aside>`:''}
     <div class="member-discovery-tabs" role="group" aria-label="Member groups">${tabs.map(([group,label,count])=>`<button type="button" data-action="memberGroup" data-group="${group}" aria-pressed="${memberDirectory.group===group}">${group==='saved'?memberDirectoryIcon('save'):''}${label}<span>${count}</span></button>`).join('')}</div>
-    <div class="member-directory-tools"><div class="member-search-wrap">${dmIcon('search')}<label class="sr-only" for="memberSearch">Search members by name, handle, background or skill</label><input id="memberSearch" type="search" maxlength="120" autocomplete="off" placeholder="Search people, @handles, skills…" value="${esc(memberDirectory.search)}"><kbd aria-hidden="true">/</kbd></div><div class="member-view-options" role="group" aria-label="Directory view"><button type="button" data-action="memberView" data-view="grid" aria-label="Grid view" aria-pressed="${memberDirectory.view==='grid'}">${memberDirectoryIcon('grid')}</button><button type="button" data-action="memberView" data-view="list" aria-label="List view" aria-pressed="${memberDirectory.view==='list'}">${memberDirectoryIcon('list')}</button><button type="button" class="member-density" data-action="memberDensity" aria-pressed="${memberDirectory.compact}">Compact</button></div></div>
+    <div class="member-directory-tools"><div class="member-search-wrap">${dmIcon('search')}<label class="sr-only" for="memberSearch">Search members by name, handle, background or skill</label><input id="memberSearch" type="search" maxlength="120" autocomplete="off" placeholder="Search people, @handles, skills…" value="${esc(memberDirectory.search)}"><kbd aria-hidden="true">/</kbd></div><div class="member-view-options" role="group" aria-label="Directory view"><button type="button" data-action="memberView" data-view="grid" aria-label="Grid view" aria-pressed="${memberDirectory.view==='grid'}">${memberDirectoryIcon('grid')}</button><button type="button" data-action="memberView" data-view="list" aria-label="List view" aria-pressed="${memberDirectory.view==='list'}">${memberDirectoryIcon('list')}</button><button type="button" class="member-wall-view" data-action="memberView" data-view="wall" aria-label="Member wall view" aria-pressed="${memberDirectory.view==='wall'}">${memberDirectoryIcon('grid')} Wall</button><button type="button" class="member-density" ${memberDirectory.view==='wall'?'disabled title="Use Grid or List to adjust density"':''} data-action="memberDensity" aria-pressed="${memberDirectory.compact}">Compact</button></div></div>
     <div class="member-filter-row"><label>Role<select data-member-setting="role">${memberDirectoryOptions([['all','All roles'],['member','Members'],['leads','Teaching leads'],['teacher','Teachers'],['founder','Founders'],['admin','Administrators']],memberDirectory.role)}</select></label><label>Status<select data-member-setting="presence">${memberDirectoryOptions([['all','Any status'],['online','Online now'],['available','Available'],['busy','Busy'],['away','Away']],memberDirectory.presence)}</select></label><label class="member-skill-select">Interest<select data-member-setting="skill">${memberDirectoryOptions([['','Any interest'],...skills.map(s=>[s.label,`${s.label}${s.count==null?'':` (${s.count})`}`])],memberDirectory.skill)}</select></label><label>Sort by<select data-member-setting="sort">${memberDirectoryOptions([['online','Online first'],['name','Name A–Z'],['newest','Newest members'],['shared','Shared interests']],memberDirectory.sort)}</select></label></div>
     ${skills.length?`<div class="member-interest-strip"><span>Explore interests</span>${skills.slice(0,7).map(s=>`<button type="button" class="member-skill" data-action="memberSkill" data-skill="${esc(s.label)}" aria-pressed="${memberText(memberDirectory.skill)===memberText(s.label)}">${esc(s.label)} <span>${s.count}</span></button>`).join('')}</div>`:''}
     ${memberDirectoryFilters()}
     <div class="member-results-heading"><h2 id="memberResultsTitle" tabindex="-1">${{all:'The community',shared:'Common ground',new:'Welcome the new faces',saved:'Your saved members'}[memberDirectory.group]}</h2><span id="memberResultsCount" role="status" aria-live="polite">${total?`${start+1}–${Math.min(start+visible.length,total)} of ${total}`:'0'} ${total===1?'member':'members'}</span></div>
-    ${memberRemote.loading?'<p class="hint" role="status">Updating members…</p>':''}${memberRemote.error?`<p class="notice" role="alert">${esc(memberRemote.error)} <button class="text-button" data-action="memberReload">Try again</button></p>`:''}<div class="member-grid view-${memberDirectory.view} ${memberDirectory.compact?'is-compact':''}" aria-labelledby="memberResultsTitle">${visible.length?visible.map(memberCard).join(''):`<div class="member-directory-empty">${memberDirectoryIcon('members')}<h3>${memberDirectory.group==='saved'?'Your people, a tap away':memberDirectory.group==='shared'&&!memberSkills(me).length?'Start with your interests':'No members match yet'}</h3><p>${memberDirectory.group==='saved'?'Tap a bookmark on a profile card to save a member here. Saved members are private to this account on this device.':memberDirectory.group==='shared'&&!memberSkills(me).length?'Add comma-separated skills or interests to your profile to discover common ground.':'Try another name, interest or status, or clear your filters.'}</p><button type="button" class="button button-outline" data-action="${memberDirectory.group==='shared'&&!memberSkills(me).length?'profileForm':'memberReset'}">${memberDirectory.group==='shared'&&!memberSkills(me).length?'Add my interests':'Show everyone'}</button></div>`}</div>
+    ${memberRemote.loading?'<p class="hint" role="status">Updating members…</p>':''}${memberRemote.error?`<p class="notice" role="alert">${esc(memberRemote.error)} <button class="text-button" data-action="memberReload">Try again</button></p>`:''}${memberDirectory.view==='wall'&&memberWall&&visible.length?memberWall.markup(visible.filter(memberVisible).map(memberWallItem)):`<div class="member-grid view-${memberDirectory.view} ${memberDirectory.compact?'is-compact':''}" aria-labelledby="memberResultsTitle">${visible.length?visible.map(memberCard).join(''):`<div class="member-directory-empty">${memberDirectoryIcon('members')}<h3>${memberDirectory.group==='saved'?'Your people, a tap away':memberDirectory.group==='shared'&&!memberSkills(me).length?'Start with your interests':'No members match yet'}</h3><p>${memberDirectory.group==='saved'?'Tap a bookmark on a profile card to save a member here. Saved members are private to this account on this device.':memberDirectory.group==='shared'&&!memberSkills(me).length?'Add comma-separated skills or interests to your profile to discover common ground.':'Try another name, interest or status, or clear your filters.'}</p><button type="button" class="button button-outline" data-action="${memberDirectory.group==='shared'&&!memberSkills(me).length?'profileForm':'memberReset'}">${memberDirectory.group==='shared'&&!memberSkills(me).length?'Add my interests':'Show everyone'}</button></div>`}</div>`}
     ${memberDirectoryPager(total)}<p class="member-directory-note">Online status is approximate. Only approved, visible club profiles appear. Bookmarks and display choices are saved for your account on this device.</p>
   </section>`;
 }
@@ -2007,6 +2009,7 @@ function hydrateDirectoryPhotos(){
   const owner=session.user.id,paths=(memberRemote.ready?directoryResults():directoryResults().slice(memberDirectoryPage*memberPageSize,(memberDirectoryPage+1)*memberPageSize)).map(p=>p.avatar_path).filter(Boolean);
   void hydrateMedia(paths).then(changed=>{
     if(!changed||page!=='members'||session?.user.id!==owner)return;
+    memberWall?.updatePhotos();
     // Update photos in place without moving focus or replacing search controls.
     for(const photo of document.querySelectorAll('.member-card-photo[data-id]')){const profile=directoryPeople().find(p=>p.id===photo.dataset.id),current=photo.querySelector('.avatar');if(profile&&current)current.outerHTML=memberAvatar(profile.id,true);}
   }).catch(console.error);
@@ -2073,7 +2076,7 @@ function memberDirectoryAction(action,el,id){
   }
   if(action==='memberGroup'){if(!['all','shared','new','saved'].includes(el.dataset.group))return true;memberDirectory.group=el.dataset.group;}
   if(action==='memberPresence'){if(el.dataset.presence!=='online')return true;memberDirectory.presence=memberDirectory.presence==='online'?'all':'online';}
-  if(action==='memberView'){if(!['grid','list'].includes(el.dataset.view))return true;memberDirectory.view=el.dataset.view;saveMemberDirectory();}
+  if(action==='memberView'){if(!['grid','list','wall'].includes(el.dataset.view))return true;if(el.dataset.view==='wall'&&!memberWall){show('The member wall could not load. Reload SPACE to try again.');return true;}memberDirectory.view=el.dataset.view;saveMemberDirectory();}
   if(action==='memberDensity'){memberDirectory.compact=!memberDirectory.compact;saveMemberDirectory();}
   if(action==='memberReset')memberDirectory={...memberDirectory,search:'',role:'all',presence:'all',skill:'',group:'all',sort:'online'};
   if(action==='memberClearFilter'){
@@ -5020,6 +5023,7 @@ async function refreshCurrentAccess(){
   if(session?.user.id!==currentSession.user.id)return;
   await loadOwnOfficerAccess(authGeneration);updateWorkspaceNavigation();render();
 }
+memberWall=window.SpaceMemberWall?.create({esc,get:()=>({id:session?.user.id||'',generation:authGeneration,allowed:clubAccess(),page}),photo:id=>{const p=directoryResults().find(p=>p.id===id);return p?mediaUrl(p.avatar_path):'';}})||null;
 guidance=window.SpaceGuidance?.create({db,esc,deadline:requestWithDeadline,render,show,get:guidanceState,dashboard:configured?'https://supabase.com/dashboard/project/'+new URL(cfg.supabaseUrl).hostname.split('.')[0]:'https://supabase.com/dashboard',runbook:'https://github.com/Turkson225/Turk-Innovation-CLUB/blob/main/docs/system_health.md'})||null;
 certification=window.SpaceCertificates?.create({db,esc,modal,close,show,refresh,memberName,report:(category,error,owner)=>guidance?.report(category,error,owner),
  get:()=>({session,me,generation:authGeneration,club:clubAccess(),teacher:teacher(),admin:admin(),cache})

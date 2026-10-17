@@ -5,6 +5,17 @@
 
 A responsive workspace for a practical engineering and technology club. The site is static and can be hosted on GitHub Pages. Supabase provides email sign-in and a database protected by row level security.
 
+## Member wall — 17 October 2026
+
+Open **Members → Wall** beside the Grid and List view buttons. The new view adapts the supplied React Bits DriftWall into SPACE's existing buildless app. It uses the current filtered page of up to 24 approved, visible profiles and their authorized signed avatar URLs. It does not fetch all members, add demo faces, reveal private peer profiles or change database permissions.
+
+- Desktop portraits drift in alternating columns with perspective and subtle pointer parallax. Hover holds the wall; click a portrait to open the normal profile. **Browse all names** provides one keyboard-accessible profile action per member without repeated animated tiles entering the tab order.
+- **Pause motion** freezes the wall. Motion preferences and the selected view are saved per account on the device; they contain no names, photos or signed URLs.
+- Phones start with a still portrait grid and offer **Play motion**. Reduced motion, data saving and low-resource devices keep a still view. Missing or failed photos reveal initials. Fewer than four results stay still.
+- Drift uses CSS transforms rather than a continuous JavaScript render loop. Hidden pages, offscreen walls, dialogs, the phone menu and keyboard navigation of the name index pause it. Leaving the page or signing out releases observers and pointer callbacks.
+
+No new Supabase migration is needed for this visual update. It uses the existing directory, profile and media permissions. React Bits attribution and its MIT + Commons Clause notice are retained in `member-wall.js`. Offline checks cover lifecycle, motion/resource preferences, account isolation, photo updates, safe text rendering and existing profile actions. Actual browser/phone visual QA remains to be performed; browser preview is unavailable in this environment.
+
 ## Shared classrooms, welcome guides and system health — 17 October 2026
 
 - **My learning → Open classroom** and **Teaching studio → Open classroom** now lead to the same course workspace: Overview, Lessons & files, Work & feedback, Sessions and Certificates. Assigned teachers and administrators also have a Students tab. Course links preserve the selected course; old feedback/material actions open the corresponding new tab. Teachers can mark work seen, give feedback, record attendance and confirm completion using the existing controls. Student and review lists in the classroom use pages of 24 records.
