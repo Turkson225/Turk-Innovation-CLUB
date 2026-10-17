@@ -52,7 +52,7 @@ function migrateSavedAuth(){
 }
 migrateSavedAuth();
 const db = configured && !startupRecovery ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storageKey:authStorageKey, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
-let commerce=null,certification=null,mobileWorkspace=null,guidance=null,memberWall=null,bento=null;
+let commerce=null,certification=null,mobileWorkspace=null,guidance=null,memberWall=null,bento=null,cardSwap=null;
 let sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1204,7 +1204,7 @@ function completeLoginWelcome(generation){
 // Guard requests during explicit sign-out; there is no app-imposed idle timeout.
 function checkSessionExpiry(){return sessionEnding;}
 function expireSession(message,prompt=true) {
-  bento?.reset();memberWall?.reset();guidance?.reset();classroomView='overview';classroomPeoplePage=0;classroomProjectPage=0;classroomWorkPage=0;classroomTaskPage=0;
+  cardSwap?.reset();bento?.reset();memberWall?.reset();guidance?.reset();classroomView='overview';classroomPeoplePage=0;classroomProjectPage=0;classroomWorkPage=0;classroomTaskPage=0;
   if(!session||sessionEnding)return;
   sessionEnding=true;authStateRequest++;authFormEpoch++;authPersistentStorage.setItem(SIGNED_OUT_KEY,String(Date.now()));
   // Clear private UI and invalidate pending loads before waiting for any network.
@@ -1572,14 +1572,14 @@ function render() {
   $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
   if(workspaceLoadError||workspaceLoading||workspaceHydrating&&!learningSelectionRequired()&&!(pageRefreshDependencies[page]||[]).every(name=>Object.hasOwn(cache,name))){
     $('#content').classList.remove('dm-view');
-    window.SpaceChatWaves?.sync(null);memberWall?.sync(null);bento?.sync(null);
+    window.SpaceChatWaves?.sync(null);memberWall?.sync(null);bento?.sync(null);cardSwap?.sync(null);
     const load=workspacePageLoads.get(page);
     $('#content').innerHTML=workspaceLoadError?`<section class="workspace-start"><h1>Let’s open your workspace</h1><p>${esc(workspaceLoadError)}</p><button class="button" data-action="retryWorkspace">Retry account check</button></section>`:workspaceSkeleton(page,{account:workspaceLoading,slow:load?.slow,error:load?.status==='error'});
     return;
   }
   const load=workspacePageLoads.get(page);
   if(session&&approved()&&load&&!load.hadData&&['loading','offline','error'].includes(load.status)&&!learningSelectionRequired()){
-    window.SpaceChatWaves?.sync(null);memberWall?.sync(null);bento?.sync(null);$('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
+    window.SpaceChatWaves?.sync(null);memberWall?.sync(null);bento?.sync(null);cardSwap?.sync(null);$('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
   }
   const views={'getting-started':()=>guidance?.welcome()||head('WELCOME','Getting started','Reload SPACE to open your welcome guide.'),'system-health':()=>admin()?(guidance?.healthView()||head('ADMINISTRATION','System health','Reload SPACE to open the checks.')):'',...Object.fromEntries(['shop','cart','orders','order-desk','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
@@ -1587,6 +1587,7 @@ function render() {
   window.SpaceChatWaves?.sync($('#content'));
   memberWall?.sync($('#content'));
   bento?.sync($('#content'));
+  cardSwap?.sync($('#content'));
   commerce?.afterRender();
   if(page==='members'){hydrateDirectoryPhotos();openLinkedMemberProfile();}
   if(memberFocus&&page==='members'&&!$('#modal')?.open){const search=$('#memberSearch');search?.focus({preventScroll:true});search?.setSelectionRange?.(memberFocus.start,memberFocus.end);}
@@ -1791,7 +1792,7 @@ function about() {
     <article class="card about-statement"><span class="eyebrow">02 / MISSION</span><h3>Learn by doing, then share what works.</h3><p>We connect members with practical workshops, team projects, constructive feedback and opportunities to present their work.</p></article></div>
   </section>
   <section class="about-section" id="about-tracks" aria-labelledby="about-tracks-title"><div class="section-heading"><div><span class="eyebrow">FOUR LEARNING TRACKS</span><h2 id="about-tracks-title">Pick a skill. Leave with a working result.</h2></div><p>Workshops centre on a build, a test and what members learned.</p></div>
-    <div class="about-track-grid">${tracks.map((track,i)=>`<article class="card about-track-card"><span class="about-track-number">0${i+1}</span><span class="feature-icon">${iconSvg(track.icon)}</span><h3>${track.name}</h3><p>${track.detail}</p><span class="about-outcome">${track.outcome}</span></article>`).join('')}</div>
+    ${window.SpaceCardSwap?.markup(false,investor())||`<div class="about-track-grid">${tracks.map((track,i)=>`<article class="card about-track-card"><span class="about-track-number">0${i+1}</span><span class="feature-icon">${iconSvg(track.icon)}</span><h3>${track.name}</h3><p>${track.detail}</p><span class="about-outcome">${track.outcome}</span></article>`).join('')}</div>`}
   </section>
   <section class="about-section" aria-labelledby="about-process-title"><div class="section-heading"><div><span class="eyebrow">HOW WE WORK</span><h2 id="about-process-title">A place to begin. A team to keep going.</h2></div></div>
     <div class="about-process"><article class="about-step"><span>01</span><h3>Find your people</h3><p>Meet members across disciplines, introduce an idea or join a conversation.</p></article><article class="about-step"><span>02</span><h3>Build and test</h3><p>Learn a practical skill, plan with a team and document what you discover.</p></article><article class="about-step"><span>03</span><h3>Show your work</h3><p>Share your progress, get feedback and prepare strong projects for demonstrations and competitions.</p></article></div>
@@ -3509,6 +3510,7 @@ function actions(e) {
     document.querySelector(`.course-detail-button[data-view="${view}"]`)?.focus();
     return;
   }
+  if(action==='browseLearningTrack'){if(clubAccess()&&courseTracks.some(t=>t.name===el.dataset.track)){courseView='explore';courseTrack=el.dataset.track;}return;}
   if(action==='courseTrack'){const track=el.dataset.track;if(track==='all'||courseTracks.some(t=>t.name===track)){courseTrack=track;render();}return;}
   if(action==='focusCourse'){e.preventDefault();return openWorkspaceCourse(id,el.dataset.view);}
   if(action==='courseRoster'&&teacher()&&courseReady&&coursePlanningReady){
@@ -5024,6 +5026,7 @@ async function refreshCurrentAccess(){
   if(session?.user.id!==currentSession.user.id)return;
   await loadOwnOfficerAccess(authGeneration);updateWorkspaceNavigation();render();
 }
+cardSwap=window.SpaceCardSwap?.create({get:()=>({id:session?.user.id||'guest',generation:authGeneration,page})})||null;
 bento=window.SpaceBento?.create({get:()=>({id:session?.user.id||'guest',generation:authGeneration,page})})||null;
 memberWall=window.SpaceMemberWall?.create({esc,get:()=>({id:session?.user.id||'',generation:authGeneration,allowed:clubAccess(),page}),photo:id=>{const p=directoryResults().find(p=>p.id===id);return p?mediaUrl(p.avatar_path):'';}})||null;
 guidance=window.SpaceGuidance?.create({db,esc,deadline:requestWithDeadline,render,show,get:guidanceState,dashboard:configured?'https://supabase.com/dashboard/project/'+new URL(cfg.supabaseUrl).hostname.split('.')[0]:'https://supabase.com/dashboard',runbook:'https://github.com/Turkson225/Turk-Innovation-CLUB/blob/main/docs/system_health.md'})||null;
