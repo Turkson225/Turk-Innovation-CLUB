@@ -5,6 +5,16 @@
 
 A responsive workspace for a practical engineering and technology club. The site is static and can be hosted on GitHub Pages. Supabase provides email sign-in and a database protected by row level security.
 
+## SPACE Map and Avatar Studio — 17 October 2026
+
+Open **Community → SPACE Map / Avatar studio**, **Accounts**, or **More** on phones. The studio offers original illustrated avatars, 24 outfit presets (club, casual, lab, sports and formal), detailed appearance/clothing/accessory choices, eight named saved looks, and optional use on profiles/chats and the personal member ID. Original profile photos are preserved. Avatar presets and the interactive map are responsive; the map SDK loads only on the map page.
+
+**Required Supabase step:** run the entire [`supabase/upgrade_space_map_avatars.sql`](supabase/upgrade_space_map_avatars.sql) in **SQL Editor → New query → Run**, after existing profile-privacy migrations, then refresh SPACE. This is a separate migration from shared chat glow. No new secret, key, bucket, Edge Function or global Realtime change is required. Until applied, avatar previews remain available, with saving/sharing setup guidance.
+
+Location starts hidden. A member explicitly chooses up to 50 approved recipients, approximate or precise position, and a 15-minute/one-hour/two-hour expiry, then grants GPS permission. Only selected recipients can read it; platform administrators have no override. Updates run only while SPACE Map is visible. Leaving/signing out pauses updates, while the last position can remain shared until expiry or Stop sharing. Reopening requires Resume updates. Ghost mode stops sharing, stale session tokens cannot restore it, and no location history is kept. Private profile names remain private. Administrators can manage separate club venue pins.
+
+See [`docs/space_map_avatars.md`](docs/space_map_avatars.md) for permissions, retention, tile-provider configuration/limits and the real-device acceptance test. Automated controller checks and isolated PostgreSQL checks with 2,000 synthetic profiles pass; all 24 SVG outfit presets were visually inspected as artwork. Actual phone/browser rendering, GPS delivery and live two-account permissions still need verification after activation. OpenStreetMap tiles are best effort; a suitable provider plan is needed before substantial traffic.
+
 ## Draw together in direct messages — 17 October 2026
 
 The supplied GlowCursor idea is now a lightweight shared glow canvas behind one-to-one messages. Open a conversation and choose **Draw together**; the other person opens that same conversation and chooses **Join drawing**. Both can use **Draw mode**, four colors, a keyboard-accessible **Sparkle**, **Clear glow**, **Chat mode** and **Done**. Touch drawing is captured only in Draw mode; the composer stays usable. Strokes fade and are never saved as messages or files. Reduced motion and data saving use short static trails. A centered square preserves drawing proportions across phones and laptops.
