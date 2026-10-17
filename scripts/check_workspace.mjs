@@ -1143,6 +1143,23 @@ test('A failed read confirmation preserves unread alerts, offers feedback and ca
 test('A delayed read confirmation cannot write into another account’s workspace',async()=>{
  const h=dmReadHarness(),pending=deferred();h.rpcQueued.push(pending.promise);const task=h.run("markDmRead('a')");h.run("session={user:{id:'other'}};authGeneration++;cache={};dmReadInFlight.clear()");pending.resolve({data:{last_read_at:'2026-10-01T08:00:00Z',counts:{direct_total:0}},error:null});await task;assert.equal(h.run('cache.direct_message_reads'),undefined);
 });
+test('Phone navigation starts with collapsed groups and keeps existing role permissions',()=>{
+ const h=navigationHarness();h.context.window.matchMedia=()=>({matches:true});h.run("me.role='admin';page='home';updateWorkspaceNavigation()");assert.equal(h.sections.get('learning').open,false);assert.equal(h.sections.get('administration').open,false);assert.equal(h.links.get('finance').hidden,false);
+ h.context.window.matchMedia=()=>({matches:false});h.run('updateWorkspaceNavigation()');assert.equal(h.sections.get('learning').open,true);assert.equal(h.sections.get('administration').open,true);
+});
+test('The compact Home contains only the current learner’s tasks and classes',()=>{
+ const h=harness();h.run("cache.courses=[{id:'mine',title:'My workshop',starts_at:'2126-10-20T09:00:00Z'},{id:'other',title:'Another learner workshop',starts_at:'2126-10-20T08:00:00Z'}];cache.course_enrollments=[{course_id:'mine',learner_id:'self',status:'active'},{course_id:'other',learner_id:'other',status:'active'}];cache.project_tasks=[{id:'one',assignee_id:'self',title:'My assigned task',status:'todo'},{id:'two',assignee_id:'other',title:'Private other task',status:'todo'}];");
+ const state=h.run('mobileWorkspaceState()');assert(state.actions.some(x=>x.title==='My assigned task'));assert(!state.actions.some(x=>x.title==='Private other task'));assert(state.agenda.some(x=>x.title==='My workshop'));assert(!state.agenda.some(x=>x.title==='Another learner workshop'));
+});
+test('The compact teacher Home counts reviews only for assigned classes',()=>{
+ const h=harness();h.run("me.role='teacher';cache.courses=[{id:'mine',instructor_id:'self'},{id:'other',instructor_id:'other'}];cache.course_submissions=[{course_id:'mine',review_status:'submitted'},{course_id:'other',review_status:'submitted'}]");const state=h.run('mobileWorkspaceState()');assert.equal(state.workTitle,'Teaching studio');assert.equal(state.actions[0].title,'1 student submission');
+});
+test('Applying authoritative DM counts immediately updates the phone navigation',()=>{
+ const h=harness();h.run("let mobileCountUpdates=0;mobileWorkspace={updateCounts(){mobileCountUpdates++;}};applyUnreadCounts({direct_total:0,direct_messages:{},channels:{}})");assert.equal(h.run('mobileCountUpdates'),1);assert.equal(h.elements.get('#dmBadge').hidden,true);
+});
+test('Desktop Home is retained when the optional mobile shell is unavailable',()=>{
+ const h=harness();assert.equal(h.run("homeViews('<section>Original desktop home</section>')"),'<section>Original desktop home</section>');h.run("mobileWorkspace={home:()=>'<section>Compact phone home</section>'}");const html=h.run("homeViews('<section>Original desktop home</section>')");assert(html.includes('class="mobile-home"'));assert(html.includes('class="desktop-home"'));assert(html.includes('Original desktop home'));
+});
 let failed=0;
 for(const t of tests){try{await t.fn();console.log('PASS',t.name);}catch(e){failed++;console.log('FAIL',t.name,'\n',e.stack);}}
 console.log(`${tests.length-failed}/${tests.length} checks passed`);

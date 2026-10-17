@@ -52,7 +52,7 @@ function migrateSavedAuth(){
 }
 migrateSavedAuth();
 const db = configured && !startupRecovery ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storageKey:authStorageKey, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
-let commerce=null,certification=null;
+let commerce=null,certification=null,mobileWorkspace=null;
 let sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -244,17 +244,18 @@ function updateWorkspaceNavigation(){
     link.hidden=!allowed(link.dataset.page);link.classList.toggle('active',active);
     if(active&&!link.hidden)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
   }
-  const context=`${session?.user.id||'guest'}:${me?.membership_status||''}:${me?.role||''}:${me?.founder_teaching_enabled===true}:${ownOfficerRoles.join(',')}`;
+  const compact=!!window.matchMedia?.('(max-width: 760px)').matches;
+  const context=`${compact?'phone':'desktop'}:${session?.user.id||'guest'}:${me?.membership_status||''}:${me?.role||''}:${me?.founder_teaching_enabled===true}:${ownOfficerRoles.join(',')}`;
   const changed=context!==sidebarContext;
   for(const section of nav.querySelectorAll('details[data-nav-group]')){
     const children=[...section.querySelectorAll('a[data-page]')];
     section.hidden=!children.some(link=>!link.hidden);
     if(section.hidden){section.open=false;continue;}
     if(changed){
-      section.open=section.dataset.navGroup==='learning'&&clubAccess()
+      section.open=!compact&&(section.dataset.navGroup==='learning'&&clubAccess()
         ||section.dataset.navGroup==='administration'&&admin()
         ||section.dataset.navGroup==='leadership'&&(founderOnly()||investor())
-        ||section.dataset.navGroup==='about'&&!clubAccess()&&!investor();
+        ||section.dataset.navGroup==='about'&&!clubAccess()&&!investor());
     }
     if((changed||page!==sidebarPage)&&children.some(link=>!link.hidden&&link.dataset.page===page))section.open=true;
   }
@@ -285,6 +286,7 @@ function updateAdminAlertControls(){
 function dismissAdminAlert(){clearTimeout(adminAlertDismissTimer);adminDeferredAlert=null;$('#adminAlert').hidden=true;}
 function dismissMemberAlert(){clearTimeout(memberAlertTimer);memberAlertNotificationId=null;$('#memberAlert').hidden=true;}
 function updateInboxIndicators(){
+  mobileWorkspace?.updateCounts();
   const count=approved()?(inboxUnreadCount??(cache.notifications||[]).filter(n=>!n.read_at).length):0;
   const bell=$('#memberBell'),bubble=$('#memberBellCount');
   bell.hidden=!approved()||!enhancedReady;
@@ -416,7 +418,7 @@ const head = (label,title,subtitle,action='') => `<div class="page-head"><div><s
 const avatar = (name,large=false,photoPath='') => {const url=mediaUrl(photoPath);return `<span class="avatar ${large?'large':''}">${url?`<img src="${esc(url)}" alt="" loading="lazy">`:esc(initials(name))}</span>`;};
 const memberAvatar = (id,large=false) => {const p=(cache.profiles||[]).find(x=>x.id===id);return avatar(p?.full_name||'Member',large,p?.avatar_path);};
 const roleBadge = p => {const labels={member:'Member',teacher:'Teacher',founder:'Founder',investor:'Investor',admin:'Administrator'};const role=Object.hasOwn(labels,p?.role)?p.role:'member';return `<span class="member-badge badge-${role}" title="Approved ${esc(labels[role])} account">${labels[role]}</span>${role==='founder'&&p?.founder_teaching_enabled===true?'<span class="member-badge badge-teacher" title="Can lead practical workshops">Teaching lead</span>':''}`;};
-const iconPaths={home:'<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',founders:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',privacy:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',application:'<path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/>',members:'<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M17 5a3 3 0 0 1 0 6M19 14a5 5 0 0 1 2 4v2"/>',messages:'<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3 8.5 8.5 0 0 1 21 11.5z"/>',notifications:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',feed:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',channels:'<path d="M4 5h16v11H8l-4 4zM8 9h8M8 12h5"/>',library:'<path d="M4 4h12l4 4v12H4zM16 4v4h4M8 13h8M8 17h6"/>',news:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h4M13 12h4M7 16h10"/>',projects:'<path d="M3 7h7l2 2h9v11H3zM3 7V4h8l2 3"/>',discussions:'<path d="M4 4h16v12H8l-4 4zM8 9h8M8 12h5"/>',courses:'<path d="M3 6 12 3l9 3-9 3-9-3zM5 10v7c4 3 10 3 14 0v-7M21 7v8"/>',events:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M8 14h3M8 17h3"/>',announcements:'<path d="M3 10h4l12-5v14L7 14H3zM7 14l2 7h4l-2-6M21 9v6"/>','founder-room':'<path d="m12 2 2.5 6.5L21 11l-6.5 2.5L12 20l-2.5-6.5L3 11l6.5-2.5z"/>',applications:'<path d="M5 3h14v18H5zM8 8h8M8 13l2 2 5-5"/>',moderation:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM12 7v6M12 17h.01"/>'};
+const iconPaths={menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',home:'<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',founders:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',privacy:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',application:'<path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/>',members:'<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M17 5a3 3 0 0 1 0 6M19 14a5 5 0 0 1 2 4v2"/>',messages:'<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3 8.5 8.5 0 0 1 21 11.5z"/>',notifications:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',feed:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',channels:'<path d="M4 5h16v11H8l-4 4zM8 9h8M8 12h5"/>',library:'<path d="M4 4h12l4 4v12H4zM16 4v4h4M8 13h8M8 17h6"/>',news:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h4M13 12h4M7 16h10"/>',projects:'<path d="M3 7h7l2 2h9v11H3zM3 7V4h8l2 3"/>',discussions:'<path d="M4 4h16v12H8l-4 4zM8 9h8M8 12h5"/>',courses:'<path d="M3 6 12 3l9 3-9 3-9-3zM5 10v7c4 3 10 3 14 0v-7M21 7v8"/>',events:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M8 14h3M8 17h3"/>',announcements:'<path d="M3 10h4l12-5v14L7 14H3zM7 14l2 7h4l-2-6M21 9v6"/>','founder-room':'<path d="m12 2 2.5 6.5L21 11l-6.5 2.5L12 20l-2.5-6.5L3 11l6.5-2.5z"/>',applications:'<path d="M5 3h14v18H5zM8 8h8M8 13l2 2 5-5"/>',moderation:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM12 7v6M12 17h.01"/>'};
 iconPaths.investors='<path d="M3 20h18M5 16l5-5 4 3 5-7M16 7h3v3"/>';
 iconPaths.about='<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>';
 iconPaths['investor-portal']='<path d="M3 20h18M5 16l5-5 4 3 5-7M16 7h3v3"/>';
@@ -877,6 +879,7 @@ function applyUnreadCounts(data){
   unreadCounts={channels:data.channels||{},direct_messages:data.direct_messages||{},direct_peers:Array.isArray(data.direct_peers)?data.direct_peers:[],direct_total:Number(data.direct_total)||0};
   unreadCountsReady=true;
   const badge=$('#dmBadge');if(badge){badge.textContent=unreadCounts.direct_total;badge.hidden=!unreadCounts.direct_total;}
+  mobileWorkspace?.updateCounts();
   for(const [selector,key,target] of [['[data-action="selectChannel"]','channels','strong'],['[data-action="openDm"]','direct_messages','button']]){
     for(const item of document.querySelectorAll(selector)){
       const parent=target==='button'?(item.querySelector('.dm-peer-meta')||item):item.querySelector(target),value=Number(unreadCounts[key][item.dataset.id]||0);
@@ -1346,13 +1349,14 @@ async function init() {
   document.documentElement.dataset.theme=savedTheme==='dark'?'dark':'light';
   $('#themeButton').onclick=()=>{const next=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=next;try{localStorage.setItem('innovatex.theme',next);}catch{}updateThemeButton();};
   updateThemeButton();
+  mobileWorkspace=window.SpaceMobile?.create({get:mobileWorkspaceState,esc,icon:name=>iconSvg(name==='more'?'menu':name),menu:setSidebarOpen,viewportChange:updateWorkspaceNavigation,action:action=>{if(action==='theme')$('#themeButton').click();else if(action==='accounts')accountsDialog();else if(action==='sound')$('#adminSoundButton').click();else if(action==='signout')void signOut();else if(action==='signin')signInDialog('signin');}})||null;
   $('#todayLabel').textContent=new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
   $('#menuBtn').onclick=()=>setSidebarOpen(!$('#sidebar').classList.contains('open'));
   $('#sidebar').addEventListener('click',e=>{
     if(e.target.closest('a[href],button[data-action]'))setSidebarOpen(false);
   });
   document.addEventListener('click',e=>{
-    if($('#sidebar').classList.contains('open')&&!e.target.closest('#sidebar,#menuBtn'))setSidebarOpen(false);
+    if($('#sidebar').classList.contains('open')&&!e.target.closest('#sidebar,#menuBtn,#mobileNav'))setSidebarOpen(false);
   });
   $('#installAppButton').onclick=installInnovateX;
   updateInstallButton();
@@ -1485,6 +1489,7 @@ function setSidebarOpen(open){
   $('#sidebar').classList.toggle('open',open);
   $('#menuBtn').setAttribute('aria-expanded',String(open));
   $('#menuBtn').setAttribute('aria-label',open?'Close menu':'Open menu');
+  mobileWorkspace?.menuState(open);
 }
 function route() {
   const requested=location.hash.slice(1).split('/')[0] || 'home';page=pages.includes(requested)?requested:'home';
@@ -1548,6 +1553,7 @@ function render() {
   $('#onlineBadge').textContent=profilesComplete?online:'—';
   updateInboxIndicators();
   updateAdminAlertControls();
+  mobileWorkspace?.sync();
   const pendingFinance=admin()&&financeApprovalsReady?(cache.finance_entries||[]).filter(x=>financeStatus(x)==='pending').length:0;
   const financeBadge=$('#financeReviewBadge');if(financeBadge){financeBadge.textContent=pendingFinance;financeBadge.hidden=!pendingFinance;}
   const unreadDm=unreadCountsReady?unreadCounts.direct_total:(cache.direct_messages||[]).filter(m=>m.recipient_id===session?.user.id&&(!((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id))||new Date(m.created_at)>new Date((cache.direct_message_reads||[]).find(r=>r.peer_id===m.sender_id).last_read_at))).length;
@@ -1646,6 +1652,36 @@ function homeAgendaMarkup(userId,activeIds,assigned){
 function homeFocusCard(icon,label,title,detail,href,action='Open details',urgent=false,priority=false,courseId='',detailView='overview'){
   return `<a class="home-focus-card ${urgent?'is-urgent':''} ${urgent||priority?'is-priority':''}" href="${href}"${courseId?` data-action="focusCourse" data-id="${esc(courseId)}" data-view="${esc(detailView)}"`:''}><span class="home-focus-icon">${iconSvg(icon)}</span><span class="home-focus-label">${esc(label)}</span><strong>${esc(title)}</strong><span class="home-focus-detail">${esc(detail)}</span><span class="home-focus-action">${esc(action)} →</span></a>`;
 }
+function mobileWorkspaceState(){
+  const id=session?.user.id||'',now=Date.now(),name=me?.full_name||session?.user.email||'member';
+  const role=admin()?'Administrator':founderOnly()?'Founder':teacher()?'Teacher':investor()?'Investor':'Member';
+  const mine=new Set((cache.course_enrollments||[]).filter(x=>x.learner_id===id&&x.status!=='completed').map(x=>x.course_id));
+  const assigned=teacher()?(cache.courses||[]).filter(c=>c.instructor_id===id):[],assignedIds=new Set(assigned.map(c=>c.id));
+  const courses=(cache.courses||[]).filter(c=>mine.has(c.id)||assignedIds.has(c.id)),actions=[],agenda=[];
+  const add=(href,title,detail,rank=5,urgent=false)=>actions.push({href,title,detail,rank,urgent});
+  const scheduled=(href,title,at,kind)=>{const stamp=new Date(at).getTime();if(at&&Number.isFinite(stamp)&&stamp>=now)agenda.push({href,title,detail:kind+' · '+dateTime(at),stamp});};
+  if(admin()&&adminPendingCount)add('#applications',`${adminPendingCount} membership ${adminPendingCount===1?'application':'applications'}`,'Review accounts waiting for approval',0,true);
+  if(teacher()){
+    const workIds=new Set(managedClasswork().map(a=>a.id));
+    const reviews=(cache.course_submissions||[]).filter(x=>assignedIds.has(x.course_id)&&x.review_status==='submitted').length+(cache.classroom_assignment_submissions||[]).filter(x=>workIds.has(x.assignment_id)&&x.review_status==='submitted'&&x.learner_id!==id).length;
+    if(reviews)add('#teaching',`${reviews} student ${reviews===1?'submission':'submissions'}`,'Review work and give feedback',1,true);
+  }
+  if(learningHubReady){const work=classworkForStudent().find(a=>!classworkAttempts(a.id)[0]||classworkAttempts(a.id)[0].review_status==='revision_requested');if(work)add('#courses',work.title,work.due_at?'Classwork · due '+dateTime(work.due_at):'Classwork from your teacher',2,!!work.due_at&&new Date(work.due_at).getTime()<now);}
+  const feedback=(cache.course_submissions||[]).filter(x=>x.learner_id===id&&x.review_status==='revision_requested').sort((a,b)=>new Date(b.reviewed_at||b.created_at)-new Date(a.reviewed_at||a.created_at))[0];
+  if(feedback)add('#courses','Your teacher has feedback','Read the review and improve your submission',2,true);
+  const task=(cache.project_tasks||[]).filter(x=>x.assignee_id===id&&x.status!=='done').sort((a,b)=>new Date(a.due_at||'9999-12-31')-new Date(b.due_at||'9999-12-31'))[0];
+  if(task)add('#projects',task.title,task.due_at?'Project task · due '+dateTime(task.due_at):'Your assigned project task',3,!!task.due_at&&new Date(task.due_at).getTime()<now);
+  for(const c of courses){scheduled('#courses',c.title,c.starts_at,assignedIds.has(c.id)?'Teaching session':'Workshop');if(mine.has(c.id)&&coursePlanningReady&&c.submission_due_at)add('#courses',c.title,'Project deadline · '+dateTime(c.submission_due_at),new Date(c.submission_due_at).getTime()<now?2:6,new Date(c.submission_due_at).getTime()<now);}
+  for(const event of cache.events||[])scheduled('#calendar',event.title,event.starts_at,'Club event');
+  if(founder())for(const m of cache.founder_meetings||[])scheduled('#founder-room',m.title,m.starts_at,'Founder meeting');
+  for(const c of cache.space_class_sessions||[])if(mine.has(c.course_id)||assignedIds.has(c.course_id))scheduled('#classroom/'+c.course_id,c.title,c.starts_at,'Class session');
+  const work=admin()?['Club overview','Approvals, orders and club operations','admin workspace']:teacher()?['Teaching studio','Your students, classes and feedback','teaching workspace']:founderOnly()?['Founder workspace','Meetings and leadership updates','founder workspace']:investor()?['Investor portal','Club updates and your inquiries','investor portal']:['My learning','Your courses, tasks and teacher feedback','learning workspace'];
+  const visible=[...document.querySelectorAll('#nav a[data-page]')].filter(a=>!a.hidden).map(a=>a.dataset.page);
+  return {id,name,firstName:name.trim().split(/\s+/)[0],role,approved:!!id&&approved(),club:!!id&&clubAccess(),admin:admin(),teacher:teacher(),founder:founderOnly(),investor:investor(),office:officerAccess(),allowed:visible,page,peer:activePeerId,day:new Date().toLocaleDateString(undefined,{weekday:'long',month:'short',day:'numeric'}),messages:unreadCountsReady?unreadCounts.direct_total:null,notices:inboxUnreadCount??(cache.notifications||[]).filter(n=>!n.read_at).length,pending:adminPendingCount,workTitle:work[0],workCopy:work[1],workLabel:work[2],actions:actions.sort((a,b)=>a.rank-b.rank),agenda:agenda.sort((a,b)=>a.stamp-b.stamp)};
+}
+function homeViews(desktop){
+  return mobileWorkspace?`<div class="mobile-home">${mobileWorkspace.home()}</div><div class="desktop-home">${desktop}</div>`:desktop;
+}
 function personalHome(){
   const userId=session.user.id,now=Date.now();
   const soon=value=>{const at=value?new Date(value).getTime():NaN;return Number.isFinite(at)&&at>=now&&at-now<=7*24*60*60*1000;};
@@ -1697,18 +1733,18 @@ function personalHome(){
   <div class="section-heading"><div><span class="eyebrow">BUILD TOGETHER</span><h2>Stay in the conversation</h2></div></div><div class="home-community-links"><a href="#feed">Share a build update <span>Member feed →</span></a><a href="#channels">Talk with your team <span>Team chat →</span></a><a href="#library">Find a document <span>Shared files →</span></a></div>`;
 }
 function home() {
-  if(investor())return `${head('SPACE PARTNERS','Welcome, '+(me?.full_name||'investor'),'Your approved investor space brings together curated updates and a direct inquiry form.')}<div class="grid grid-2"><a class="card feature-card" href="#investor-portal"><span class="feature-icon">${iconSvg('investors')}</span><h3>Investor portal</h3><p>Read updates the club has approved for investors and send a question to the team.</p><span class="link">Open portal →</span></a><a class="card feature-card" href="founders/"><span class="feature-icon">${iconSvg('founders')}</span><h3>Meet the founders</h3><p>Learn about the people guiding SPACE.</p><span class="link">View founders →</span></a></div>`;
-  if(clubAccess())return roleDashboardIntro()+advancedMyDay()+personalHome();
+  if(investor())return homeViews(`${head('SPACE PARTNERS','Welcome, '+(me?.full_name||'investor'),'Your approved investor space brings together curated updates and a direct inquiry form.')}<div class="grid grid-2"><a class="card feature-card" href="#investor-portal"><span class="feature-icon">${iconSvg('investors')}</span><h3>Investor portal</h3><p>Read updates the club has approved for investors and send a question to the team.</p><span class="link">Open portal →</span></a><a class="card feature-card" href="founders/"><span class="feature-icon">${iconSvg('founders')}</span><h3>Meet the founders</h3><p>Learn about the people guiding SPACE.</p><span class="link">View founders →</span></a></div>`);
+  if(clubAccess())return homeViews(roleDashboardIntro()+advancedMyDay()+personalHome());
   const count=n=>(cache[n]||[]).length;
   const latest=(cache.announcements||[]).slice(0,3);
   const upcoming=(cache.events||[]).filter(e=>new Date(e.starts_at)>new Date()).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at)).slice(0,3);
-  return `<section class="hero"><div class="hero-copy"><span class="eyebrow">A COMMUNITY FOR ENGINEERS &amp; MAKERS</span><h1>Ideas become<br>working systems.</h1><p>Learn control, automation, electronics, software and robotics. Build prototypes together and prepare for regional and national competitions.</p><div class="hero-actions">${session?`<a class="button" href="#projects">Explore projects ↗</a>`:button('Join the workspace ↗','login')}<a class="button button-outline" href="about/">About the club</a></div></div><div class="hero-graphic">S✦</div></section>
+  return homeViews(`<section class="hero"><div class="hero-copy"><span class="eyebrow">A COMMUNITY FOR ENGINEERS &amp; MAKERS</span><h1>Ideas become<br>working systems.</h1><p>Learn control, automation, electronics, software and robotics. Build prototypes together and prepare for regional and national competitions.</p><div class="hero-actions">${session?`<a class="button" href="#projects">Explore projects ↗</a>`:button('Join the workspace ↗','login')}<a class="button button-outline" href="about/">About the club</a></div></div><div class="hero-graphic">S✦</div></section>
   <div class="section-heading"><div><span class="eyebrow">CLUB PULSE</span><h2>${session?'Your workspace at a glance':'Built for makers and innovators'}</h2></div><p>${session?`Welcome back, ${esc(me?.full_name||session.user.email)}.`:'A community of makers sharing practical skills and projects.'}</p></div>
   <div class="grid grid-4"><div class="stat"><small>Visible profiles</small><b>${session?count('profiles'):'—'}</b><span>In your workspace</span></div><div class="stat"><small>Visible online</small><b>${session?(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length:'—'}</b><span>Active in the last minute</span></div><div class="stat"><small>Active projects</small><b>${session?count('projects'):'—'}</b><span>Ideas in motion</span></div><div class="stat"><small>Upcoming events</small><b>${session?upcoming.length:'—'}</b><span>Sessions and meetups</span></div></div>
   <div class="section-heading"><div><span class="eyebrow">OUR MISSION</span><h2>From the workbench to the world.</h2></div></div><div class="grid grid-3">${[['courses','Learn','Hands-on courses in Arduino, Proteus, CAD, OpenPLC and electrical systems.'],['projects','Build','Plan and test real prototypes with multidisciplinary teams and mentors.'],['founder-room','Compete','Turn the strongest projects into competition-ready demonstrations.']].map(x=>`<div class="card mission-card"><div class="icon-box">${iconSvg(x[0])}</div><h3>${x[1]}</h3><p>${x[2]}</p></div>`).join('')}</div>
   <section class="studio-banner"><img src="assets/robotics-workbench.webp" alt="Concept artwork of hands assembling a robotics prototype" loading="lazy"><div><span class="eyebrow">ENGINEERING INSPIRATION · CONCEPT ARTWORK</span><h2>Make something that works.</h2><p>Find your team, share your next test and turn a good idea into a working prototype.</p><a class="button" href="${session?'#projects':'about/'}">${session?'Explore club projects':'Discover the club'} →</a></div></section>
   ${session?`<div class="section-heading"><h2>Your community</h2><p>Find a conversation or share what you’re learning.</p></div><div class="grid grid-4"><a class="card feature-card" href="#feed"><span class="feature-icon">${iconSvg('feed')}</span><h3>Activity feed</h3><p>Share progress and hear from club members.</p><span class="link">Open feed →</span></a><a class="card feature-card" href="#channels"><span class="feature-icon">${iconSvg('channels')}</span><h3>Member channels</h3><p>Get help and work through ideas together.</p><span class="link">Open channels →</span></a><a class="card feature-card" href="#library"><span class="feature-icon">${iconSvg('library')}</span><h3>Document library</h3><p>Notes, schematics and useful resources in one place.</p><span class="link">Browse files →</span></a><a class="card feature-card" href="#news"><span class="feature-icon">${iconSvg('news')}</span><h3>Technology news</h3><p>Discover engineering stories worth discussing.</p><span class="link">Read stories →</span></a></div>`:''}
-  ${session?`<div class="section-heading"><h2>What’s happening</h2><a class="link" href="#events">View calendar →</a></div><div class="split"><div class="panel"><h3>Latest alerts</h3>${latest.length?latest.map(a=>`<div class="list-item"><span class="icon-box" style="margin:0">◈</span><div><strong>${esc(a.title)}</strong><small>${date(a.created_at)}</small><p class="subtle">${esc(a.body)}</p></div></div>`).join(''):empty('No alerts yet','Official club updates will appear here.')}</div><div class="panel"><h3>Coming up</h3>${upcoming.length?upcoming.map(e=>eventRow(e)).join(''):empty('Nothing scheduled','The next club event will appear here.')}</div></div>`:''}`;
+  ${session?`<div class="section-heading"><h2>What’s happening</h2><a class="link" href="#events">View calendar →</a></div><div class="split"><div class="panel"><h3>Latest alerts</h3>${latest.length?latest.map(a=>`<div class="list-item"><span class="icon-box" style="margin:0">◈</span><div><strong>${esc(a.title)}</strong><small>${date(a.created_at)}</small><p class="subtle">${esc(a.body)}</p></div></div>`).join(''):empty('No alerts yet','Official club updates will appear here.')}</div><div class="panel"><h3>Coming up</h3>${upcoming.length?upcoming.map(e=>eventRow(e)).join(''):empty('Nothing scheduled','The next club event will appear here.')}</div></div>`:''}`);
 }
 function about() {
   const tracks=[
