@@ -30,6 +30,8 @@ jobs:
           node-version: '24'
       - name: Check application and public verification
         run: |
+          node --check space-bento.js
+          node scripts/check_space_bento.mjs
           node --check member-wall.js
           node scripts/check_member_wall.mjs
           node --check app.js
@@ -51,7 +53,7 @@ jobs:
       - name: Prepare static site
         run: |
           mkdir -p _site
-          cp index.html reset-password.html reset-password.js club-certificates.js club-certificates.css certificate.html certificate.js styles.css public-pages.css club-commerce.css club-commerce.js app.js config.js sitemap.xml .nojekyll manifest.webmanifest sw.js offline.html pwa-register.js chat-waves.js chat-waves.css mobile-workspace.js mobile-workspace.css club-guidance.js club-guidance.css member-wall.js member-wall.css _site/
+          cp index.html reset-password.html reset-password.js club-certificates.js club-certificates.css certificate.html certificate.js styles.css public-pages.css club-commerce.css club-commerce.js app.js config.js sitemap.xml .nojekyll manifest.webmanifest sw.js offline.html pwa-register.js chat-waves.js chat-waves.css mobile-workspace.js mobile-workspace.css club-guidance.js club-guidance.css member-wall.js member-wall.css space-bento.js space-bento.css _site/
           cp -R assets about founders icons _site/
       - uses: actions/upload-pages-artifact@v3
         with:

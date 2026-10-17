@@ -1,0 +1,157 @@
+/* SPACE overview cards, adapted from the supplied React Bits MagicBento.
+   Upstream attribution and license are retained in space-bento.js.
+   Every layout and action remains usable without the optional lighting script. */
+[data-bento] {
+  --sb-accent: #7c3aed;
+  --sb-rgb: 124, 58, 237;
+  min-width: 0;
+}
+[data-bento] > :is(a,button,article,.card,.stat,.records-stat,.teaching-agenda) {
+  --sb-accent: #7c3aed;
+  --sb-rgb: 124, 58, 237;
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  height: auto;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--white);
+  background: linear-gradient(135deg,color-mix(in srgb,var(--sb-accent) 6%,var(--white)),var(--white) 68%);
+  box-shadow: 0 3px 14px rgba(25,30,48,.045),inset 0 1px 0 rgba(255,255,255,.32);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  transition: border-color .18s ease,box-shadow .18s ease,transform .18s ease;
+}
+[data-bento] > :nth-child(4n+2) { --sb-accent: #b96025; --sb-rgb: 185,96,37; }
+[data-bento] > :nth-child(4n+3) { --sb-accent: #247d91; --sb-rgb: 36,125,145; }
+[data-bento] > :is(a,button,article,.card,.stat,.records-stat,.teaching-agenda)::before,
+[data-bento] > :is(a,button,article,.card,.stat,.records-stat,.teaching-agenda)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .18s ease;
+}
+/* An inset rim remains as a fallback on browsers without composite masking. */
+[data-bento] > :is(a,button,article,.card,.stat,.records-stat,.teaching-agenda)::before {
+  box-shadow: inset 0 0 0 1px rgba(var(--sb-rgb),.38);
+}
+@supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) {
+  [data-bento] > :is(a,button,article,.card,.stat,.records-stat,.teaching-agenda)::before {
+    padding: 1px;
+    background: radial-gradient(230px circle at var(--sb-x,50%) var(--sb-y,0%),rgba(var(--sb-rgb),.8),rgba(var(--sb-rgb),.12) 75%,transparent);
+    -webkit-mask: linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+}
+[data-bento] > :is(a,button,article,.card,.stat,.records-stat,.teaching-agenda)::after {
+  background: radial-gradient(310px circle at var(--sb-x,50%) var(--sb-y,0%),rgba(var(--sb-rgb),.09),transparent 80%);
+}
+[data-bento] > .is-bento-lit::before,[data-bento] > .is-bento-lit::after { opacity: 1; }
+[data-bento] > :is(a,button):hover { transform: none; }
+[data-bento] > :is(a,button):focus-visible {
+  outline: 3px solid var(--deep);
+  outline-offset: 3px;
+  border-color: var(--deep);
+}
+[data-bento] > :is(a,button):active { border-color: var(--deep); }
+/* The selected track remains explicit, including touch and keyboard use. */
+[data-bento="tracks"] > .course-track.selected {
+  border: 1px solid var(--deep);
+  box-shadow: inset 0 0 0 1px var(--deep),0 3px 14px rgba(25,30,48,.045);
+  background: color-mix(in srgb,var(--teal) 8%,var(--white));
+}
+.space-bento-wave {
+  position: absolute;
+  z-index: -1;
+  display: block;
+  border-radius: 50%;
+  background: radial-gradient(circle,rgba(var(--sb-rgb),.12),rgba(var(--sb-rgb),.04) 55%,transparent 70%);
+  pointer-events: none;
+  transform: translate(-50%,-50%) scale(0);
+  animation: space-bento-wave .44s ease-out forwards;
+}
+@keyframes space-bento-wave {
+  to { transform: translate(-50%,-50%) scale(1); opacity: 0; }
+}
+/* Summary cards stay smaller than next-step cards. No fixed-height card rows. */
+[data-bento="summary"] > :is(a,.stat) { padding: 17px 18px; }
+[data-bento="summary"] :is(b,strong):not(.home-glance-date) { font-size: 27px; }
+[data-bento="focus"] > .home-focus-card { padding: 19px; }
+[data-bento="focus"] .home-focus-icon { width: 34px; height: 34px; margin-bottom: 13px; }
+[data-bento="focus"] .home-focus-card > strong { font-size: 18px; line-height: 1.35; }
+[data-bento="focus"] > .is-urgent { --sb-accent: #b96025; --sb-rgb: 185,96,37; border-color: color-mix(in srgb,var(--accent-orange-bright) 55%,var(--line)); }
+[data-bento="links"] > a { box-shadow: none; }
+[data-bento="projects"] > .card,[data-bento="courses"] > .card { padding: 19px; }
+[data-bento="projects"] h3,[data-bento="courses"] h3 { font-size: 18px; line-height: 1.35; }
+[data-bento="projects"] .progress { height: 5px; }
+[data-bento="projects"] .progress > span { background: var(--sb-accent); }
+[data-bento="tracks"] { gap: 12px; }
+[data-bento="tracks"] > .course-track { min-height: 170px; gap: 10px; padding: 18px; }
+[data-bento="tracks"] > .course-track-all {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(130px,.6fr) minmax(0,1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 0;
+  padding: 15px 18px;
+}
+[data-bento="tracks"] > .course-track-all em { margin: 0; }
+[data-bento="tracks"] .course-track strong { font-size: 16px; }
+[data-bento="teaching"] > .teaching-agenda { padding: 19px; }
+@media (min-width: 1101px) {
+  [data-bento="focus"] { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  [data-bento="focus"] > :first-child:is(:nth-last-child(4),:nth-last-child(5)),
+  [data-bento="focus"] > :last-child:nth-child(4) { grid-column: span 2; }
+}
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  [data-bento] > :is(a,button):hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb,var(--sb-accent) 50%,var(--line));
+    box-shadow: 0 7px 20px rgba(25,30,48,.08);
+  }
+  [data-bento-static] [data-bento] > :is(a,button):hover { transform: none; }
+}
+@media (max-width: 760px) {
+  [data-bento="shortcuts"] > a { border-radius: 13px; padding: 12px 11px; min-height: 72px; }
+  [data-bento="projects"],[data-bento="courses"] { grid-template-columns: minmax(0,1fr); gap: 12px; }
+  [data-bento="projects"] > .card,[data-bento="courses"] > .card,[data-bento="teaching"] > .teaching-agenda { padding: 16px; border-radius: 14px; }
+  [data-bento="projects"] h3,[data-bento="courses"] h3 { font-size: 17px; }
+  [data-bento="tracks"] { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+  [data-bento="tracks"] > .course-track { padding: 13px; min-height: 146px; gap: 8px; border-radius: 13px; }
+  [data-bento="tracks"] > .course-track-all { grid-template-columns: minmax(0,1fr) auto; padding: 13px; min-height: 0; }
+  [data-bento="tracks"] > .course-track-all small { grid-column: 1 / -1; grid-row: 2; }
+  [data-bento="tracks"] .course-track strong { font-size: 14px; }
+  [data-bento="tracks"] .course-track small { font-size: 11px; }
+  [data-bento="summary"] > :is(a,.stat) { padding: 14px; }
+}
+@media (max-width: 359px) {
+  [data-bento="tracks"] { grid-template-columns: minmax(0,1fr); }
+  [data-bento="tracks"] > .course-track { min-height: 0; }
+}
+:root[data-theme="dark"] [data-bento] > :is(a,button,article,.card,.stat,.records-stat,.teaching-agenda) {
+  box-shadow: 0 3px 15px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.03);
+}
+:root[data-theme="dark"] [data-bento="tracks"] > .course-track.selected { box-shadow: inset 0 0 0 1px var(--deep); }
+@media (prefers-reduced-motion: reduce) {
+  [data-bento] > :is(a,button,article,.card,.stat,.records-stat,.teaching-agenda),
+  [data-bento] > :is(a,button,article,.card,.stat,.records-stat,.teaching-agenda)::before,
+  [data-bento] > :is(a,button,article,.card,.stat,.records-stat,.teaching-agenda)::after { transition: none; transform: none; }
+  .space-bento-wave { display: none; animation: none; }
+}
+@media (forced-colors: active) {
+  [data-bento] > :is(a,button,article,.card,.stat,.records-stat,.teaching-agenda) { background: Canvas; color: CanvasText; border-color: CanvasText; box-shadow: none; }
+  [data-bento="tracks"] > .course-track.selected { outline: 2px solid Highlight; outline-offset: -4px; }
+  .space-bento-wave { display: none; }
+}
+@media print {
+  [data-bento] > :is(a,button,article,.card,.stat,.records-stat,.teaching-agenda) { background: white; box-shadow: none; transform: none; break-inside: avoid; }
+  .space-bento-wave { display: none; }
+}
