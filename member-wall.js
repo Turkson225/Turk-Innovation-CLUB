@@ -91,7 +91,7 @@
    listen(document,'visibilitychange',apply);listen(window,'pagehide',()=>{s.pageHidden=true;apply();});listen(window,'pageshow',()=>{s.pageHidden=false;apply();});listen(reduced,'change',apply);listen(small,'change',apply);listen(connection,'change',apply);
    if(typeof IntersectionObserver!=='undefined'){s.intersection=new IntersectionObserver(entries=>{if(!valid())return;const entry=entries.find(v=>v.target===root);if(entry){s.intersecting=entry.isIntersecting;apply();}},{threshold:0});s.intersection.observe(root);}
    if(typeof ResizeObserver!=='undefined'){s.resize=new ResizeObserver(()=>{if(valid())apply();});s.resize.observe(root);}
-   if(typeof MutationObserver!=='undefined'){s.modalObserver=new MutationObserver(()=>{if(valid())apply();});for(const id of ['modal','imageViewer','sidebar']){const node=document.getElementById(id);if(node)s.modalObserver.observe(node,{attributes:true,attributeFilter:[id==='sidebar'?'class':'open']});}}
+   if(typeof MutationObserver!=='undefined'){s.modalObserver=new MutationObserver(()=>{if(valid())apply();});for(const dialog of document.querySelectorAll('dialog'))s.modalObserver.observe(dialog,{attributes:true,attributeFilter:['open']});const sidebar=document.getElementById('sidebar');if(sidebar)s.modalObserver.observe(sidebar,{attributes:true,attributeFilter:['class']});}
    apply();updatePhotos();
   }
   function updatePhotos(){
