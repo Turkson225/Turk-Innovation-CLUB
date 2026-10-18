@@ -5,6 +5,14 @@
 
 A responsive workspace for a practical engineering and technology club. The site is static and can be hosted on GitHub Pages. Supabase provides email sign-in and a database protected by row level security.
 
+## Zoomable globe map — 18 October 2026
+
+Open **Community → SPACE Map**, or **More → SPACE Map** on phones. Start with a spherical Earth and atmosphere, drag to explore, and zoom into streets. **Earth / Dots** switches between NASA Blue Marble imagery and an original dotted-globe treatment with decorative animated arcs. The arcs are visual decoration, not conversations or journeys. **Globe** returns to the world; **Find people** fits the authorized shared positions on the current page. Shared dots/clusters reveal floating avatars as you zoom closer, with a chooser for crowded locations. Avatars do not imply that a member is currently online.
+
+This upgrade uses locally shipped MapLibre with a standard Leaflet fallback for unsupported graphics. It adds no React framework, paid registry credential, new account or additional SQL migration. The React Bits Pro reference informed the visual direction; its paid component was not installed because this is a buildless JavaScript app and no Pro license is configured. Existing selected-recipient permissions, expiry, Ghost mode, foreground GPS and bounded 100-position pages still apply. The existing Map & Avatars migration below remains necessary if not already applied.
+
+Automated controller/rendering checks and official style validation pass. Browser/GPU/physical-phone rendering and real two-account GPS delivery still need device verification. NASA imagery and OSM street tiles are external, best-effort services; no imagery, private positions or avatars are bulk-cached by the service worker.
+
 ## SPACE Map and Avatar Studio — 17 October 2026
 
 Open **Community → SPACE Map / Avatar studio**, **Accounts**, or **More** on phones. The studio offers original illustrated avatars, 24 outfit presets (club, casual, lab, sports and formal), detailed appearance/clothing/accessory choices, eight named saved looks, and optional use on profiles/chats and the personal member ID. The updated artwork adds shaded faces, detailed eyes and textured hair, more natural body proportions, garment folds, seams, hands and footwear. **Full look / Face detail** switches the preview framing without saving or changing your appearance. Original profile photos and saved styles are preserved. This visual upgrade needs no additional migration. Avatar presets and the interactive map are responsive; the map SDK loads only on the map page.
