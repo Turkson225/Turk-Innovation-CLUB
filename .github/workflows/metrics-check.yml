@@ -1,0 +1,20 @@
+name: SPACE metrics database checks
+on:
+  push:
+    branches: [main]
+    paths: ['supabase/upgrade_space_metrics.sql', 'scripts/check_metrics_database.mjs', 'scripts/load_test_fixture.mjs', '.github/workflows/metrics-check.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  metrics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install isolated PostgreSQL engine
+        run: npm install --prefix "$RUNNER_TEMP/metrics-check" --no-package-lock --ignore-scripts @electric-sql/pglite@0.3.14
+      - name: Verify calculations and existing row-level access rules
+        run: SPACE_PGLITE_MODULE="$RUNNER_TEMP/metrics-check/node_modules/@electric-sql/pglite" node scripts/check_metrics_database.mjs

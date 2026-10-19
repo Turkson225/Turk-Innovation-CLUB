@@ -1,0 +1,59 @@
+// Actual application RLS and migrations, isolated PostgreSQL/WASM and synthetic data only.
+import fs from 'node:fs';import assert from 'node:assert/strict';import {createRequire} from 'node:module';
+import {prepareFixture,uuid} from './load_test_fixture.mjs';
+const {PGlite}=createRequire(import.meta.url)(process.env.SPACE_PGLITE_MODULE||'@electric-sql/pglite');
+const engine=new PGlite(),db={query:async(q,p)=>p?engine.query(q,p):(await engine.exec(q.replace('create extension if not exists pgcrypto;',''))).at(-1)};
+const sql=fs.readFileSync(new URL('../supabase/upgrade_space_metrics.sql',import.meta.url),'utf8');
+const as=(n,q,args=[],role='authenticated')=>engine.transaction(async tx=>{await tx.exec('set local role '+role);await tx.query("select set_config('request.jwt.claim.sub',$1,true)",[n?uuid(n):'']);return tx.query(q,args);});
+const metrics=async(n,scope,days=30,target=null)=>(await as(n,'select public.space_metrics($1,$2,$3) data',[scope,days,target])).rows[0].data;
+const k=(d,label)=>d.kpis.find(k=>k.label===label)?.value;
+let passed=0;const check=async(name,fn)=>{await fn();passed++;console.log('PASS',name);};
+try{
+ await prepareFixture(db);
+ await db.query(fs.readFileSync(new URL('../supabase/upgrade_club_shop.sql',import.meta.url),'utf8'));
+ await db.query(sql);
+ await db.query('set session_replication_role=replica');
+ await db.query(`update profiles set role='investor' where id=load_uuid(1990);update profiles set membership_status='pending' where id=load_uuid(1991);update profiles set membership_status='suspended' where id=load_uuid(1992);update profiles set role='founder' where id=load_uuid(1993);
+  insert into direct_messages(sender_id,recipient_id,body,created_at) values
+   (load_uuid(2),load_uuid(1999),'PRIVATE_BODY_NEVER_RETURN',now()-interval '4 hours'),
+   (load_uuid(1999),load_uuid(2),'PRIVATE_BODY_NEVER_RETURN',now()-interval '3 hours'),
+   (load_uuid(2),load_uuid(1999),'PRIVATE_BODY_NEVER_RETURN',now()-interval '2 hours'),
+   (load_uuid(1999),load_uuid(2),'PRIVATE_BODY_NEVER_RETURN',now()-interval '1 hour');
+  insert into direct_messages(sender_id,recipient_id,body,created_at) select load_uuid(1999),load_uuid(2),'PRIVATE_BODY_NEVER_RETURN',now()-interval '30 minutes'+n*interval '1 millisecond' from generate_series(1,1005)n;
+  insert into direct_message_reads(user_id,peer_id,last_read_at) values(load_uuid(1999),load_uuid(2),now()-interval '3 hours');
+  insert into direct_messages(sender_id,recipient_id,body,created_at) values
+   (load_uuid(1998),load_uuid(4),'UTC first day included',(date_trunc('day',now() at time zone 'UTC')-interval '6 days') at time zone 'UTC'),
+   (load_uuid(1998),load_uuid(4),'Before window excluded',((date_trunc('day',now() at time zone 'UTC')-interval '6 days') at time zone 'UTC')-interval '1 millisecond'),
+   (load_uuid(1998),load_uuid(4),'Future excluded',now()+interval '1 hour');
+  insert into channel_messages(id,channel_id,author_id,body,image_path) values(load_uuid(99001),(select id from channels order by id limit 1),load_uuid(1999),'PRIVATE_CHANNEL_BODY','private/image.png');
+  insert into channel_messages(channel_id,author_id,body,parent_id) values((select id from channels order by id limit 1),load_uuid(1998),'PRIVATE_REPLY_BODY',load_uuid(99001));
+  insert into channel_messages(channel_id,author_id,body,deleted_at) values((select id from channels order by id limit 1),load_uuid(1998),'PRIVATE_DELETED_BODY',now());
+  insert into inventory_items(name,category,quantity_total,quantity_available,reorder_level,unit,created_by) values('Synthetic wire','Components',15,2,3,'metres',load_uuid(1)),('Synthetic tool','Tools',4,3,0,'pcs',load_uuid(1));
+  insert into space_shop_orders(buyer_id,client_token,request_fingerprint,contact_name,contact_phone,status,total_cents,collection_note,payment_status) values
+   (load_uuid(1999),gen_random_uuid(),'a','Synthetic buyer','0240000000','collected',12345,'Test','paid'),
+   (load_uuid(1999),gen_random_uuid(),'b','Synthetic buyer','0240000000','cancelled',99999,'Test','paid'),
+   (load_uuid(1998),gen_random_uuid(),'c','Synthetic buyer','0240000000','ready',33333,'Test','due');
+  insert into finance_entries(id,entry_type,category,amount,description,occurred_on,created_by) values
+   (load_uuid(90001),'income','Synthetic',100,'Synthetic approved income',current_date,load_uuid(1)),
+   (load_uuid(90002),'expense','Synthetic',30,'Synthetic approved expense',current_date,load_uuid(1)),
+   (load_uuid(90003),'income','Synthetic',999,'Synthetic pending income',current_date,load_uuid(1));
+  insert into finance_reviews(entry_id,reviewer_id,decision,note) values(load_uuid(90001),load_uuid(1),'approved','Synthetic'),(load_uuid(90002),load_uuid(1),'approved','Synthetic');`);
+ await db.query('set session_replication_role=origin');
+ await check('Migration is rerunnable and preserves 2,000 accounts',async()=>{await db.query(sql);assert.equal((await db.query('select count(*)::int n from profiles')).rows[0].n,2000);});
+ await check('Metrics execute as the caller with RLS and deny anonymous callers',async()=>{assert.equal((await db.query("select prosecdef from pg_proc where oid='public.space_metrics(text,integer,uuid)'::regprocedure")).rows[0].prosecdef,false);await assert.rejects(()=>as(null,"select public.space_metrics('dm')",[],'anon'),/permission denied/);});
+ await check('Investors and unapproved accounts cannot request any scope',async()=>{for(const n of [1990,1991,1992])for(const scope of ['membership','learning','teaching','inventory','finance','orders','dm','channel'])await assert.rejects(()=>metrics(n,scope),/Approved club/);});
+ await check('Members, teachers and founders cannot request administrator-only aggregates',async()=>{for(const n of [2,10,1993,1999])for(const scope of ['membership','finance'])await assert.rejects(()=>metrics(n,scope),/Administrator/);await assert.rejects(()=>metrics(1999,'teaching'),/Teacher/);});
+ await check('Invalid windows, scopes, targets and self conversations are rejected',async()=>{for(const d of [null,0,-1,365])await assert.rejects(()=>metrics(1,'membership',d),/Choose/);await assert.rejects(()=>metrics(1,'unknown'),/Unknown/);await assert.rejects(()=>metrics(1,'finance',30,uuid(2)),/target/);await assert.rejects(()=>metrics(1999,'dm',30,uuid(1999)),/participant/);await assert.rejects(()=>metrics(1999,'channel',30,uuid(90000)),/unavailable/);});
+ await check('Server counts exceed the API row limit and compute the exact reply median',async()=>{const d=await metrics(1999,'dm',30,uuid(2));assert.equal(k(d,'Sent'),1007);assert.equal(k(d,'Received'),2);assert.equal(k(d,'Unread in period'),1);assert.equal(k(d,'My median reply gap'),3600);assert(!JSON.stringify(d).includes('PRIVATE_BODY'));assert(!JSON.stringify(d).includes(uuid(2)));});
+ await check('Administrators cannot inspect another pair by choosing a participant',async()=>{for(const n of [1,1998]){const d=await metrics(n,'dm',30,uuid(2));assert.equal(k(d,'Sent'),0);assert.equal(k(d,'Received'),0);assert.equal(k(d,'My median reply gap'),null);}});
+ await check('Selected period returns UTC days, including zero days, without future activity',async()=>{const d=await metrics(1999,'dm',7,uuid(2));assert.equal(d.charts[1].rows.length,7);assert.equal(d.timezone,'UTC');assert.equal(d.charts[1].rows.reduce((n,r)=>n+r.value,0),1009);assert(d.charts[1].rows.some(r=>r.value===0));});
+ await check('UTC boundary inclusion, future exclusion and 90-day windows work in another database timezone',async()=>{await db.query("set timezone='Pacific/Kiritimati'");const d=await metrics(1998,'dm',7,uuid(4));assert.equal(k(d,'Sent'),1);assert.equal(k(await metrics(1998,'dm',30,uuid(4)),'Sent'),2);assert.equal((await metrics(1998,'dm',90,uuid(4))).charts[1].rows.length,90);await db.query("set timezone='UTC'");});
+ await check('Learning cards count only the learner’s records and use real denominators',async()=>{const d=await metrics(1999,'learning');assert.equal(k(d,'Enrolled workshops'),4);assert.equal(k(d,'Completed enrollments'),0);assert.equal(k(d,'Completion share'),0);const empty=await metrics(1,'learning');assert.equal(k(empty,'Completion share'),null);});
+ await check('Teachers cannot obtain another instructor’s classroom aggregates',async()=>{await assert.rejects(()=>metrics(2,'teaching',30,uuid(10002)),/Class unavailable/);const d=await metrics(2,'teaching');const expected=(await as(2,'select count(distinct learner_id)::int n from course_enrollments e join courses c on c.id=e.course_id where c.instructor_id=auth.uid()')).rows[0].n;assert.equal(k(d,'Learners'),expected);await assert.rejects(()=>metrics(1999,'learning',30,uuid(10002)),/Class unavailable/);});
+ await check('Inventory counts item types instead of adding incompatible units',async()=>{const d=await metrics(1999,'inventory');assert.equal(k(d,'Stock records'),2);assert.equal(k(d,'Low stock'),1);assert.equal(k(d,'Checked out'),2);assert.equal(d.charts[0].rows.reduce((n,r)=>n+r.value,0),2);assert(d.notes.join(' ').includes('different units'));});
+ await check('Shop metrics include only the buyer’s orders and exclude cancelled paid value',async()=>{const d=await metrics(1999,'orders');assert.equal(k(d,'Orders placed'),2);assert.equal(k(d,'Paid purchases'),123.45);assert.equal(k(d,'Delivered'),1);assert.equal(k(await metrics(1998,'orders'),'Orders placed'),1);assert.equal(k(await metrics(1,'orders'),'Orders placed'),3);});
+ await check('Finance includes only approved ledger entries with exact net movement',async()=>{const d=await metrics(1,'finance');assert.equal(k(d,'Approved income'),100);assert.equal(k(d,'Approved expenses'),30);assert.equal(k(d,'Net movement'),70);assert.equal(k(d,'Approved transactions'),2);});
+ await check('Membership totals reconcile across all categories without application answers',async()=>{const d=await metrics(1,'membership');assert.equal(d.charts[0].rows.reduce((n,r)=>n+r.value,0),2000);assert.equal(k(d,'Pending applications'),1);assert(!JSON.stringify(d).includes('reason'));assert(!JSON.stringify(d).includes('example.invalid'));});
+ await check('Channel activity includes replies and images but excludes deleted messages and private content',async()=>{const id=(await db.query('select id from channels order by id limit 1')).rows[0].id;const d=await metrics(1999,'channel',30,id);assert.equal(k(d,'Messages'),20002);assert.equal(k(d,'Thread replies'),1);assert.equal(k(d,'Images shared'),1);assert(!JSON.stringify(d).includes('Synthetic channel discussion'));assert(!JSON.stringify(d).includes('PRIVATE_'));assert(!JSON.stringify(d).includes('private/image.png'));assert.equal(d.charts[1].rows.reduce((n,r)=>n+r.value,0),20002);});
+ console.log(`${passed} SPACE metrics database checks passed`);
+}catch(error){console.error('FAIL metrics database:',error.message,error.detail||'',error.position||'',error.where||'');process.exitCode=1;}finally{await engine.close();}
