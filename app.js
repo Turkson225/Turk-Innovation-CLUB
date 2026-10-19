@@ -52,7 +52,7 @@ function migrateSavedAuth(){
 }
 migrateSavedAuth();
 const db = configured && !startupRecovery ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storageKey:authStorageKey, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
-let commerce=null,certification=null,mobileWorkspace=null,guidance=null,memberWall=null,bento=null,cardSwap=null,memberId=null,sharedGlow=null,avatarStudio=null,spaceMap=null,metrics=null;
+let commerce=null,certification=null,mobileWorkspace=null,guidance=null,memberWall=null,bento=null,cardSwap=null,memberId=null,sharedGlow=null,avatarStudio=null,spaceMap=null,metrics=null,analytics=null;
 let sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -425,7 +425,7 @@ async function refreshAdminAlerts(){
 }
 const button = (label,action,extra='') => `<button class="button ${extra}" data-action="${action}">${label}</button>`;
 const empty = (title,body) => `<div class="empty"><strong>${esc(title)}</strong>${esc(body)}</div>`;
-const head = (label,title,subtitle,action='') => `<div class="page-head"><div><span class="eyebrow">${esc(workspacePageInfo[page]?.section||label)}</span><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${action}</div>${pageGuide()}${page==='home'?'':metrics?.view()||''}`;
+const head = (label,title,subtitle,action='') => `<div class="page-head"><div><span class="eyebrow">${esc(workspacePageInfo[page]?.section||label)}</span><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${action}</div>${pageGuide()}${page==='home'?'':metrics?.view()||''}${analytics?.view()||''}`;
 const avatar = (name,large=false,photoPath='') => {const url=mediaUrl(photoPath);return `<span class="avatar ${large?'large':''}">${url?`<img src="${esc(url)}" alt="" loading="lazy">`:esc(initials(name))}</span>`;};
 const memberAvatar = (id,large=false) => {const p=(cache.profiles||[]).find(x=>x.id===id),fallback=avatar(p?.full_name||'Member',large,p?.avatar_path);return avatarStudio?.member(id,large,fallback)||fallback;};
 const roleBadge = p => {const labels={member:'Member',teacher:'Teacher',founder:'Founder',investor:'Investor',admin:'Administrator'};const role=Object.hasOwn(labels,p?.role)?p.role:'member';return `<span class="member-badge badge-${role}" title="Approved ${esc(labels[role])} account">${labels[role]}</span>${role==='founder'&&p?.founder_teaching_enabled===true?'<span class="member-badge badge-teacher" title="Can lead practical workshops">Teaching lead</span>':''}`;};
@@ -1208,7 +1208,7 @@ function completeLoginWelcome(generation){
 // Guard requests during explicit sign-out; there is no app-imposed idle timeout.
 function checkSessionExpiry(){return sessionEnding;}
 function expireSession(message,prompt=true) {
-  metrics?.reset();spaceMap?.reset();avatarStudio?.reset();sharedGlow?.reset();memberId?.reset();cardSwap?.reset();bento?.reset();memberWall?.reset();guidance?.reset();classroomView='overview';classroomPeoplePage=0;classroomProjectPage=0;classroomWorkPage=0;classroomTaskPage=0;
+  analytics?.reset();metrics?.reset();spaceMap?.reset();avatarStudio?.reset();sharedGlow?.reset();memberId?.reset();cardSwap?.reset();bento?.reset();memberWall?.reset();guidance?.reset();classroomView='overview';classroomPeoplePage=0;classroomProjectPage=0;classroomWorkPage=0;classroomTaskPage=0;
   if(!session||sessionEnding)return;
   sessionEnding=true;authStateRequest++;authFormEpoch++;authPersistentStorage.setItem(SIGNED_OUT_KEY,String(Date.now()));
   // Clear private UI and invalidate pending loads before waiting for any network.
@@ -1578,19 +1578,20 @@ function render() {
   $('#dmBadge').textContent=unreadDm;$('#dmBadge').hidden=!unreadDm;
   if(workspaceLoadError||workspaceLoading||workspaceHydrating&&!learningSelectionRequired()&&!(pageRefreshDependencies[page]||[]).every(name=>Object.hasOwn(cache,name))){
     $('#content').classList.remove('dm-view');
-    metrics?.sync(null);spaceMap?.sync(null);avatarStudio?.sync(null);sharedGlow?.sync(null);window.SpaceChatWaves?.sync(null);memberWall?.sync(null);bento?.sync(null);cardSwap?.sync(null);
+    analytics?.sync(null);metrics?.sync(null);spaceMap?.sync(null);avatarStudio?.sync(null);sharedGlow?.sync(null);window.SpaceChatWaves?.sync(null);memberWall?.sync(null);bento?.sync(null);cardSwap?.sync(null);
     const load=workspacePageLoads.get(page);
     $('#content').innerHTML=workspaceLoadError?`<section class="workspace-start"><h1>Let’s open your workspace</h1><p>${esc(workspaceLoadError)}</p><button class="button" data-action="retryWorkspace">Retry account check</button></section>`:workspaceSkeleton(page,{account:workspaceLoading,slow:load?.slow,error:load?.status==='error'});
     return;
   }
   const load=workspacePageLoads.get(page);
   if(session&&approved()&&load&&!load.hadData&&['loading','offline','error'].includes(load.status)&&!learningSelectionRequired()){
-    metrics?.sync(null);spaceMap?.sync(null);avatarStudio?.sync(null);sharedGlow?.sync(null);window.SpaceChatWaves?.sync(null);memberWall?.sync(null);bento?.sync(null);cardSwap?.sync(null);$('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
+    analytics?.sync(null);metrics?.sync(null);spaceMap?.sync(null);avatarStudio?.sync(null);sharedGlow?.sync(null);window.SpaceChatWaves?.sync(null);memberWall?.sync(null);bento?.sync(null);cardSwap?.sync(null);$('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
   }
   const views={'space-map':()=>spaceMap?.view()||head('COMMUNITY','SPACE Map','Reload SPACE to open the map.'),'avatar-studio':()=>avatarStudio?.view()||head('YOUR SPACE','Avatar studio','Reload SPACE to open the studio.'),'getting-started':()=>guidance?.welcome()||head('WELCOME','Getting started','Reload SPACE to open your welcome guide.'),'system-health':()=>admin()?(guidance?.healthView()||head('ADMINISTRATION','System health','Reload SPACE to open the checks.')):'',...Object.fromEntries(['shop','cart','orders','order-desk','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
   $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'?(guidance?.banner()||'')+(commerce?.homeRoleBanner()||'')+(commerce?.homeShopBanner?.()||''):'')+(page==='admin'?'<a class="admin-order-shortcut" href="#order-desk"><strong>Orders &amp; fulfilment</strong><span>Process new purchases, update status and send receipts →</span></a>':'')+views[page]();
   metrics?.sync($('#content'));
+  analytics?.sync($('#content'));
   window.SpaceChatWaves?.sync($('#content'));
   sharedGlow?.sync($('#content'));
   avatarStudio?.sync($('#content'));spaceMap?.sync($('#content'));
@@ -3234,7 +3235,7 @@ function accountsDialog(){
 }
 function changeAccountTab(separate=true){
   if(accountNavigationPending)return;
-  metrics?.reset();spaceMap?.reset();avatarStudio?.reset();sharedGlow?.reset();memberId?.reset();accountNavigationPending=true;authStateRequest++;authFormEpoch++;authGeneration++;sessionEnding=true;
+  analytics?.reset();metrics?.reset();spaceMap?.reset();avatarStudio?.reset();sharedGlow?.reset();memberId?.reset();accountNavigationPending=true;authStateRequest++;authFormEpoch++;authGeneration++;sessionEnding=true;
   void db?.auth.stopAutoRefresh().catch(console.error);
   // Detach this tab without revoking the account in another window.
   for(const suffix of ['', '-code-verifier','-user','-space-signed-out'])authTabStorage.removeItem(separateSessionKey+suffix);
@@ -5040,6 +5041,7 @@ function memberIdState(){
  const teaches=me?.role==='teacher'||me?.role==='founder'&&teacher();
  return {id:session?.user.id||'',generation:authGeneration,page,approved:!!session&&!sessionEnding&&approved(),teacher:teaches,tracks:teaches?allowedTeachingTracks():ownLearningTracks,profile:me?{id:me.id,full_name:me.full_name,role:me.role,handle:me.handle,created_at:me.created_at}:null};
 }
+analytics=window.SpaceAnalytics?.create({db,get:()=>({id:session?.user.id||'',generation:authGeneration,page,admin:admin(),allowed:!!session&&!sessionEnding&&clubAccess()})})||null;
 metrics=window.SpaceMetrics?.create({db,get:()=>({id:session?.user.id||'',generation:authGeneration,page,peer:activePeerId||'',channel:activeChannelId||'',course:activeCourseId||'',admin:admin(),teacher:teacher(),managesCourse:!!activeCourseId&&courseManager((cache.courses||[]).find(c=>c.id===activeCourseId)),allowed:!!session&&!sessionEnding&&clubAccess()})})||null;
 avatarStudio=window.SpaceAvatars?.create({db,get:()=>({id:session?.user.id||'',generation:authGeneration,page,allowed:!!session&&!sessionEnding&&clubAccess()}),fallback:(id,large)=>{const p=(cache.profiles||[]).find(x=>x.id===id);return avatar(p?.full_name||'Member',large,p?.avatar_path);}})||null;
 spaceMap=window.SpaceMap?.create({db,tiles:cfg.mapTiles,get:()=>({id:session?.user.id||'',generation:authGeneration,page,admin:admin(),allowed:!!session&&!sessionEnding&&clubAccess()}),message:id=>{location.hash='#messages/'+id;},profile:id=>{location.hash='#members/'+id;}})||null;

@@ -658,3 +658,7 @@ Run the entire [upgrade_space_metrics.sql](supabase/upgrade_space_metrics.sql) f
 # Coloured charts, insights and manual metrics — 19 October 2026
 
 Metrics now include stable category colours, pie/bar views for composition, and factual **At a glance** insights. For manual observations and optional targets, run [upgrade_manual_metrics.sql](supabase/upgrade_manual_metrics.sql) after the original metrics migration. Administrators use **Open manual records** in their metrics panels; teachers record observations in their own workshop classrooms. Required source/date fields and append-only corrections preserve provenance. Manual values never alter automatic totals or the ledger. See [definitions and manual-entry guidance](docs/metrics.md).
+
+# Administrator date explorer — 19 October 2026
+
+Run the entire [upgrade_analytics_periods.sql](supabase/upgrade_analytics_periods.sql) migration, then reload the updated site. Administrators can expand **Member growth** on Administration/Applications for grouped sign-up bars and **Finance trends** on Finance for approved income/expense areas with a crosshair. Both have inclusive UTC date ranges, daily/monthly/yearly grouping, series toggles, tooltips, exact tables and chart CSV downloads. The member-record CSV reads every matching account through keyset pagination. These are original native charts, with no React Bits Pro licence or React dependency required. See [definitions, export limits and verification](docs/period-analytics.md).
