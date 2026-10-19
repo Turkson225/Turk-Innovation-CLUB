@@ -662,3 +662,7 @@ Metrics now include stable category colours, pie/bar views for composition, and 
 # Administrator date explorer — 19 October 2026
 
 Run the entire [upgrade_analytics_periods.sql](supabase/upgrade_analytics_periods.sql) migration, then reload the updated site. Administrators can expand **Member growth** on Administration/Applications for grouped sign-up bars and **Finance trends** on Finance for approved income/expense areas with a crosshair. Both have inclusive UTC date ranges, daily/monthly/yearly grouping, series toggles, tooltips, exact tables and chart CSV downloads. The member-record CSV reads every matching account through keyset pagination. These are original native charts, with no React Bits Pro licence or React dependency required. See [definitions, export limits and verification](docs/period-analytics.md).
+
+# Monthly finance report metrics — 19 October 2026
+
+**Finance reports → Open month** includes income/expense bars, an expense-category pie/bar switch, net movement, approved transaction count and an expenses-to-income ratio. Charts use the complete approved monthly report and follow the selected month, including for assigned treasurers with read-only report access. The existing approved report CSV exports all approved transactions. No new Supabase migration is needed. See [report metric definitions](docs/metrics.md#finance-reports).

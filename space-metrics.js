@@ -26,7 +26,7 @@
   return null;
  }
  const tones=['blue','purple','orange','green','rose','slate'];
- const pieIds=new Set(['membership-status','inventory-types','order-status','dm-direction']);
+ const pieIds=new Set(['membership-status','inventory-types','order-status','dm-direction','finance-report-expenses']);
  function tone(label,index=0) {
   const v=String(label||'').toLowerCase();
   const inventory={component:'blue',tool:'orange',equipment:'purple',consumable:'green',other:'slate'};
@@ -42,13 +42,14 @@
  function chart(c,index,choice) {
   const rows=(Array.isArray(c.rows)?c.rows:[]).slice(0,90).filter(r=>typeof r.label==='string'&&number(r.value)&&r.value>=0);
   const max=Math.max(0,...rows.map(r=>r.value)),total=rows.reduce((n,r)=>n+r.value,0),daily=c.kind==='daily',unit=c.unit||'';
-  const eligible=!daily&&!unit&&pieIds.has(c.id)&&rows.length<=6;
+  const eligible=!daily&&(!unit||c.id==='finance-report-expenses'&&unit==='GHS')&&pieIds.has(c.id)&&rows.length<=6;
+  const rowTone=(r,i)=>c.id==='finance-report-expenses'?tones[i%tones.length]:tone(r.label,i);
   const pie=eligible&&choice!=='bar',title=esc(c.title),id='space-metrics-chart-'+index;
   const exact=rows.map(r=>`<tr><th scope="row">${esc(r.label)}</th><td>${esc(value(r.value,unit))}</td></tr>`).join('');
   let marks;
-  if(pie&&total>0){let offset=0;const slices=rows.map((r,i)=>{const share=100*r.value/total,start=offset;offset+=share;if(!share)return '';return `<circle class="metrics-pie-slice tone-${tone(r.label,i)}" cx="60" cy="60" r="43" pathLength="100" fill="none" stroke-width="18" stroke-dasharray="${share} ${100-share}" stroke-dashoffset="${-start}" transform="rotate(-90 60 60)" tabindex="0" role="img" aria-label="${esc(r.label)}: ${esc(value(r.value))}, ${share.toFixed(1)}% of total"><title>${esc(r.label)} · ${esc(value(r.value))} · ${share.toFixed(1)}%</title></circle>`;}).join('');marks=`<div class="metrics-pie-layout"><div class="metrics-donut"><svg viewBox="0 0 120 120" aria-label="${title}">${slices}</svg><div class="metrics-donut-total"><strong>${esc(value(total))}</strong><small>Total</small></div></div><ul class="metrics-legend">${rows.map((r,i)=>`<li><i class="tone-${tone(r.label,i)}"></i><span>${esc(r.label.replaceAll('_',' '))}</span><strong>${esc(value(r.value))}<small>${(100*r.value/total).toFixed(1)}%</small></strong></li>`).join('')}</ul></div>`;}
+  if(pie&&total>0){let offset=0;const slices=rows.map((r,i)=>{const share=100*r.value/total,start=offset;offset+=share;if(!share)return '';return `<circle class="metrics-pie-slice tone-${rowTone(r,i)}" cx="60" cy="60" r="43" pathLength="100" fill="none" stroke-width="18" stroke-dasharray="${share} ${100-share}" stroke-dashoffset="${-start}" transform="rotate(-90 60 60)" tabindex="0" role="img" aria-label="${esc(r.label)}: ${esc(value(r.value,unit))}, ${share.toFixed(1)}% of total"><title>${esc(r.label)} · ${esc(value(r.value,unit))} · ${share.toFixed(1)}%</title></circle>`;}).join('');marks=`<div class="metrics-pie-layout"><div class="metrics-donut"><svg viewBox="0 0 120 120" aria-label="${title}">${slices}</svg><div class="metrics-donut-total"><strong>${esc(value(total,unit))}</strong><small>Total${unit?' '+esc(unit):''}</small></div></div><ul class="metrics-legend">${rows.map((r,i)=>`<li><i class="tone-${rowTone(r,i)}"></i><span>${esc(r.label.replaceAll('_',' '))}</span><strong>${esc(value(r.value,unit))}<small>${(100*r.value/total).toFixed(1)}%</small></strong></li>`).join('')}</ul></div>`;}
   else if(daily)marks=`<div class="metrics-daily" role="group" aria-label="${title}">${rows.map(r=>`<span class="metrics-day" tabindex="0" aria-label="${esc(r.label)}: ${esc(value(r.value,unit))}"><i style="height:${max?r.value/max*100:0}%"></i><span class="metrics-tip">${esc(r.label)}<b>${esc(value(r.value,unit))}</b></span></span>`).join('')}</div><div class="metrics-axis"><span>${esc(rows[0]?.label||'')}</span><span>0–${esc(value(max,unit))}</span><span>${esc(rows.at(-1)?.label||'')}</span></div>`;
-  else marks=`<div class="metrics-bars">${rows.map((r,i)=>`<div class="metrics-bar"><span><i class="metrics-key tone-${tone(r.label,i)}"></i>${esc(r.label.replaceAll('_',' '))}</span><strong>${esc(value(r.value,unit))}</strong><div class="metrics-track"><i class="tone-${tone(r.label,i)}" style="width:${max?r.value/max*100:0}%"></i></div></div>`).join('')}</div>`;
+  else marks=`<div class="metrics-bars">${rows.map((r,i)=>`<div class="metrics-bar"><span><i class="metrics-key tone-${rowTone(r,i)}"></i>${esc(r.label.replaceAll('_',' '))}</span><strong>${esc(value(r.value,unit))}</strong><div class="metrics-track"><i class="tone-${rowTone(r,i)}" style="width:${max?r.value/max*100:0}%"></i></div></div>`).join('')}</div>`;
   const toggle=eligible?`<div class="metrics-chart-switch" role="group" aria-label="${title} chart style"><button type="button" data-metrics-action="chart-mode" data-chart="${esc(c.id)}" data-view="pie" aria-pressed="${pie}">Pie</button><button type="button" data-metrics-action="chart-mode" data-chart="${esc(c.id)}" data-view="bar" aria-pressed="${!pie}">Bars</button></div>`:'';
   return `<figure class="metrics-chart" aria-labelledby="${id}"><figcaption id="${id}">${title}${unit==='GHS'?'<small>GHS</small>':''}</figcaption>${toggle}${!max?'<p class="metrics-empty">No recorded activity for this chart.</p>':''}${rows.length?marks:'<p>No records available.</p>'}<details class="metrics-data"><summary>View exact values</summary><div class="metrics-table-wrap"><table><caption class="sr-only">${title}</caption><thead><tr><th scope="col">${daily?'Date (UTC)':'Category'}</th><th scope="col">${unit==='GHS'?'Amount (GHS)':'Count'}</th></tr></thead><tbody>${exact||'<tr><td colspan="2">No records</td></tr>'}</tbody></table></div></details></figure>`;
  }
@@ -83,23 +84,45 @@
   const date=new Date(data.generated_at),stamp=Number.isFinite(date.getTime())?date.toLocaleString():'time unavailable';
   return `<div class="metrics-kpis">${data.kpis.slice(0,6).map((k,i)=>`<article class="metrics-kpi tone-${tone(k.label,i)}"><h3>${esc(k.label)}</h3><strong>${esc(value(k.value,k.unit))}</strong><p>${esc(k.detail)}</p></article>`).join('')}</div><p class="metrics-period">${data.scope==='inventory'?'Current snapshot':esc(data.from)+' – '+esc(data.through)+' · UTC · includes today (partial)'}</p>${insightMarkup(data)}<div class="metrics-charts">${data.charts.slice(0,3).map((c,i)=>chart(c,i,options.modes?.[c.id])).join('')}</div>${manualAllowed(options,{scope:data.scope})?'<section class="metrics-manual-intro"><h3>Manual measurements &amp; targets</h3><p>Record offline results, sources and optional targets separately from automatic totals.</p><button type="button" class="button button-outline button-sm" data-metrics-action="manual-open">Open manual records</button></section>':''}<details class="metrics-definitions"><summary>How these metrics are counted</summary><ul>${(data.notes||[]).slice(0,8).map(n=>`<li>${esc(n)}</li>`).join('')}</ul><p>Source: SPACE records available to your account through existing access rules.</p></details><p class="metrics-updated">Updated ${esc(stamp)} · refresh to include newer changes.</p>`;
  }
+ function financeReportData(r,month){
+  if(!r||!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)||String(r.month).slice(0,7)!==month||!Array.isArray(r.categories))return null;
+  const cents=v=>{if(v===null||v===''||!['number','string'].includes(typeof v))return null;const n=Number(v),c=Math.round(n*100);return Number.isFinite(n)&&Number.isSafeInteger(c)?c:null;};
+  const income=cents(r.income),expense=cents(r.expense),opening=cents(r.opening_balance),closing=cents(r.closing_balance),count=Number(r.approved_count);
+  if([income,expense,opening,closing].some(n=>n===null)||income<0||expense<0||opening+income-expense!==closing||r.approved_count===null||r.approved_count===''||!['number','string'].includes(typeof r.approved_count)||!Number.isSafeInteger(count)||count<0)return null;
+  const categories=new Map();let received=0,spent=0;
+  for(const c of r.categories){const amount=cents(c.amount);if(!['income','expense'].includes(c.entry_type)||typeof c.category!=='string'||amount===null||amount<0)return null;if(c.entry_type==='income')received+=amount;else {spent+=amount;categories.set(c.category,(categories.get(c.category)||0)+amount);}}
+  if(received!==income||spent!==expense)return null;
+  const expenses=[...categories].filter(([,n])=>n>0).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])).map(([label,c])=>({label,value:c/100}));
+  const rows=expenses.length<=6?expenses:[...expenses.slice(0,5),{label:`Remaining categories (${expenses.length-5})`,value:expenses.slice(5).reduce((n,c)=>n+Math.round(c.value*100),0)/100}];
+  const net=(income-expense)/100,ratio=income>0?100*expense/income:null;
+  return {month,income:income/100,expense:expense/100,opening:opening/100,closing:closing/100,count,net,ratio,expenses,rows,review:r.review||null};
+ }
+ function financeReportMarkup(r,month,modes={}){
+  const d=financeReportData(r,month);if(!d)return '<p class="metrics-error" role="status">Report metrics are unavailable. Refresh the monthly report to load matching totals.</p>';
+  const insights=[d.net>0?`Approved income exceeds expenses by ${value(d.net,'GHS')} this month.`:d.net<0?`Approved expenses exceed income by ${value(-d.net,'GHS')} this month.`:'Approved income and expenses balance for this month.'];
+  if(d.expenses.length){const max=d.expenses[0].value,ties=d.expenses.filter(c=>c.value===max).length;insights.push(ties===1?`Largest expense category: ${d.expenses[0].label}, ${value(max,'GHS')} (${(100*max/d.expense).toFixed(1)}% of approved expenses).`:`${ties} expense categories tie for the largest amount at ${value(max,'GHS')} each.`);}
+  if(!d.review)insights.push('This report is provisional until the administrator completes the monthly review.');
+  else if(d.review.difference!==null&&d.review.difference!==undefined&&Number.isFinite(Number(d.review.difference)))insights.push(Number(d.review.difference)===0?'The recorded month-end review has no balance difference.':`Recorded review difference: ${value(Number(d.review.difference),'GHS')}. Check the monthly review notes.`);
+  return `<section class="space-metrics finance-report-metrics" data-finance-report-metrics data-report-month="${esc(month)}" aria-labelledby="finance-report-metrics-title"><div class="finance-report-metrics-head"><div><span class="eyebrow">APPROVED MONTHLY RECORDS</span><h2 id="finance-report-metrics-title">Report metrics</h2><p>${esc(month)} · same month as the report · GHS</p></div><span class="tag">${d.review?'Reviewed':'Provisional'}</span></div><div class="metrics-kpis"><article class="metrics-kpi tone-${d.net<0?'orange':'green'}"><h3>Net movement</h3><strong>${esc(value(d.net,'GHS'))}</strong><p>Income minus expenses; excludes the opening balance.</p></article><article class="metrics-kpi tone-blue"><h3>Approved transactions</h3><strong>${esc(value(d.count))}</strong><p>All approved entries in this month, across every report page.</p></article><article class="metrics-kpi tone-purple"><h3>Expenses / income</h3><strong>${d.ratio===null?'—':esc(d.ratio.toLocaleString(undefined,{maximumFractionDigits:1}))+'%'}</strong><p>${d.ratio===null?'No approved income; a ratio cannot be calculated.':'Approved expenses as a share of income; may exceed 100%.'}</p></article></div><div class="metrics-charts">${chart({id:'finance-report-flows',title:'Income and expenses',unit:'GHS',rows:[{label:'Approved income',value:d.income},{label:'Approved expenses',value:d.expense}]},100,'bar')}${d.expense>0?chart({id:'finance-report-expenses',title:'Where expenses went',unit:'GHS',rows:d.rows},101,modes['finance-report-expenses']):'<figure class="metrics-chart"><figcaption>Where expenses went</figcaption><p class="metrics-empty">No approved expenses in this month. There is no expense share to plot.</p></figure>'}</div><section class="metrics-insights" aria-label="Monthly finance insights"><h3>At a glance</h3><ul>${insights.map(s=>`<li>${esc(s)}</li>`).join('')}</ul></section><p class="metrics-period">Opening balance ${esc(value(d.opening,'GHS'))} + net movement ${esc(value(d.net,'GHS'))} = closing balance ${esc(value(d.closing,'GHS'))}.</p><p class="metrics-updated">Source: the approved monthly report, including all approved entries rather than only the visible transaction page. Pie percentages use approved expenses as the denominator.${d.expenses.length>6?' The five largest expense categories are shown separately; the rest are grouped. The full category table remains in the report above.':''} Use “Approved report CSV” above to download every approved transaction.</p></section>`;
+ }
  function create(ctx) {
   let identity='',epoch=0,days=30;
   const cache=new Map(),pending=new Map(),opened=new Set(),modes={};
   let editor=null,editorContext='',manualScope=null,manualOffset=0,manualRoot=null,manualRows=[],manualRequest=0,saving=false;
   const actor=()=>ctx.get();
-  const stamp=s=>[s.id,s.generation,s.allowed,s.admin,s.teacher,s.managesCourse].join(':');
+  const stamp=s=>[s.id,s.generation,s.allowed,s.admin,s.teacher,s.managesCourse,!!s.reportAllowed].join(':');
   const context=s=>[stamp(s),s.page,s.peer||'',s.channel||'',s.course||''].join(':');
   const current=()=>scopeFor(actor());
   const key=(s,scope)=>[stamp(s),scope.scope,scope.target||'',days].join(':');
   function closeEditor(){manualRequest++;if(editor){editor.close();editor.remove();editor=null;}editorContext='';manualScope=null;manualRows=[];saving=false;}
-  function reset(){epoch++;cache.clear();pending.clear();opened.clear();closeEditor();identity='';document.querySelectorAll('[data-metrics-body]').forEach(n=>{n.innerHTML='';});}
+  function reset(){epoch++;cache.clear();pending.clear();opened.clear();closeEditor();identity='';document.querySelectorAll('[data-metrics-body],[data-finance-report-metrics]').forEach(n=>{n.innerHTML='';});}
   function check(){const s=actor(),id=stamp(s);if(identity!==id){reset();identity=id;}if(editor&&(editorContext!==context(s)||!s.allowed))closeEditor();return s;}
   function controls(scope){return `<div class="metrics-toolbar">${scope.scope==='inventory'?'<span>Current stock records</span>':`<label>Period <select data-metrics-days aria-label="Metrics reporting period">${[7,30,90].map(n=>`<option value="${n}" ${days===n?'selected':''}>Last ${n} days</option>`).join('')}</select></label>`}<button type="button" class="text-button" data-metrics-action="refresh">Refresh</button><span data-metrics-status role="status"></span></div><div data-metrics-body></div>`;}
   function view() {
    const s=check(),scope=scopeFor(s);if(!scope||['dm','channel'].includes(scope.scope))return '';
    return `<details class="space-metrics" data-space-metrics ${opened.has(context(s))?'open':''}><summary>${icon}<span>Metrics &amp; progress</span><small>View charts</small></summary>${controls(scope)}</details>`;
   }
+  function financeReportView(){const s=check();return s.allowed&&s.reportAllowed&&s.page==='finance-reports'&&s.financeReport&&!s.financeReportError?financeReportMarkup(s.financeReport,s.financeMonth,modes):'';}
   function host(){return document.querySelector('[data-space-metrics][open]');}
   function paint(entry,loading=false) {
    const h=host();if(!h)return;const body=h.querySelector('[data-metrics-body]'),status=h.querySelector('[data-metrics-status]');if(!body)return;
@@ -170,7 +193,7 @@
   document.addEventListener('click',event=>{
    const b=event.target.closest?.('[data-metrics-action]');if(!b)return;
    const action=b.dataset.metricsAction;if(action==='refresh'){void load(true);return;}
-   if(action==='chart-mode'){if(!pieIds.has(b.dataset.chart)||!['pie','bar'].includes(b.dataset.view))return;modes[b.dataset.chart]=b.dataset.view;const scope=current();if(scope)paint(cache.get(key(actor(),scope)));return;}
+   if(action==='chart-mode'){if(!pieIds.has(b.dataset.chart)||!['pie','bar'].includes(b.dataset.view))return;modes[b.dataset.chart]=b.dataset.view;if(b.dataset.chart==='finance-report-expenses'){const panel=b.closest?.('[data-finance-report-metrics]');if(panel){panel.outerHTML=financeReportView();document.querySelector(`[data-finance-report-metrics] [data-view="${b.dataset.view}"]`)?.focus();}return;}const scope=current();if(scope)paint(cache.get(key(actor(),scope)));return;}
    if(action==='manual-open'){openEditor();return;}
    if(action.startsWith('manual-')){
     check();if(!editor||saving||!manualAllowed(actor(),manualScope))return;
@@ -185,7 +208,7 @@
    }
   });
   document.addEventListener('visibilitychange',()=>{if(!document.hidden&&host())void load();});
-  return {view,sync,reset,load};
+  return {view,financeReportView,sync,reset,load};
  }
- window.SpaceMetrics={create,scopeFor,report,chart,value,tone,insightRows,manualAllowed,manualEntryMarkup};
+ window.SpaceMetrics={create,scopeFor,report,chart,value,tone,insightRows,manualAllowed,manualEntryMarkup,financeReportData,financeReportMarkup};
 })();

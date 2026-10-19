@@ -1,5 +1,13 @@
 # SPACE metrics
 
+## Finance reports
+
+**Finance reports → Open month** now includes **Report metrics** beneath the selected monthly report. Administrators and assigned treasurers see the same approved-report totals they are already authorized to read. No new migration or extra metrics request is required. The existing approved monthly CSV remains the complete transaction export.
+
+The section compares approved income and expenses with bars, shows an expense-category pie with a **Pie / Bars** switch, and displays net movement, approved transaction count and expenses as a share of income. The pie denominator is **approved expenses only**; income and expenses are separate flows rather than slices of the same balance. With no income, the ratio is unavailable; with no expenses, no pie slices are invented. Ratios may exceed 100%. When there are more than six expense categories, the largest five appear separately and every remaining category is included in a labelled remainder. The full category table remains above.
+
+Charts use the complete `finance_month_report` aggregate, not the visible page of fifty transactions. Currency is retained to two decimal places. The selected month, category sums and opening + net = closing balance must reconcile before a chart is shown. Changing the report month changes its metrics. Insights describe net movement, the largest expense category (including ties), provisional review status or the recorded reconciliation difference; they do not infer causes or mix shop order values into the ledger. Report readers receive no additional recording, approval or month-close controls.
+
 ## Activate once
 
 In your existing Supabase project, open **SQL Editor → New query**. Copy and run the **entire** `supabase/upgrade_space_metrics.sql` file, including its `begin;` and `commit;` lines. Run it after the learning dashboards and officer/finance migrations. Order charts also require the shop migration. This is a read-only feature migration: it adds one aggregate function and two supporting indexes, without changing existing access policies or records. It is safe to rerun.
