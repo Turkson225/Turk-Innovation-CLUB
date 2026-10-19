@@ -2,7 +2,7 @@ name: SPACE metrics database checks
 on:
   push:
     branches: [main]
-    paths: ['supabase/upgrade_space_metrics.sql', 'scripts/check_metrics_database.mjs', 'scripts/load_test_fixture.mjs', '.github/workflows/metrics-check.yml']
+    paths: ['supabase/upgrade_space_metrics.sql', 'supabase/upgrade_manual_metrics.sql', 'scripts/check_metrics_database.mjs', 'scripts/load_test_fixture.mjs', '.github/workflows/metrics-check.yml']
   workflow_dispatch:
 permissions:
   contents: read

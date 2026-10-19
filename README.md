@@ -655,3 +655,6 @@ Checks: `node scripts/check_member_id.mjs`, `node scripts/check_lanyard_physics.
 
 Run the entire [upgrade_space_metrics.sql](supabase/upgrade_space_metrics.sql) file once in Supabase SQL Editor after the learning dashboards and officer/finance upgrades; order charts also require the shop migration. Reload SPACE and open **Metrics & progress** on the relevant page. DMs and team chat have a compact **Insights** bar-chart button. See [metric definitions, access rules and verification](docs/metrics.md). GitHub publication does not run the database migration. Until setup is complete, the panel explains that activation is pending.
 
+# Coloured charts, insights and manual metrics — 19 October 2026
+
+Metrics now include stable category colours, pie/bar views for composition, and factual **At a glance** insights. For manual observations and optional targets, run [upgrade_manual_metrics.sql](supabase/upgrade_manual_metrics.sql) after the original metrics migration. Administrators use **Open manual records** in their metrics panels; teachers record observations in their own workshop classrooms. Required source/date fields and append-only corrections preserve provenance. Manual values never alter automatic totals or the ledger. See [definitions and manual-entry guidance](docs/metrics.md).
