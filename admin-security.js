@@ -73,7 +73,7 @@ export function createAdminSecurity({db, current, changed, verified, signOut}) {
       const button=event.target.closest('[data-security-action]');if(!button||!blocked)return;
       const action=button.dataset.securityAction;
       if(action==='enrol')void enrol();
-      if(action==='retry'&&!busy)void check({id:owner,role:'admin',membership_status:'approved'});
+      if(action==='retry'&&!busy)void check({id:owner,role:'admin',membership_status:'approved'},{force:true});
       if(action==='signout'){reset();void signOut?.();}
     });
     root.addEventListener('submit',event=>{

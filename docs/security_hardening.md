@@ -58,6 +58,11 @@ X-Frame-Options, nosniff, referrer and permissions headers. Deploy from `hosting
 the dedicated origin; no purchased domain is required. Add its exact app and password
 recovery URLs to Supabase Auth redirect allowlists, update OAuth/calendar authorized
 origins if used, and test recovery, verification, PWA push, maps and document previews.
+The approval email worker separately hard-codes SITE_URL in
+`supabase/functions/send-approval-emails/index.ts`; update that value to the exact
+new origin and redeploy the function before promoting the new address. Auth URL
+settings do not rewrite those email links. Update public canonical/sitemap URLs
+when the new address becomes primary.
 Set the primary site URL only after those tests pass. Browser storage and installed
 push subscriptions do not transfer between origins: members sign in and enable alerts
 on the new origin. Keep the old site available during the transition.

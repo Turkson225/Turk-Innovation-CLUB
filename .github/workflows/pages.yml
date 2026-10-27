@@ -84,4 +84,5 @@ jobs:
         with:
           path: _site
       - id: deployment
-        if: github.event_name != 'pull_request'        uses: actions/deploy-pages@v4
+        if: github.event_name != 'pull_request'
+        uses: actions/deploy-pages@v4
