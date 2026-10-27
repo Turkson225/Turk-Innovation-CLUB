@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ljs7+Gi5ZKe8DtLqPX9XY9jMSFvroD3ReR2TyJ+eOME=' 'sha256-1+M4XtRAJinz7e7OzMqBRJkCk/z97qHtyTuDGEr4Q54=' https://accounts.google.com; script-src-attr 'none'; style-src 'self' 'unsafe-inline' https://accounts.google.com; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://www.googleapis.com https://accounts.google.com https://tile.openstreetmap.org https://gibs.earthdata.nasa.gov; frame-src 'self' blob: https://drive.google.com https://docs.google.com https://www.youtube.com https://www.youtube-nocookie.com https://accounts.google.com; worker-src 'self' blob:; media-src 'self' blob: https://*.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests">
+  <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content">
   <meta name="theme-color" content="#111827">
   <meta name="apple-mobile-web-app-title" content="SPACE">
@@ -23,6 +25,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg?v=space-logo-20261001">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?v=space-logo-20261001">
+  <link rel="stylesheet" href="admin-security.css?v=security-20261027">
   <link rel="stylesheet" href="styles.css?v=space-orderdesk-dm-read-20261016">
   <link rel="stylesheet" href="member-wall.css?v=space-member-wall-mobile-20261017">
   <link rel="stylesheet" href="club-guidance.css?v=space-learning-guidance-20261017">
@@ -34,7 +37,7 @@
   <link rel="stylesheet" href="member-id.css?v=space-member-id-20261017">
   <link rel="stylesheet" href="card-swap.css?v=space-card-swap-20261017">
   <link rel="stylesheet" href="space-analytics.css?v=space-period-analytics-20261019">
-  <link rel="stylesheet" href="space-metrics.css?v=space-finance-report-metrics-20261019">
+  <link rel="stylesheet" href="space-metrics.css?v=space-security-20261027">
   <link rel="stylesheet" href="space-map-avatars.css?v=space-globe-20261018">
   <link rel="stylesheet" href="space-bento.css?v=space-bento-20261017">
 </head>
@@ -48,6 +51,8 @@
       <div class="sidebar-workspace" id="workspaceLabel">Your workspace</div>
       <nav id="nav" aria-label="Main navigation">
         <div class="nav-primary">
+            <a href="#courses" data-page="courses" data-private hidden><span>▤</span> My learning</a>
+          <a id="myProfileLink" href="#members" data-page="members" data-private hidden><span>◎</span> My profile</a>
           <a href="#home" data-page="home"><span>◫</span> Home</a>
           <a href="#application" data-page="application" data-pending hidden><span>✧</span> My application</a>
           <a href="#getting-started" data-page="getting-started" hidden><span>✓</span> Getting started</a>
@@ -62,10 +67,7 @@
         <details class="nav-section" data-nav-group="learning" hidden>
           <summary><span>Learning &amp; projects</span></summary>
           <div class="nav-section-links">
-            <a href="#courses" data-page="courses" data-private hidden><span>▤</span> My learning</a>
             <a href="#teaching" data-page="teaching" data-teacher hidden><span>▤</span> Teaching studio</a>
-            <a href="#classroom" data-page="classroom" data-private hidden><span>▧</span> Classrooms</a>
-            <a href="#project-board" data-page="project-board" data-private hidden><span>▥</span> Project workspace</a>
             <a href="#projects" data-page="projects" data-private hidden><span>▥</span> Projects</a>
             <a href="#library" data-page="library" data-private hidden><span>▤</span> Shared files</a>
           </div>
@@ -222,8 +224,8 @@
   <script src="shared-chat-glow.js?v=space-shared-glow-20261017" defer></script>
   <script src="chat-waves.js?v=space-shared-glow-20261017" defer></script>
   <script src="space-analytics.js?v=space-period-analytics-20261019" defer></script>
-  <script src="space-metrics.js?v=space-finance-report-metrics-20261019" defer></script>
-  <script type="module" src="app.js?v=space-finance-report-metrics-20261019"></script>
+  <script src="space-metrics.js?v=space-security-20261027" defer></script>
+  <script type="module" src="app.js?v=space-security-20261027"></script>
 </body>
 </html>
 

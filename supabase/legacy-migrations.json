@@ -1,0 +1,185 @@
+{
+  "baseline_version": "20261027000000",
+  "files": [
+    {
+      "path": "schema.sql",
+      "sha256": "1653c58bc2c9186dd7f6c90cf4806a27070edd5c614fd292b1f196591b5e5ab8"
+    },
+    {
+      "path": "upgrade_community.sql",
+      "sha256": "958385a4ad7ef187a2659015360bade7082c17a71a59fc66a71aad86a86ccfd5"
+    },
+    {
+      "path": "upgrade_membership_collaboration.sql",
+      "sha256": "95d552d25c6ecc731c3f575575533bc9a6959ea099ccb28b53517b6b26623e5c"
+    },
+    {
+      "path": "upgrade_activity_feed.sql",
+      "sha256": "9fb94267d559d33cd9f77a98fe4d6191ca03aed2dea865706980199f321c9f86"
+    },
+    {
+      "path": "upgrade_direct_messages.sql",
+      "sha256": "c89768834b3c1776b9a95054d46e88c2cc9a89b156ae994fb9996ca6930c2761"
+    },
+    {
+      "path": "upgrade_media_threads.sql",
+      "sha256": "f6c99c69ac43930ce2047eb2339c2304ffaa932de1cbe8ce5fbfab99c0fc5d2c"
+    },
+    {
+      "path": "upgrade_profile_images.sql",
+      "sha256": "44ead31ca4840df70f474143fa7132dc73a6827e2b789d0b1e14e3f88c5817ce"
+    },
+    {
+      "path": "upgrade_roles_investors.sql",
+      "sha256": "943dea0ff528cdebfea633e9cd40fb8bea689291e054ee56480ed4a01e78cd5e"
+    },
+    {
+      "path": "upgrade_teacher_materials.sql",
+      "sha256": "b0b996884800a9dfd5b0d77ef04d8865a2bffe0faa8dd1f5da22d8bbb2c4d4d6"
+    },
+    {
+      "path": "fix_thread_reply_policies.sql",
+      "sha256": "2ccc093de47bb4f7c4f08c8dc7a76f2f68552e3fa17113c31cd6fec2697888d7"
+    },
+    {
+      "path": "fix_reply_policy_recursion.sql",
+      "sha256": "8e90cb178412240a33728b09e57cf81b289e73bc53455d8c22ead98e19b3f94f"
+    },
+    {
+      "path": "upgrade_course_journey.sql",
+      "sha256": "5b1e356fc6a8c6bfbf87339f22f74f0dd29d621fd9a6ea7298aa0596d535b23a"
+    },
+    {
+      "path": "upgrade_privacy_requests.sql",
+      "sha256": "05da60407c1a05e001c23f6855f67c200bb1a8c7d2d2b6d030c2a72f24401b49"
+    },
+    {
+      "path": "upgrade_founder_portraits.sql",
+      "sha256": "ec75a81aff1479f8dfd3463e73806dde62c3f9390c71eec23db8e8875d38df82"
+    },
+    {
+      "path": "upgrade_inventory_finance.sql",
+      "sha256": "bd01d054c7e25ade8c2e785ea7f3132bfaa026460797ff34446c89d70e7cccd4"
+    },
+    {
+      "path": "upgrade_inventory_finance_approvals.sql",
+      "sha256": "6d2290b07bae0b5f6142dbbce07d5403901d58870d9c17ee893d81af494eedf9"
+    },
+    {
+      "path": "upgrade_admin_application_alerts.sql",
+      "sha256": "11a8a780837370dc5c889c588e0bcabfbe56a499ed24d4bf309d7d87d9e7236d"
+    },
+    {
+      "path": "upgrade_admin_alert_inventory_edits.sql",
+      "sha256": "afb87a26ecb2a03e173cdc79a53602ff5d66635dacd238af2c155d2a486d1ffa"
+    },
+    {
+      "path": "upgrade_inventory_unit_changes.sql",
+      "sha256": "c77a07570607e25b510a593490d6f959ab6cc41485cf4418d2154365bb700db8"
+    },
+    {
+      "path": "upgrade_approval_emails.sql",
+      "sha256": "37855263823d5f8525fa66a38bc944cce04c962a5905b1ec9408359b3cc43c95"
+    },
+    {
+      "path": "upgrade_teacher_promotions.sql",
+      "sha256": "ef552935fb5c3d98b9a51006067cda321389b0d4c01fbfbb4072d2c249ba16ae"
+    },
+    {
+      "path": "upgrade_founder_teaching_roles.sql",
+      "sha256": "0692f7910a7a8ab9907667043b4bf859dc6668c66e382f88e9fe487cbe77d36a"
+    },
+    {
+      "path": "upgrade_course_planning.sql",
+      "sha256": "13aecdadc755ca65bac86d23f4694ccd2cb23c9967ed14f4a0e98d8da61ee187"
+    },
+    {
+      "path": "upgrade_private_applications.sql",
+      "sha256": "33c77c9e1c429cea52e0261ec1bf88b2256db48a7d92f464675086a87a925d7a"
+    },
+    {
+      "path": "upgrade_course_classroom_access.sql",
+      "sha256": "84086f4d4e6c68efc4058e44f1336ee490ac598bd321012c2dd21ba62263cacc"
+    },
+    {
+      "path": "upgrade_course_lifecycle_reviews.sql",
+      "sha256": "8c1815c33584f130fc7b37615699a486464cd63ae19c86633cc8202900729bbd"
+    },
+    {
+      "path": "upgrade_message_counts.sql",
+      "sha256": "79ab9813a7be1885a233e35febbede5122ce46aab01c41ae2697246d67ada4d1"
+    },
+    {
+      "path": "upgrade_dm_conversations.sql",
+      "sha256": "42bb1c7a10835cacf0ae407569bc9a4a4edfb4fbab3794087139ad6597907101"
+    },
+    {
+      "path": "upgrade_web_push.sql",
+      "sha256": "a47aa4cff9e72303577afcf7007ce1dbf6f2bdf4e4c5a5961aca77ab6df2d789"
+    },
+    {
+      "path": "upgrade_learning_dashboards.sql",
+      "sha256": "3f07d24ddb5a709f4cbd2b3f425b798740a664c88936837b2b4765a698260328"
+    },
+    {
+      "path": "upgrade_officer_workspaces_finance.sql",
+      "sha256": "7153ed63ee7f6fcad071dbefa9781ab8b800a801963fa09b10f6cab811c1ccc1"
+    },
+    {
+      "path": "upgrade_advanced_platform.sql",
+      "sha256": "97bb62ef35c962811724f0950d259a859a7706bf495d60d313dceeeaee342d5c"
+    },
+    {
+      "path": "upgrade_directory_learning_performance.sql",
+      "sha256": "4bb417c0e29217caa0509d5a0214a0b7a6f14691d1e6fa119c5642d79a24e73e"
+    },
+    {
+      "path": "upgrade_club_shop.sql",
+      "sha256": "9a36cadf17d11de9b609d0c31a6d4fce1cda8d6368d0dc858682005ac773fa2b"
+    },
+    {
+      "path": "upgrade_role_acknowledgements.sql",
+      "sha256": "f6f1290532102d99e7f83e48d90138b08d7824caf9a9935b56d15163fc601a6b"
+    },
+    {
+      "path": "upgrade_shop_product_alerts.sql",
+      "sha256": "b7775c0be75159a8393670d50f5042b7a04722380fef37f576f6c3fab39462ed"
+    },
+    {
+      "path": "upgrade_shop_order_tracking.sql",
+      "sha256": "7d5fca6521fe0d5cad91977b96d81d249599b450c8b836a170d0f271897a5352"
+    },
+    {
+      "path": "upgrade_automatic_course_certificates.sql",
+      "sha256": "89980d516912864e242ce423371b3ed5c72d9971070c910e4a9fba7346d6a370"
+    },
+    {
+      "path": "upgrade_order_desk_dm_reads.sql",
+      "sha256": "015b5f9f70d1a7f06c3ee9e1cf01e22bebd8caa905fbd51f6ddeaa823ea045f0"
+    },
+    {
+      "path": "upgrade_shared_chat_glow.sql",
+      "sha256": "419c71a91b3eeb60c7a0f9687da9f1a994af9365fc6d8aeb13a3f755f572cb14"
+    },
+    {
+      "path": "upgrade_space_map_avatars.sql",
+      "sha256": "145b484911609ee8b1ff6affeb4cb63840350a0100019cb35a828bf3c387a369"
+    },
+    {
+      "path": "upgrade_space_metrics.sql",
+      "sha256": "63770f5856bf5f418e9e575a976f1b5072c75599c6c3d80ac5b6d03194693247"
+    },
+    {
+      "path": "upgrade_manual_metrics.sql",
+      "sha256": "5f7ed37840cfc287d874c000bd15e5e82b78b42938a54b77487c5928b05f09cb"
+    },
+    {
+      "path": "upgrade_analytics_periods.sql",
+      "sha256": "c543bb68239570202f91197b7cac456e48785885cbe974d0c08fc2a8a52548e2"
+    },
+    {
+      "path": "upgrade_guidance_system_health.sql",
+      "sha256": "eb9fc8181dad30f1356d1229c7fd0002fbdad9dcd2dee20b9535b93ade9c9c1a"
+    }
+  ]
+}

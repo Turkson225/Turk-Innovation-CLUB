@@ -1,0 +1,8 @@
+{
+  "package": "@supabase/supabase-js",
+  "version": "2.118.0",
+  "build": "npm ci && npm run vendor",
+  "sha256": "93c2cfcf3421e6223704171638407a856cb9d1b3820dcd161377aabd3c730911",
+  "license": "MIT",
+  "source": "https://github.com/supabase/supabase-js"
+}

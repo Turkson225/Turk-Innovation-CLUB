@@ -1,3 +1,5 @@
+> **27 October security update:** [Activation, authenticator recovery, migration ordering and dedicated hosting](docs/security_hardening.md). Existing projects run only the new security migration, never the fresh-database baseline.
+
 # SPACE platform
 
 **Platform name:** SPACE  

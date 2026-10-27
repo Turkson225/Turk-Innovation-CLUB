@@ -22,7 +22,8 @@ function harness({localItems=new Map(),sessionItems=new Map(),location:initialLo
   const storage=items=>({getItem(key){return items.get(key)??null;},setItem(key,value){items.set(key,value);},removeItem(key){items.delete(key);}});
   let clientOptions;
   const context=vm.createContext({console,URL,crypto:globalThis.crypto,Blob,Date,Map,Set,Promise,setTimeout(callback,delay=0){const id=++timerId;timers.set(id,{callback,delay});return id;},clearTimeout(id){timers.delete(id);},setInterval(){return 1;},clearInterval(){},sessionStorage:storage(sessionItems),localStorage:storage(localItems),createClient(_url,_key,options){clientOptions=options;return db;},window:{INNOVATEX_CONFIG:{supabaseUrl:'https://qa.supabase.co',supabaseAnonKey:'fake'},addEventListener(){}},navigator:{},location:initialLocation,history:{replaceState(){}},document:{hidden:false,activeElement:null,querySelector(selector){return elements.get(selector)??null;},querySelectorAll(){return [];},getElementById(id){return elements.get('#'+id)??null;},addEventListener(){},documentElement:{dataset:{theme:'light'}}}});
-  const source=fs.readFileSync(root+'/app.js','utf8').replace(/^import .*\n/,'').replace(/\ninit\(\);\s*$/,'');
+  const modules=['workspace-navigation.js','admin-security.js','auth-session.js'].map(name=>fs.readFileSync(root+'/'+name,'utf8').replace(/export /g,'')).join('\n');
+  const source=modules+'\n'+fs.readFileSync(root+'/app.js','utf8').replace(/^import .*\n/gm,'').replace(/\ninit\(\);\s*$/,'');
   vm.runInContext(source,context,{filename:'app.js'});
   const run=code=>vm.runInContext(code,context);
   const exec=(code,args)=>{context.qaArgs=args;return run(code);};
@@ -50,6 +51,7 @@ function loginHarness({reducedMotion=false,play=()=>Promise.resolve(),realLearni
   h.context.history.replaceState=(_state,_title,hash)=>{h.context.location.hash=hash;};
   h.context.FormData=function(form){return form.entries;};
   h.db.channel=()=>({on(){return this;},subscribe(){return this;}});h.db.removeChannel=async()=>{};h.db.auth={signOut:async()=>({error:null}),startAutoRefresh:async()=>{},stopAutoRefresh:async()=>{}};
+  h.db.auth.mfa={getAuthenticatorAssuranceLevel:async()=>({data:{currentLevel:'aal2'},error:null})}; // This harness tests an already verified administrator; AAL1 is covered in security checks.
   h.run("session=null;me=null;page='home';location.hash='#home';hydrateOwnApplicationReason=async()=>{};refresh=async()=>{};touchPresence=async()=>{};loadPublic=async()=>{};");
   if(!realLearningPath)h.run('loadOwnLearningPath=async()=>{}');
   return {...h,dialog,video,still,stats};
@@ -411,7 +413,7 @@ for(const role of ['guest','pending','member','teacher','founder','investor','ad
   const h=navigationHarness();
   if(role==='guest')h.run('session=null;me=null;');else if(role==='pending')h.run("me.membership_status='pending'");else h.exec('me.role=qaArgs;',role);
   h.run('updateWorkspaceNavigation()');
-  const expected=Array.from(h.run("workspaceSearchItems().filter(r=>r.key.startsWith('page:')).map(r=>r.page)")).sort();
+  const expected=Array.from(h.run("workspaceSearchItems().filter(r=>r.key.startsWith('page:')&&!['classroom','project-board'].includes(r.page)).map(r=>r.page)")).sort();
   const actual=[...h.links].filter(([_,link])=>!link.hidden).map(([id])=>id).sort();
   assert.deepEqual(actual,expected);
   assert.equal(h.links.get('finance').hidden,role!=='admin');
@@ -656,6 +658,7 @@ function sessionHarness(options={}){
   const h=loginHarness(options),stats={stopped:0,started:0,signouts:[],prompts:0,renders:0};let now=1000000;
   h.context.Date=class extends Date{static now(){return now;}};
   h.db.auth={startAutoRefresh:async()=>{stats.started++;},stopAutoRefresh:async()=>{stats.stopped++;},signOut:async options=>{stats.signouts.push(options);return {error:null};}};
+  h.db.auth.mfa={getAuthenticatorAssuranceLevel:async()=>({data:{currentLevel:'aal2'},error:null})}; // This harness tests an already verified administrator; AAL1 is covered in security checks.
   h.context.qaPrompt=()=>{stats.prompts++;};h.context.qaRender=()=>{stats.renders++;};h.run('signInDialog=qaPrompt;render=qaRender');
   const login=async(id='self',interactive=true,profile={})=>{h.queued.push({data:loginProfile(id,profile),error:null});await h.exec('signedIn(qaArgs.session,qaArgs.interactive)',{session:loginSession(id),interactive});};
   return {...h,stats,setNow:value=>{now=value;},getNow:()=>now,login};
@@ -1086,9 +1089,11 @@ test('The Accounts menu escapes identity text and opens a clean, independent tab
 });
 test('Switching this tab preserves the main login and cancels late work before navigation',()=>{
  let target='';const localItems=new Map([['sb-qa-auth-token','main-token']]),h=harness({localItems,location:{...separateLocation(),search:'',assign:url=>{target=url;}}});let stopped=0,signouts=0;h.db.auth={stopAutoRefresh:async()=>{stopped++;},signOut:async()=>{signouts++;}};h.run('changeAccountTab(true)');assert.equal(localItems.get('sb-qa-auth-token'),'main-token');assert.equal(target,'https://turkson225.github.io/Turk-Innovation-CLUB/?account=separate#home');assert.equal(stopped,1);assert.equal(signouts,0);assert.equal(h.run('sessionEnding'),true);assert.equal(h.sessionItems.get('sb-qa-auth-token-space-separate-mode'),'1');
+  h.db.auth.mfa={getAuthenticatorAssuranceLevel:async()=>({data:{currentLevel:'aal2'},error:null})}; // This harness tests an already verified administrator; AAL1 is covered in security checks.
 });
 test('Returning to the main account removes only this tab’s preview credentials',()=>{
  let target='';const localItems=new Map([['sb-qa-auth-token','main-token']]),h=harness({localItems,location:{...separateLocation(),assign:url=>{target=url;}}});h.db.auth={stopAutoRefresh:async()=>{}};h.clientOptions.auth.storage.setItem(h.clientOptions.auth.storageKey,'teacher');h.run('changeAccountTab(false)');h.clientOptions.auth.storage.setItem(h.clientOptions.auth.storageKey,'late-teacher-response');assert.equal(target,'https://turkson225.github.io/Turk-Innovation-CLUB/#home');assert.equal(h.sessionItems.has('sb-qa-auth-token-space-separate-mode'),false);assert.equal(h.sessionItems.has('sb-qa-auth-token-space-tab-session'),false);assert.equal(localItems.get('sb-qa-auth-token'),'main-token');
+  h.db.auth.mfa={getAuthenticatorAssuranceLevel:async()=>({data:{currentLevel:'aal2'},error:null})}; // This harness tests an already verified administrator; AAL1 is covered in security checks.
 });
 test('An email confirmation callback preserves an existing main account',()=>{
  const localItems=new Map([['sb-qa-auth-token','main-token']]),h=harness({localItems,location:{hash:'#access_token=new-user&refresh_token=new-refresh&type=signup'}});assert.equal(h.run('separateAccountTab'),true);assert.equal(h.clientOptions.auth.storage.getItem(h.clientOptions.auth.storageKey),null);assert.equal(localItems.get('sb-qa-auth-token'),'main-token');assert.equal(h.sessionItems.get('sb-qa-auth-token-space-separate-mode'),'1');

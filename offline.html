@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ljs7+Gi5ZKe8DtLqPX9XY9jMSFvroD3ReR2TyJ+eOME=' 'sha256-1+M4XtRAJinz7e7OzMqBRJkCk/z97qHtyTuDGEr4Q54=' https://accounts.google.com; script-src-attr 'none'; style-src 'self' 'unsafe-inline' https://accounts.google.com; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://www.googleapis.com https://accounts.google.com https://tile.openstreetmap.org https://gibs.earthdata.nasa.gov; frame-src 'self' blob: https://drive.google.com https://docs.google.com https://www.youtube.com https://www.youtube-nocookie.com https://accounts.google.com; worker-src 'self' blob:; media-src 'self' blob: https://*.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests">
+  <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#111827">
   <title>Reconnect to SPACE</title>
@@ -31,10 +33,11 @@
     <p class="eyebrow">Connection needed</p>
     <h1>Let’s reconnect to SPACE.</h1>
     <p>Member messages, courses, files and approvals need an internet connection. Once you’re online, retry to pick up where you left off.</p>
-    <div class="actions"><button type="button" onclick="location.reload()">Try again</button><a id="aboutLink" href="./about/">Read about the club</a><a id="foundersLink" href="./founders/">Founders</a></div>
+    <div class="actions"><button type="button" id="retryButton">Try again</button><a id="aboutLink" href="./about/">Read about the club</a><a id="foundersLink" href="./founders/">Founders</a></div>
     <p class="note">The public About and Founders pages may be available offline. Their live details need a connection.</p>
   </main>
   <script>
+    document.querySelector('#retryButton').addEventListener('click',()=>location.reload());
     const worker = navigator.serviceWorker && navigator.serviceWorker.controller;
     if (worker) {
       const base = new URL('./', worker.scriptURL);
