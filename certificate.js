@@ -1,4 +1,4 @@
-import {createClient} from 'https://esm.sh/@supabase/supabase-js@2';
+import {createClient} from './vendor/supabase.js';
 const config=window.INNOVATEX_CONFIG||{},form=document.querySelector('#certificateCheckForm'),input=document.querySelector('#certificateCode'),button=document.querySelector('#certificateCheckButton'),result=document.querySelector('#certificateCheckResult');
 const configured=/^https:\/\/.+\.supabase\.co\/?$/.test(config.supabaseUrl||'')&&!!config.supabaseAnonKey,db=configured?createClient(config.supabaseUrl,config.supabaseAnonKey,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}}):null;
 let request=0;

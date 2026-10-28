@@ -1,0 +1,19 @@
+{
+  "name": "space-club-platform",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "vendor": "node scripts/build_vendor.mjs",
+    "check:security": "node scripts/check_security_ui.mjs && node scripts/check_security_database.mjs",
+    "check:migrations": "node scripts/database_migrations.mjs --check"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.118.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
+    "@fontsource-variable/dm-sans": "5.3.0",
+    "@fontsource-variable/space-grotesk": "5.3.0",
+    "esbuild": "0.28.2"
+  }
+}

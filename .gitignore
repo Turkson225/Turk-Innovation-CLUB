@@ -1,7 +1,14 @@
-# Supabase CLI state and credentials must stay out of the public repository.
+node_modules/
+_site/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+artifacts/
+
+# Supabase CLI state and credentials
 supabase/.branches/
 supabase/.temp/
 supabase/functions/.env
 supabase/functions/.env.*
-.env
-.env.*

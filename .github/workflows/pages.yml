@@ -3,6 +3,7 @@ name: Deploy SPACE site
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -11,23 +12,24 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  check:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - run: npm ci
+      - name: Security and migration checks
+        run: |
+          npm run check:migrations
+          npm run check:security
       - name: Check application and public verification
         run: |
           node --check member-id.js
@@ -71,9 +73,23 @@ jobs:
         run: |
           mkdir -p _site
           cp index.html reset-password.html reset-password.js club-certificates.js club-certificates.css certificate.html certificate.js styles.css public-pages.css club-commerce.css club-commerce.js app.js config.js sitemap.xml .nojekyll manifest.webmanifest sw.js offline.html pwa-register.js chat-waves.js chat-waves.css shared-chat-glow.js shared-chat-glow.css space-avatars.js space-globe.js space-map.js space-map-avatars.css mobile-workspace.js mobile-workspace.css club-guidance.js club-guidance.css member-wall.js member-wall.css space-bento.js space-bento.css card-swap.js card-swap.css member-id.js member-id.css member-id-lanyard.js space-metrics.js space-metrics.css space-analytics.js space-analytics.css _site/
+          cp admin-security.js admin-security.css auth-session.js workspace-navigation.js reset-password.css _site/
           cp -R assets about founders icons vendor _site/
       - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
         with:
           path: _site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: check
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - id: deployment
         uses: actions/deploy-pages@v4

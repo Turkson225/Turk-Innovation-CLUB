@@ -1,4 +1,7 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from './vendor/supabase.js';
+import {pages,workspacePageInfo,canOpenWorkspacePage} from './workspace-navigation.js';
+import {createAdminSecurity} from './admin-security.js';
+import {createAuthPersistence} from './auth-session.js';
 
 const cfg = window.INNOVATEX_CONFIG || {};
 const configured = /^https:\/\/.+\.supabase\.co\/?$/.test(cfg.supabaseUrl || '') && !!cfg.supabaseAnonKey;
@@ -8,51 +11,11 @@ const startupRecovery=/[&#]type=recovery(?:&|$)/.test(startupAuthHash);
 const startupAuthCallback=startupRecovery||/[&#](?:access_token|error|error_description)=/.test(startupAuthHash)||/[?&]code=/.test(location.search||'');
 let recoveryRedirecting=startupRecovery;
 const DRAFT_MAX_AGE_MS=8*60*60*1000;
-const authMemory=new Map(),authPersistentMemory=new Map();
-// The main account is remembered. Separate account tabs never share its tokens.
-const authTabStorage={
-  getItem(key){try{return sessionStorage.getItem(key);}catch{return authMemory.get(key)??null;}},
-  setItem(key,value){authMemory.set(key,value);try{sessionStorage.setItem(key,value);}catch{}},
-  removeItem(key){authMemory.delete(key);try{sessionStorage.removeItem(key);}catch{}}
-};
-const authBrowserStorage={
-  getItem(key){try{return localStorage.getItem(key);}catch{return authPersistentMemory.get(key)??null;}},
-  setItem(key,value){authPersistentMemory.set(key,value);try{localStorage.setItem(key,value);}catch{}},
-  removeItem(key){authPersistentMemory.delete(key);try{localStorage.removeItem(key);}catch{}}
-};
-const authBaseStorageKey=configured?`sb-${new URL(cfg.supabaseUrl).hostname.split('.')[0]}-auth-token`:'';
-const separateAccountMarker=authBaseStorageKey+'-space-separate-mode';
-// Opening a confirmation link must not replace another remembered account.
-const separateAccountTab=/[?&]account=separate(?:&|$)/.test(location.search||'')||authTabStorage.getItem(separateAccountMarker)==='1'||!!(startupAuthCallback&&!startupRecovery&&authBrowserStorage.getItem(authBaseStorageKey));
-if(separateAccountTab)authTabStorage.setItem(separateAccountMarker,'1');
-const separateSessionKey=authBaseStorageKey+'-space-tab-session';
-// Supabase also broadcasts by storageKey. A fresh channel per document prevents
-// copied/duplicated tabs from changing one another's active account.
-const authStorageKey=separateAccountTab?authBaseStorageKey+'-tab-'+crypto.randomUUID():authBaseStorageKey;
 let accountNavigationPending=false;
-const authPersistentStorage=separateAccountTab?{
-  getItem(key){return accountNavigationPending?null:authTabStorage.getItem(key.startsWith(authStorageKey)?separateSessionKey+key.slice(authStorageKey.length):key);},
-  setItem(key,value){if(!accountNavigationPending)authTabStorage.setItem(key.startsWith(authStorageKey)?separateSessionKey+key.slice(authStorageKey.length):key,value);},
-  removeItem(key){authTabStorage.removeItem(key.startsWith(authStorageKey)?separateSessionKey+key.slice(authStorageKey.length):key);}
-}:authBrowserStorage;
-const SIGNED_OUT_KEY=authStorageKey?authStorageKey+'-space-signed-out':'';
-function clearSavedAuthTokens(){
-  if(!authStorageKey)return;
-  for(const suffix of ['', '-code-verifier', '-user']){authPersistentStorage.removeItem(authStorageKey+suffix);authTabStorage.removeItem(authStorageKey+suffix);}
-}
-function migrateSavedAuth(){
-  if(!authStorageKey)return;
-  if(authPersistentStorage.getItem(SIGNED_OUT_KEY))clearSavedAuthTokens();
-  else if(!separateAccountTab)for(const suffix of ['', '-code-verifier', '-user']){
-    const key=authStorageKey+suffix,tab=authTabStorage.getItem(key);
-    if(!authPersistentStorage.getItem(key)&&tab)authPersistentStorage.setItem(key,tab);
-    authTabStorage.removeItem(key);
-  }
-  authTabStorage.removeItem('space.auth.tab-clock.v1');
-}
-migrateSavedAuth();
+const {authTabStorage,authBrowserStorage,authBaseStorageKey,separateAccountMarker,separateAccountTab,separateSessionKey,authStorageKey,authPersistentStorage,SIGNED_OUT_KEY,clearSavedAuthTokens,migrateSavedAuth,clearTabEntries}=createAuthPersistence({cfg,configured,startupAuthCallback,startupRecovery,navigationPending:()=>accountNavigationPending});
 const db = configured && !startupRecovery ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storageKey:authStorageKey, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
 let commerce=null,certification=null,mobileWorkspace=null,guidance=null,memberWall=null,bento=null,cardSwap=null,memberId=null,sharedGlow=null,avatarStudio=null,spaceMap=null,metrics=null,analytics=null;
+let adminSecurity=null;
 let sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -165,57 +128,15 @@ let pendingAuthMode = sessionStorage.getItem('innovatex.pendingAuthMode') === 's
 let pendingProtectedPage = '';
 let founderPortraitReady = false;
 let toastTimer;
-const pages = ['space-map','avatar-studio','getting-started','system-health','shop','cart','orders','order-desk','shop-admin','role-updates','classroom','meeting-room','project-board','home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','finance-reports','officers','office','discussions','courses','teaching','events','calendar','announcements','founder-room'];
-const workspacePageInfo={
-  'space-map':{title:'SPACE Map',section:'Community',aliases:'Location people places meetups sharing ghost mode'},
-  'avatar-studio':{title:'Avatar studio',section:'Your workspace',aliases:'Character clothing outfit style wardrobe'},
-  'getting-started':{title:'Getting started',section:'Your workspace',aliases:'Welcome checklist onboarding teacher setup'},
-  'system-health':{title:'System health',section:'Administration',aliases:'Email delivery push notifications upload failures diagnostics'},
-  shop:{title:'Store / View products',section:'Club shop',aliases:'Buy merchandise T-shirts electronics kits'},
-  cart:{title:'Basket',section:'Club shop'},
-  orders:{title:'My orders',section:'Club shop',aliases:'Collection purchases order tracking'},
-  'order-desk':{title:'Orders & fulfilment',section:'Administration',aliases:'Incoming purchases process orders ready delivered receipts'},
-  'shop-admin':{title:'Manage shop',section:'Administration',aliases:'Products sale stock prices orders'},
-  'role-updates':{title:'Role updates',section:'Your workspace',aliases:'Assignment notes acknowledge responsibilities'},
-  classroom:{title:'Classrooms',section:'Learning & projects',aliases:'Lessons attendance gradebook certificates'},
-  'meeting-room':{title:'Meetings & actions',section:'Club activities',aliases:'Secretary minutes agenda attendance'},
-  'project-board':{title:'Project workspace',section:'Learning & projects',aliases:'Kanban board progress evidence'},
-  home:{title:'Home',section:'Your workspace'},
-  about:{title:'About the club',section:'About SPACE'},
-  founders:{title:'Club leadership',section:'About SPACE',aliases:'Founders founding team'},
-  investors:{title:'Investors & partners',section:'Leadership & partners'},
-  'investor-portal':{title:'Investor portal',section:'Leadership & partners'},
-  admin:{title:'Admin overview',section:'Administration',aliases:'Admin dashboard club oversight'},
-  privacy:{title:'Privacy & conduct',section:'About SPACE'},
-  application:{title:'My application',section:'Your workspace'},
-  applications:{title:'Membership approvals',section:'Administration',aliases:'Applications new accounts'},
-  moderation:{title:'Moderation',section:'Administration'},
-  notifications:{title:'Notifications',section:'Your workspace',aliases:'Inbox alerts mentions replies'},
-  members:{title:'Members',section:'Community',aliases:'Profiles people'},
-  messages:{title:'Direct messages',section:'Your workspace',aliases:'Messages DM private chat'},
-  feed:{title:'Member feed',section:'Community',aliases:'Activity feed posts'},
-  channels:{title:'Team chat',section:'Community',aliases:'Channels group chat'},
-  library:{title:'Shared files',section:'Learning & projects',aliases:'Document library resources'},
-  news:{title:'Technology news',section:'Community'},
-  projects:{title:'Projects',section:'Learning & projects'},
-  inventory:{title:'Inventory',section:'Club activities'},
-  finance:{title:'Finance',section:'Administration'},
-  officers:{title:'Roles & offices',section:'Administration',aliases:'Assign officers secretary treasurer leadership'},
-  office:{title:'My office',section:'Your workspace',aliases:'Officer duties tasks minutes secretary treasurer'},
-  'finance-reports':{title:'Finance reports',section:'Club activities',aliases:'Treasurer monthly reports'},
-  'finance-review':{title:'Finance approvals',section:'Leadership & partners',aliases:'Finance review'},
-  discussions:{title:'Discussion forum',section:'Community',aliases:'Discussions questions ideas'},
-  courses:{title:'My learning',section:'Learning & projects',aliases:'Courses workshops enrolled classes'},
-  teaching:{title:'Teaching studio',section:'Learning & projects',aliases:'Teachers students reviews'},
-  events:{title:'Events',section:'Club activities'},
-  calendar:{title:'Calendar',section:'Your workspace'},
-  announcements:{title:'Announcements',section:'Club activities',aliases:'Club alerts notices'},
-  'founder-room':{title:'Founder meetings',section:'Leadership & partners',aliases:'Founder room'}
-};
 let sidebarContext='',sidebarPage='';
 function pageGuide(current=page){
   if(!clubAccess())return '';
   const guides={
+    courses:['Choose your tracks, join workshops and open each course for lessons, assignments and feedback.',['projects','Find a practical project']],
+    classroom:['Everything for your selected course: materials, work, feedback and completion.',['courses','Back to My learning']],
+    projects:['Discover a project and open its task board to build with the team.',['courses','Find a related workshop']],
+    'project-board':['Plan tasks, milestones and evidence for your selected project.',['projects','Back to all projects']],
+    feed:['Share progress, photos and build updates with the club.',['discussions','Ask a lasting technical question']],
     messages:['Private conversations with one member.',['channels','Use Team chat for group conversations']],
     channels:['Group conversations, threads and files.',['messages','Send a private message']],
     notifications:['Your personal mentions, replies and reminders.',['announcements','Read club announcements']],
@@ -233,23 +154,7 @@ function pageGuide(current=page){
 function updateWorkspaceNavigation(){
   const nav=$('#nav');if(!nav)return;
   const links=[...nav.querySelectorAll('a[data-page]')];
-  const allowed=target=>{
-    if(target==='system-health')return admin();
-    if(target==='getting-started')return approved();
-    if(['role-updates','notifications'].includes(target))return approved();
-    if(['shop-admin','order-desk'].includes(target))return admin();
-    if(target==='application')return !!session&&!approved();
-    if(target==='teaching')return teacher();
-    if(target==='founder-room'||target==='investors')return founder();
-    if(target==='finance-review')return false;
-    if(target==='office')return officerAccess();
-    if(target==='officers')return admin();
-    if(target==='finance-reports')return financeReportAccess();
-    if(target==='investor-portal')return investor()||admin();
-    if(['admin','applications','moderation','finance'].includes(target))return admin();
-    if(['home','about','founders','privacy'].includes(target))return true;
-    return pages.includes(target)&&clubAccess();
-  };
+  const allowed=target=>canOpenWorkspacePage(target,{signedIn:!!session,approved:approved(),admin:admin(),teacher:teacher(),founder:founder(),officer:officerAccess(),financeReport:financeReportAccess(),investor:investor(),club:clubAccess()});
   for(const link of links){
     const active=link.dataset.page===page;
     link.hidden=!allowed(link.dataset.page);link.classList.toggle('active',active);
@@ -273,7 +178,7 @@ function updateWorkspaceNavigation(){
   sidebarContext=context;sidebarPage=page;
   const label=$('#workspaceLabel');if(label)label.textContent=!session?'Explore SPACE':!approved()?'Your application':admin()?'Admin workspace':founderOnly()?'Founder workspace':teacher()?'Teaching workspace':investor()?'Investor workspace':'Member workspace';
 }
-const approved = () => !!me && (!('membership_status' in me) || me.membership_status==='approved');
+const approved = () => !adminSecurity?.blocked && !!me && (!('membership_status' in me) || me.membership_status==='approved');
 const investor = () => approved() && me?.role==='investor';
 const clubAccess = () => approved() && !investor();
 const teacher = () => clubAccess() && (['teacher','admin'].includes(me?.role)||me?.role==='founder'&&me?.founder_teaching_enabled===true);
@@ -575,7 +480,7 @@ function setupImageViewer(){
   stage.addEventListener('pointercancel',endPointer);
   window.addEventListener('resize',()=>{if(viewer.open&&photo.naturalWidth)fitImageViewer();});
 }
-const fail = (error) => { console.error(error); show(error?.message || 'Something went wrong. Please try again.'); };
+const fail = (error) => { console.error(error); if(String(error?.details||error?.detail||'').includes('SPACE_ADMIN_MFA')&&me?.role==='admin'){close();void adminSecurity?.check(me,{force:true});return;}show(error?.message || 'Something went wrong. Please try again.'); };
 async function requestWithDeadline(request,milliseconds,message){
   let timer;
   try{
@@ -968,7 +873,7 @@ async function refresh(mode='page',requestedPage=page) {
   const self=await db.from('profiles').select('*').eq('id',session.user.id).single();
   if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
   if(self.error)throw self.error;
-  if(!self.error&&self.data){me=self.data;await hydrateOwnApplicationReason();}
+  if(!self.error&&self.data){if(self.data.role==='admin'&&me?.role!=='admin'){await signedIn(session);return;}me=self.data;await hydrateOwnApplicationReason();}
   if(session?.user.id!==owner||generation!==authGeneration||workspacePageVersions.get(targetPage)!==version)return;
   roleReady=!!me&&'application_type' in me;
   if(previous!==accessSignature(me))return signedIn(session);
@@ -1258,6 +1163,7 @@ async function signedIn(newSession,showWelcome=false) {
   if(showWelcome&&newSession?.user.id)loginWelcomePendingOwner=newSession.user.id;
   closeImageViewer(false);
   if($('#workspaceSearchInput'))close();
+  adminSecurity?.reset();
   session=newSession;commerce?.reset();certification?.reset();
   officerReady=false;officerAccessChecked=false;ownOfficerRoles=[];financeAdminReady=false;financeReport=null;financeReportRows=[];financeReportError='';
   learningChoicesReady=false;learningHubReady=false;ownLearningTracks=[];teachingStudentSearch='';teachingStudentTrack='all';teachingStudentPage=0;
@@ -1288,6 +1194,11 @@ async function signedIn(newSession,showWelcome=false) {
     if(generation!==authGeneration)return;
     if(error||!data) { loginWelcomePendingOwner=null;workspaceLoading=false;workspaceHydrating=false;workspaceLoadError='We could not check your account access. Please retry.';authReady=true;render();fail(error||Error(workspaceLoadError)); return; }
     me=data;
+    if(adminSecurity&&!await adminSecurity.check(me)){
+      if(generation!==authGeneration)return;
+      workspaceLoading=false;workspaceHydrating=false;authReady=true;close();render();return;
+    }
+    if(generation!==authGeneration)return;
     loadCalendarPreferences();
     if(!approved())await hydrateOwnApplicationReason();
     if(generation!==authGeneration)return;
@@ -1509,6 +1420,8 @@ function setSidebarOpen(open){
 }
 function route() {
   const requested=location.hash.slice(1).split('/')[0] || 'home';page=pages.includes(requested)?requested:'home';
+  if(page==='classroom'&&!location.hash.slice(1).split('/')[1]&&!activeCourseId){page='courses';history.replaceState(null,'','#courses');}
+  if(page==='project-board'&&!location.hash.slice(1).split('/')[1]&&!activeProject){page='projects';history.replaceState(null,'','#projects');}
   if(['space-map','avatar-studio'].includes(page)&&$('#modal')?.open)close();
   if(learningSelectionRequired()&&!['courses','privacy','application','role-updates','notifications','shop','cart','orders','getting-started'].includes(page)){page='courses';history.replaceState(null,'','#courses');}
   if(page==='classroom'){const [,id,tab]=location.hash.slice(1).split('/');if(id&&id!==activeCourseId){classroomPeoplePage=0;classroomProjectPage=0;classroomWorkPage=0;classroomTaskPage=0;advancedClassPage=0;advancedSessionPage=0;}activeCourseId=id||activeCourseId;classroomView=classroomTabAliases[tab]||(['overview','learn','work','sessions','students','certificates'].includes(tab)?tab:'overview');}
@@ -1550,6 +1463,14 @@ function route() {
 }
 function render() {
   updateNetworkStatus();
+  const ownProfile=$('#myProfileLink');if(ownProfile&&session?.user.id)ownProfile.href='#members/'+session.user.id;
+  if(adminSecurity?.blocked){
+    updateWorkspaceNavigation();
+    $('#content').innerHTML=adminSecurity.view();
+    $('#authButton').textContent='Sign out';
+    $('#pageCrumb').textContent='Administrator verification';
+    return;
+  }
   memberId?.check();
   const memberFocus=page==='members'&&document.activeElement?.id==='memberSearch'?{start:document.activeElement.selectionStart,end:document.activeElement.selectionEnd}:null;
   const previousDmStream=page==='messages'?$('#dmStream'):null;
@@ -1773,8 +1694,7 @@ function home() {
   const latest=(cache.announcements||[]).slice(0,3);
   const upcoming=(cache.events||[]).filter(e=>new Date(e.starts_at)>new Date()).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at)).slice(0,3);
   return homeViews(`<section class="hero"><div class="hero-copy"><span class="eyebrow">A COMMUNITY FOR ENGINEERS &amp; MAKERS</span><h1>Ideas become<br>working systems.</h1><p>Learn control, automation, electronics, software and robotics. Build prototypes together and prepare for regional and national competitions.</p><div class="hero-actions">${session?`<a class="button" href="#projects">Explore projects ↗</a>`:button('Join the workspace ↗','login')}<a class="button button-outline" href="about/">About the club</a></div></div><div class="hero-graphic">S✦</div></section>
-  <div class="section-heading"><div><span class="eyebrow">CLUB PULSE</span><h2>${session?'Your workspace at a glance':'Built for makers and innovators'}</h2></div><p>${session?`Welcome back, ${esc(me?.full_name||session.user.email)}.`:'A community of makers sharing practical skills and projects.'}</p></div>
-  <div class="grid grid-4"><div class="stat"><small>Visible profiles</small><b>${session?count('profiles'):'—'}</b><span>In your workspace</span></div><div class="stat"><small>Visible online</small><b>${session?(cache.profiles||[]).filter(p=>p.last_seen_at&&Date.now()-new Date(p.last_seen_at).getTime()<65000).length:'—'}</b><span>Active in the last minute</span></div><div class="stat"><small>Active projects</small><b>${session?count('projects'):'—'}</b><span>Ideas in motion</span></div><div class="stat"><small>Upcoming events</small><b>${session?upcoming.length:'—'}</b><span>Sessions and meetups</span></div></div>
+  <p class="notice">Sign in to see your courses, conversations and club activity. New accounts are reviewed by an administrator.</p>
   <div class="section-heading"><div><span class="eyebrow">OUR MISSION</span><h2>From the workbench to the world.</h2></div></div><div class="grid grid-3" data-bento="mission">${[['courses','Learn','Hands-on courses in Arduino, Proteus, CAD, OpenPLC and electrical systems.'],['projects','Build','Plan and test real prototypes with multidisciplinary teams and mentors.'],['founder-room','Compete','Turn the strongest projects into competition-ready demonstrations.']].map(x=>`<div class="card mission-card"><div class="icon-box">${iconSvg(x[0])}</div><h3>${x[1]}</h3><p>${x[2]}</p></div>`).join('')}</div>
   <section class="studio-banner"><img src="assets/robotics-workbench.webp" alt="Concept artwork of hands assembling a robotics prototype" loading="lazy"><div><span class="eyebrow">ENGINEERING INSPIRATION · CONCEPT ARTWORK</span><h2>Make something that works.</h2><p>Find your team, share your next test and turn a good idea into a working prototype.</p><a class="button" href="${session?'#projects':'about/'}">${session?'Explore club projects':'Discover the club'} →</a></div></section>
   ${session?`<div class="section-heading"><h2>Your community</h2><p>Find a conversation or share what you’re learning.</p></div><div class="grid grid-4"><a class="card feature-card" href="#feed"><span class="feature-icon">${iconSvg('feed')}</span><h3>Activity feed</h3><p>Share progress and hear from club members.</p><span class="link">Open feed →</span></a><a class="card feature-card" href="#channels"><span class="feature-icon">${iconSvg('channels')}</span><h3>Member channels</h3><p>Get help and work through ideas together.</p><span class="link">Open channels →</span></a><a class="card feature-card" href="#library"><span class="feature-icon">${iconSvg('library')}</span><h3>Document library</h3><p>Notes, schematics and useful resources in one place.</p><span class="link">Browse files →</span></a><a class="card feature-card" href="#news"><span class="feature-icon">${iconSvg('news')}</span><h3>Technology news</h3><p>Discover engineering stories worth discussing.</p><span class="link">Read stories →</span></a></div>`:''}
@@ -4954,7 +4874,7 @@ function spaceSaveFormDraft(form){const key=spaceDraftKey(form);if(!key)return;c
 function spaceRestoreFormDraft(){const form=$('#editor'),key=spaceDraftKey(form);if(!key)return;try{const saved=JSON.parse(authTabStorage.getItem(key)||'null');if(!saved||Date.now()-saved.at>DRAFT_MAX_AGE_MS)return;for(const [name,value]of saved.values){const input=form.elements.namedItem?.(name)||form.elements[name];if(input&&input.type!=='hidden'&&input.type!=='file'&&input.type!=='checkbox'&&input.type!=='radio')input.value=value;}const hint=document.createElement('p');hint.className='hint';hint.textContent='Draft restored from this signed-in tab.';form.prepend(hint);}catch{}}
 function spaceSaveDmDraft(peer,draft){if(!session)return;const key='space.draft.'+session.user.id+'.dm.'+peer;if(!draft.text&&!draft.reply){authTabStorage.removeItem(key);return;}authTabStorage.setItem(key,JSON.stringify({at:Date.now(),text:draft.text,reply:draft.reply?{id:draft.reply.id,body:String(draft.reply.body||'').slice(0,3000),sender_id:draft.reply.sender_id,recipient_id:draft.reply.recipient_id}:null,token:draft.token||null}));}
 function spaceReadDmDraft(peer){if(!session)return {};try{const data=JSON.parse(authTabStorage.getItem('space.draft.'+session.user.id+'.dm.'+peer)||'null');return data&&Date.now()-data.at<DRAFT_MAX_AGE_MS?{text:String(data.text||'').slice(0,3000),reply:data.reply||null,token:data.token||null}:{};}catch{return {};}}
-function spaceClearDrafts(owner){if(!owner)return;const prefix='space.draft.'+owner+'.';try{const keys=[];for(let i=0;i<sessionStorage.length;i++){const k=sessionStorage.key(i);if(k?.startsWith(prefix))keys.push(k);}keys.forEach(k=>authTabStorage.removeItem(k));}catch{}for(const key of [...authMemory.keys()])if(key.startsWith(prefix))authTabStorage.removeItem(key);}
+function spaceClearDrafts(owner){if(owner)clearTabEntries('space.draft.'+owner+'.');}
 async function sendAdvancedDm(form){
  const peer=form.dataset.peer,input=form.elements.body,draft=dmDraftFor(peer),owner=session?.user.id,body=input.value.trim(),send=form.querySelector('[type=submit]');
  if(!clubAccess()||!dmReady||peer!==activePeerId||dmSendingPeers.has(peer)||!body&&!draft.file&&!draft.document)return;
@@ -5041,6 +4961,8 @@ function memberIdState(){
  const teaches=me?.role==='teacher'||me?.role==='founder'&&teacher();
  return {id:session?.user.id||'',generation:authGeneration,page,approved:!!session&&!sessionEnding&&approved(),teacher:teaches,tracks:teaches?allowedTeachingTracks():ownLearningTracks,profile:me?{id:me.id,full_name:me.full_name,role:me.role,handle:me.handle,created_at:me.created_at}:null};
 }
+adminSecurity=createAdminSecurity({db,current:()=>({id:session?.user.id||''}),changed:()=>{if(adminSecurity?.blocked)render();},verified:async owner=>{const {data,error}=await db.auth.getSession();if(error)throw error;if(session?.user.id===owner&&data.session?.user.id===owner)await signedIn(data.session);},signOut});
+adminSecurity.bind();
 analytics=window.SpaceAnalytics?.create({db,get:()=>({id:session?.user.id||'',generation:authGeneration,page,admin:admin(),allowed:!!session&&!sessionEnding&&clubAccess()})})||null;
 metrics=window.SpaceMetrics?.create({db,get:()=>({id:session?.user.id||'',generation:authGeneration,page,peer:activePeerId||'',channel:activeChannelId||'',course:activeCourseId||'',admin:admin(),teacher:teacher(),reportAllowed:financeReportAccess(),financeReport,financeMonth,financeReportError,managesCourse:!!activeCourseId&&courseManager((cache.courses||[]).find(c=>c.id===activeCourseId)),allowed:!!session&&!sessionEnding&&clubAccess()})})||null;
 avatarStudio=window.SpaceAvatars?.create({db,get:()=>({id:session?.user.id||'',generation:authGeneration,page,allowed:!!session&&!sessionEnding&&clubAccess()}),fallback:(id,large)=>{const p=(cache.profiles||[]).find(x=>x.id===id);return avatar(p?.full_name||'Member',large,p?.avatar_path);}})||null;
