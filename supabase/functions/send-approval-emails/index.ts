@@ -13,7 +13,7 @@ type ApprovalJob = {
   claim_token: string;
 };
 
-const SITE_URL = "https://turkson225.github.io/Turk-Innovation-CLUB/";
+const SITE_URL = "https://turk-innovation-club.ennisturkson98.workers.dev/";
 const MAX_BATCH = 5;
 const SEND_TIMEOUT_MS = 20_000;
 const CLOSE_TIMEOUT_MS = 3_000;
