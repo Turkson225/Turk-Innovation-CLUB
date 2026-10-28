@@ -16,8 +16,9 @@ const EXPECTED_BUCKETS = new Map([
   ['club-finance-receipts', false],
   ['club-direct-files', false],
   ['club-shop-images', false],
+  ['club-teacher-signatures', false],
 ]);
-const REQUIRED_BUCKETS = [...EXPECTED_BUCKETS.keys()].filter((id) => !['club-founder-portraits','club-finance-receipts','club-direct-files','club-shop-images'].includes(id));
+const REQUIRED_BUCKETS = [...EXPECTED_BUCKETS.keys()].filter((id) => !['club-founder-portraits','club-finance-receipts','club-direct-files','club-shop-images','club-teacher-signatures'].includes(id));
 
 function check(condition, message) {
   if (!condition) throw new Error(message);
@@ -129,6 +130,9 @@ async function main() {
   console.log(`Verified ${objectCount} objects (${totalBytes} bytes) across ${totals.size} buckets.`);
   if (!totals.has('club-founder-portraits')) {
     console.warn('Founder portrait bucket absent in this backup; verify migration state before using it as a recovery point.');
+  }
+  if (!totals.has('club-teacher-signatures')) {
+    console.warn('Teacher signature bucket absent in this backup; verify certificate migration state before using it as a recovery point.');
   }
   console.log(`Backup source: ${manifest.source}; completed: ${manifest.finished_at}`);
   console.log('This verifies local bytes and counts; test recovery to a separate Supabase project.');
