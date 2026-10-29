@@ -11,11 +11,16 @@ export SUPABASE_URL="https://${PROJECT_REF}.supabase.co"
 TOOL_LOG=''
 ARCHIVE_PARTIAL=''
 CHECKSUM_PARTIAL=''
+SPACE_GPG_DIR=''
 
 cleanup() {
   local status=$?
   set +x
   unset SESSION_TEMPLATE DATABASE_PASSWORD SOURCE_DB_URL SUPABASE_SECRET_KEY
+  if [[ -n "$SPACE_GPG_DIR" ]]; then
+    gpgconf --homedir "$SPACE_GPG_DIR" --kill gpg-agent >/dev/null 2>&1 || true
+    rm -rf -- "$SPACE_GPG_DIR"
+  fi
   [[ -z "$TOOL_LOG" ]] || rm -f -- "$TOOL_LOG"
   if (( status != 0 )); then
     [[ -z "$ARCHIVE_PARTIAL" ]] || rm -f -- "$ARCHIVE_PARTIAL"
@@ -59,7 +64,17 @@ if git -C "$BACKUP_BASE" rev-parse --show-toplevel >/dev/null 2>&1; then
 fi
 TOOL_LOG="$(mktemp "$BACKUP_BASE/.space-backup-tool.XXXXXX")"
 quiet_run 'Checking Docker server' docker info
-quiet_run 'Checking encryption agent' gpgconf --launch gpg-agent
+printf 'Checking encryption agent...\n'
+# Fresh Codespaces may have no default GPG home, or use it for commit signing.
+# A short, private home keeps this backup independent of that configuration.
+SPACE_GPG_DIR="$(mktemp -d /tmp/space-backup-gpg.XXXXXX)"
+chmod 700 -- "$SPACE_GPG_DIR"
+if ! gpgconf --homedir "$SPACE_GPG_DIR" --launch gpg-agent >"$TOOL_LOG" 2>&1; then
+  # This check runs before credentials and uses a new empty GPG home.
+  cat -- "$TOOL_LOG" >&2
+  fail 'The isolated encryption agent could not start. Share only the startup error shown above.'
+fi
+: >"$TOOL_LOG"
 printf 'Preparing the official Supabase CLI before asking for credentials...\n'
 if ! CLI_VERSION="$(npx --yes supabase@latest --version 2>"$TOOL_LOG")"; then
   fail 'Supabase CLI preparation failed.'
@@ -164,9 +179,9 @@ printf '\nChoose a strong archive passphrase and keep it separately from the bac
 printf 'GPG will ask for it to encrypt, then again to verify the encrypted archive.\n'
 export GPG_TTY="$(tty)"
 tar -czf - -C "$BACKUP_BASE" "$(basename -- "$BACKUP_DIR")" |
-  gpg --pinentry-mode loopback --no-symkey-cache --symmetric --cipher-algo AES256 --output "$ARCHIVE_PARTIAL"
+  gpg --homedir "$SPACE_GPG_DIR" --pinentry-mode loopback --no-symkey-cache --symmetric --cipher-algo AES256 --output "$ARCHIVE_PARTIAL"
 printf 'Checking that the encrypted archive can be decrypted and read...\n'
-gpg --pinentry-mode loopback --no-symkey-cache --decrypt "$ARCHIVE_PARTIAL" | tar -tzf - >/dev/null
+gpg --homedir "$SPACE_GPG_DIR" --pinentry-mode loopback --no-symkey-cache --decrypt "$ARCHIVE_PARTIAL" | tar -tzf - >/dev/null
 CHECKSUM="$(sha256sum -- "$ARCHIVE_PARTIAL")"
 CHECKSUM="${CHECKSUM%% *}"
 printf '%s  %s\n' "$CHECKSUM" "$ARCHIVE_NAME" >"$CHECKSUM_PARTIAL"
