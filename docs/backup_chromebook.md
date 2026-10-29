@@ -36,7 +36,7 @@ The script checks its tools before asking for credentials. It creates a private 
 
 The helper downloads the installed club Storage buckets, verifies file hashes and counts, then exports database roles, schema and data. It also saves a **reference-only** snapshot of the managed Auth/Storage/Realtime schemas and the source migration definitions. Source definitions do not establish that the live schema matches the repository.
 
-It then asks for a new encryption passphrase to protect the archive. Keep that passphrase separately in your password manager; it is not your database password. The helper checks that the archive can be decrypted and read. Raw tool output is hidden and its temporary log is removed because it may contain credentials. If a step fails, the helper stops and retains any incomplete private backup folder, which must not be treated as a completed backup. Send only the helper's fixed `Backup error:` message for troubleshooting, never credentials or a database dump.
+It then asks for a new encryption passphrase to protect the archive. Keep that passphrase separately in your password manager; it is not your database password. The helper checks that the archive can be decrypted and read. Raw tool output is hidden and its temporary log is removed because it may contain credentials. A failed tool step prints a fixed `Safe diagnostic` code and explanation based on known errors, without copying log lines, connection strings or member data. `UNCLASSIFIED` means the cause is still unknown; do not assume the password is wrong. If a step fails, the helper stops and retains any incomplete private backup folder, which must not be treated as a completed backup. Send only the safe diagnostic code and the helper's fixed `Backup error:` message for troubleshooting, never credentials or a database dump.
 
 ## 4. Download the encrypted archive
 
@@ -48,6 +48,14 @@ On success the terminal prints a `.tar.gz.gpg` path under `/workspaces/space-bac
 4. Stop the Codespace when finished. Once both downloaded copies are verified, delete the Codespace if it is no longer needed; stopped Codespaces still use storage allowance. Unencrypted source backups remain inside it until deletion.
 
 Nothing needs to be committed or pushed to either repository. A successful archive check is evidence that this copy was exported and can be decrypted, **not** a passed disaster-recovery test.
+
+If a database export fails, check it without downloading Storage again:
+
+```bash
+bash /workspaces/space-backup-source/scripts/backup_codespace.sh --check-database
+```
+
+This mode asks for only the connection template and database password. It attempts the same read-only roles export into a private temporary directory and removes that diagnostic export on exit. Share only its fixed `Safe diagnostic` code and error message. Passing this check is not a full backup; run the helper without the flag after the error is resolved.
 
 ## 5. Rehearse recovery separately
 

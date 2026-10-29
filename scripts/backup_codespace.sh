@@ -12,11 +12,19 @@ TOOL_LOG=''
 ARCHIVE_PARTIAL=''
 CHECKSUM_PARTIAL=''
 SPACE_GPG_DIR=''
+SPACE_DB_CHECK_DIR=''
+SPACE_DB_CHECK_ONLY=false
+if (( $# > 1 )) || { (( $# == 1 )) && [[ "$1" != '--check-database' ]]; }; then
+  printf 'Usage: bash scripts/backup_codespace.sh [--check-database]\n' >&2
+  exit 1
+fi
+if (( $# == 1 )); then SPACE_DB_CHECK_ONLY=true; fi
 
 cleanup() {
   local status=$?
   set +x
   unset SESSION_TEMPLATE DATABASE_PASSWORD SOURCE_DB_URL SUPABASE_SECRET_KEY
+  [[ -z "$SPACE_DB_CHECK_DIR" ]] || rm -rf -- "$SPACE_DB_CHECK_DIR"
   if [[ -n "$SPACE_GPG_DIR" ]]; then
     gpgconf --homedir "$SPACE_GPG_DIR" --kill gpg-agent >/dev/null 2>&1 || true
     rm -rf -- "$SPACE_GPG_DIR"
@@ -44,7 +52,8 @@ quiet_run() {
   shift
   printf '%s...\n' "$label"
   if ! "$@" >"$TOOL_LOG" 2>&1; then
-    fail "$label failed. Raw tool output is withheld because it may contain credentials."
+    node "$SOURCE_ROOT/scripts/backup_error_summary.mjs" "$TOOL_LOG" || printf 'Safe diagnostic: UNCLASSIFIED. Raw output remains private.\n' >&2
+    fail "$label failed. Share only the safe diagnostic code above; raw output remains private."
   fi
   : >"$TOOL_LOG"
 }
@@ -81,7 +90,7 @@ if ! CLI_VERSION="$(npx --yes supabase@latest --version 2>"$TOOL_LOG")"; then
 fi
 [[ "$CLI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'The Supabase CLI did not return a supported version.'
 printf 'Using Supabase CLI %s.\n' "$CLI_VERSION"
-for file in backup_storage.mjs verify_storage_backup.mjs; do
+for file in backup_storage.mjs verify_storage_backup.mjs backup_error_summary.mjs; do
   [[ -f "$SOURCE_ROOT/scripts/$file" ]] || fail 'A required backup script is missing.'
 done
 SOURCE_COMMIT="$(git -C "$SOURCE_ROOT" rev-parse HEAD)" || fail 'Source commit could not be recorded.'
@@ -133,6 +142,15 @@ NODE
   fail 'Connection details were rejected; no source request was made.'
 fi
 unset SESSION_TEMPLATE DATABASE_PASSWORD
+if [[ "$SPACE_DB_CHECK_ONLY" == true ]]; then
+  SPACE_DB_CHECK_DIR="$(mktemp -d "$BACKUP_BASE/database-check.XXXXXX")"
+  quiet_run 'Checking database roles export' npx --yes "supabase@$CLI_VERSION" db dump --db-url "$SOURCE_DB_URL" -f "$SPACE_DB_CHECK_DIR/roles.sql" --role-only
+  [[ -s "$SPACE_DB_CHECK_DIR/roles.sql" ]] || fail 'The database export check returned an empty file.'
+  unset SOURCE_DB_URL
+  printf '\nDatabase roles export check passed. No Storage download or complete backup was performed.\n'
+  printf 'Run this helper without --check-database to create a full backup.\n'
+  exit 0
+fi
 secret_prompt SUPABASE_SECRET_KEY 'Paste the storage_backup secret API key, sb_secret_... (hidden): '
 [[ "$SUPABASE_SECRET_KEY" == sb_secret_* && ${#SUPABASE_SECRET_KEY} -gt 12 ]] || fail 'A secret API key beginning sb_secret_ is required.'
 export SUPABASE_SECRET_KEY
@@ -156,7 +174,7 @@ done
 printf 'Copying tracked SQL definitions and recovery instructions...\n'
 git -C "$SOURCE_ROOT" archive HEAD supabase docs/backup_restore.md docs/backup_chromebook.md | tar -xf - -C "$BACKUP_DIR/source"
 mkdir -- "$BACKUP_DIR/source/backup-tools"
-cp -- "$SOURCE_ROOT/scripts/backup_storage.mjs" "$SOURCE_ROOT/scripts/verify_storage_backup.mjs" "${BASH_SOURCE[0]}" "$BACKUP_DIR/source/backup-tools/"
+cp -- "$SOURCE_ROOT/scripts/backup_storage.mjs" "$SOURCE_ROOT/scripts/verify_storage_backup.mjs" "$SOURCE_ROOT/scripts/backup_error_summary.mjs" "${BASH_SOURCE[0]}" "$BACKUP_DIR/source/backup-tools/"
 cat >"$BACKUP_DIR/BACKUP_STATUS.txt" <<EOF
 STATUS: BACKUP_CAPTURED_RESTORE_NOT_TESTED
 Source project: $PROJECT_REF
