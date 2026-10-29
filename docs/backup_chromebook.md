@@ -32,7 +32,7 @@ Paste only this command into the Codespaces terminal:
 bash /workspaces/space-backup-source/scripts/backup_codespace.sh
 ```
 
-The script checks its tools before asking for credentials. When each prompt appears, provide only the value it requests and press Enter. Credential input is hidden; an empty-looking prompt while pasting is expected. It asks for the Session pooler template, database password, and `storage_backup` key. The helper encodes the database password in the URI for you. Do not paste a block of following shell commands into a credential prompt.
+The script checks its tools before asking for credentials. It creates a private temporary GPG home, so the backup does not depend on a pre-existing GPG directory or change the Codespace's commit-signing configuration. Its own agent and temporary home are cleaned up when the helper exits. If this initial encryption check fails, the safe startup error is shown before any credentials are entered. When each prompt appears, provide only the value it requests and press Enter. Credential input is hidden; an empty-looking prompt while pasting is expected. It asks for the Session pooler template, database password, and `storage_backup` key. The helper encodes the database password in the URI for you. Do not paste a block of following shell commands into a credential prompt.
 
 The helper downloads the installed club Storage buckets, verifies file hashes and counts, then exports database roles, schema and data. It also saves a **reference-only** snapshot of the managed Auth/Storage/Realtime schemas and the source migration definitions. Source definitions do not establish that the live schema matches the repository.
 
