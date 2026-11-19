@@ -4,6 +4,7 @@
  function create(ctx){
   const e=ctx.esc;let owner='',generation=-1,snapshot=null,health=null,healthError='',loading=false,request=0,reportTimes=new Map(),dismissed=new Set();
   const current=()=>ctx.get(),valid=(id,gen)=>current().id===id&&current().generation===gen;
+  const tours=window.SpaceTours?.create({get:current,db:ctx.db,deadline:ctx.deadline});
   const missing=error=>['PGRST202','42883','42P01'].includes(error?.code);
   function ensure(){const s=current();if(owner!==s.id||generation!==s.generation){owner=s.id;generation=s.generation;snapshot=null;health=null;healthError='';loading=false;request++;reportTimes=new Map();}return s;}
   function mode(s){return s.teacher&&!s.admin?'teacher':'member';}
@@ -33,11 +34,14 @@
   function welcome(){
    const s=ensure(),rows=steps(),done=rows.filter(row=>row.done===true).length;
    if(!s.approved)return '<div class="notice">Your account needs approval before the workspace checklist is available.</div>';
-   if(!rows.length)return `<section class="card"><h2>Welcome to SPACE</h2><p>${s.admin?'Your administrator workspace brings together approvals, course oversight, orders and system health.':'Your investor portal contains approved club updates and inquiries.'}</p><div class="profile-buttons"><a class="button" href="${s.admin?'#admin':'#investor-portal'}">Open my workspace →</a>${s.admin?'<a class="button button-outline" href="#system-health">System health</a>':''}</div></section>`;
-   return `<header class="page-head"><div><span class="eyebrow">WELCOME TO SPACE</span><h1>${mode(s)==='teacher'?'Your teaching setup':'Your first steps'}</h1><p>A short guide to the tools you will use most.</p></div><button class="button button-outline button-sm" data-action="onboardingReload">Refresh progress</button></header><section class="card journey-onboarding-progress"><strong>${done} of ${rows.length} completed</strong><progress value="${done}" max="${rows.length}" aria-label="Welcome checklist progress">${done}/${rows.length}</progress><p>${done===rows.length?'You are ready. Return here whenever you need a reminder.':'Progress follows your saved work. You can return to this guide from More or the sidebar.'}</p></section><div class="journey-checklist">${rows.map((row,i)=>`<article class="card journey-checklist-item ${row.done===true?'is-done':''}"><span class="journey-check-step" aria-hidden="true">${row.done===true?'✓':i+1}</span><div><small>${row.done===true?'Completed':row.done===null?'Not checked yet':'Next step'}</small><h2>${e(row.title)}</h2><p>${e(row.copy)}</p></div>${row.action?`<button type="button" class="button button-outline button-sm" data-action="${row.action}">${row.done===true?'Review':'Open'} →</button>`:`<a class="button button-outline button-sm" href="${e(row.href)}">${row.done===true?'Review':'Open'} →</a>`}</article>`).join('')}</div><div class="profile-buttons"><button class="text-button" data-action="onboardingShow">Show this checklist reminder on Home</button><a class="link" href="#home">Return Home →</a></div>`;
+   const tourLibrary=tours?`<div data-tour-library-host>${tours.library()}</div>`:'';
+   if(!rows.length)return tourLibrary+`<section class="card"><h2>Welcome to SPACE</h2><p>${s.admin?'Your administrator workspace brings together approvals, course oversight, orders and system health.':'Your investor portal contains approved club updates and inquiries.'}</p><div class="profile-buttons"><a class="button" href="${s.admin?'#admin':'#investor-portal'}">Open my workspace →</a>${s.admin?'<a class="button button-outline" href="#system-health">System health</a>':''}</div></section>`;
+   return `<header class="page-head"><div><span class="eyebrow">WELCOME TO SPACE</span><h1>${mode(s)==='teacher'?'Your teaching setup':'Your first steps'}</h1><p>A short guide to the tools you will use most.</p></div><button class="button button-outline button-sm" data-action="onboardingReload">Refresh progress</button></header>${tourLibrary}<section class="card journey-onboarding-progress"><strong>${done} of ${rows.length} completed</strong><progress value="${done}" max="${rows.length}" aria-label="Welcome checklist progress">${done}/${rows.length}</progress><p>${done===rows.length?'You are ready. Return here whenever you need a reminder.':'Progress follows your saved work. You can return to this guide from More or the sidebar.'}</p></section><div class="journey-checklist">${rows.map((row,i)=>`<article class="card journey-checklist-item ${row.done===true?'is-done':''}"><span class="journey-check-step" aria-hidden="true">${row.done===true?'✓':i+1}</span><div><small>${row.done===true?'Completed':row.done===null?'Not checked yet':'Next step'}</small><h2>${e(row.title)}</h2><p>${e(row.copy)}</p></div>${row.action?`<button type="button" class="button button-outline button-sm" data-action="${row.action}">${row.done===true?'Review':'Open'} →</button>`:`<a class="button button-outline button-sm" href="${e(row.href)}">${row.done===true?'Review':'Open'} →</a>`}</article>`).join('')}</div><div class="profile-buttons"><button class="text-button" data-action="onboardingShow">Show this checklist reminder on Home</button><a class="link" href="#home">Return Home →</a></div>`;
   }
   async function load(page){
-   const s=ensure();if(!s.approved||!['home','getting-started','teaching','system-health'].includes(page))return;
+   const s=ensure();if(!s.approved)return;
+   void tours?.loadChapters(page);
+   if(!['home','getting-started','teaching','system-health'].includes(page))return;
    const id=s.id,gen=s.generation,version=++request;
    if(page==='system-health'){
     if(!s.admin)return;loading=true;healthError='';
@@ -79,7 +83,7 @@
    if(!['upload','notifications'].includes(el?.dataset.category)||!health||el.dataset.before!==health.checked_at)return true;
    el.disabled=true;try{const result=await ctx.deadline(()=>ctx.db.rpc('space_admin_review_client_issues',{p_category:el.dataset.category,p_before:health.checked_at}),10000,'Review timed out.');if(result.error)throw result.error;if(!valid(s.id,s.generation))return true;await load('system-health');if(valid(s.id,s.generation)){ctx.show('Reports marked reviewed. New reports remain visible.');ctx.render();}}catch{if(valid(s.id,s.generation))ctx.show('Reports could not be reviewed. Refresh and try again.');}finally{if(el.isConnected)el.disabled=false;}return true;
   }
-  return {load,banner,welcome,healthView,report,action,steps,reset(){owner='';generation=-1;snapshot=null;health=null;healthError='';request++;}};
+  return {load,banner,welcome,healthView,report,action,steps,reset(){tours?.reset();owner='';generation=-1;snapshot=null;health=null;healthError='';request++;}};
  }
  window.SpaceGuidance={create};
 })();
