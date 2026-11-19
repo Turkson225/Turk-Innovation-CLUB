@@ -3,6 +3,7 @@ import {pages,workspacePageInfo,canOpenWorkspacePage} from './workspace-navigati
 import {createAdminSecurity} from './admin-security.js';
 import {createAuthPersistence} from './auth-session.js';
 import {createChapterWorkspace} from './space-chapters.js';
+import {createChapterOperations} from './chapter-operations.js';
 
 const cfg = window.INNOVATEX_CONFIG || {};
 const configured = /^https:\/\/.+\.supabase\.co\/?$/.test(cfg.supabaseUrl || '') && !!cfg.supabaseAnonKey;
@@ -16,7 +17,7 @@ let accountNavigationPending=false;
 const {authTabStorage,authBrowserStorage,authBaseStorageKey,separateAccountMarker,separateAccountTab,separateSessionKey,authStorageKey,authPersistentStorage,SIGNED_OUT_KEY,clearSavedAuthTokens,migrateSavedAuth,clearTabEntries}=createAuthPersistence({cfg,configured,startupAuthCallback,startupRecovery,navigationPending:()=>accountNavigationPending});
 const db = configured && !startupRecovery ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storageKey:authStorageKey, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
 let commerce=null,certification=null,mobileWorkspace=null,guidance=null,memberWall=null,bento=null,cardSwap=null,memberId=null,sharedGlow=null,avatarStudio=null,spaceMap=null,metrics=null,analytics=null;
-let adminSecurity=null,chapters=null;
+let adminSecurity=null,chapters=null,chapterOps=null;
 let sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -345,6 +346,7 @@ iconPaths.admin='<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="
 iconPaths.teaching='<path d="M3 5h18v13H3zM7 22h10M12 18v4M7 10h10M7 13h6"/>';
 iconPaths.finance='<path d="M3 6h18v14H3zM3 10h18M7 15h4M16 15h2"/>';
 iconPaths['finance-review']='<path d="M4 3h16v18H4zM8 8h8M8 12h8M8 16l2 2 5-5"/>';
+iconPaths['chapter-admin']=iconPaths.chapters;iconPaths['chapter-offices']=iconPaths.office||iconPaths.chapters;
 const iconSvg = name => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconPaths[name]||iconPaths.home}</svg>`;
 iconPaths.calendar=iconPaths.events;
 const modal = (html) => { if($('#modal').open) $('#modal').close(); $('#modalContent').innerHTML=html; $('#modal').showModal(); };
@@ -505,7 +507,7 @@ const networkOffline=()=>navigator.onLine===false;
 const schemaUnavailable=error=>['PGRST202','PGRST204','PGRST205','42P01','42703','42883'].includes(error?.code);
 const pageDataReady=(target=page)=>(pageRefreshDependencies[target]||[]).every(name=>Object.hasOwn(cache,name));
 function clearWorkspaceLoads(){
-  chapters?.reset();
+  chapters?.reset();chapterOps?.reset();
   for(const load of workspacePageLoads.values())clearTimeout(load.timer);
   workspacePageLoads.clear();workspacePageRequests.clear();workspacePageVersions.clear();workspaceCapabilityTask=null;profilesComplete=false;
   updateNetworkStatus();
@@ -1425,7 +1427,7 @@ function route() {
   if(page==='classroom'&&!location.hash.slice(1).split('/')[1]&&!activeCourseId){page='courses';history.replaceState(null,'','#courses');}
   if(page==='project-board'&&!location.hash.slice(1).split('/')[1]&&!activeProject){page='projects';history.replaceState(null,'','#projects');}
   if(['space-map','avatar-studio'].includes(page)&&$('#modal')?.open)close();
-  if(learningSelectionRequired()&&!['courses','privacy','application','role-updates','notifications','shop','cart','orders','getting-started'].includes(page)){page='courses';history.replaceState(null,'','#courses');}
+  if(learningSelectionRequired()&&!['courses','privacy','application','role-updates','notifications','shop','cart','orders','getting-started','chapter-offices'].includes(page)){page='courses';history.replaceState(null,'','#courses');}
   if(page==='classroom'){const [,id,tab]=location.hash.slice(1).split('/');if(id&&id!==activeCourseId){classroomPeoplePage=0;classroomProjectPage=0;classroomWorkPage=0;classroomTaskPage=0;advancedClassPage=0;advancedSessionPage=0;}activeCourseId=id||activeCourseId;classroomView=classroomTabAliases[tab]||(['overview','learn','work','sessions','students','certificates'].includes(tab)?tab:'overview');}
   if(page==='meeting-room')activeMeetingId=location.hash.slice(1).split('/')[1]||activeMeetingId;
   if(page==='project-board')activeProject=location.hash.slice(1).split('/')[1]||activeProject;
@@ -1439,7 +1441,7 @@ function route() {
     page='home';
     if(authReady||!configured){
       const [,date,view]=location.hash.slice(1).split('/');
-      pendingProtectedPage=requested==='calendar'&&calendarParseDay(date)?`calendar/${date}/${calendarViews.includes(view)?view:'month'}`:requested==='chapters'&&/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(date||'')&&date.length<=48?`chapters/${date}`:['members','shop','orders'].includes(requested)&&memberProfileId(date)?`${requested}/${date}`:requested;
+      pendingProtectedPage=requested==='calendar'&&calendarParseDay(date)?`calendar/${date}/${calendarViews.includes(view)?view:'month'}`:requested==='chapters'&&/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(date||'')&&date.length<=48?`chapters/${date}`:['members','shop','orders','chapter-admin','chapter-offices'].includes(requested)&&memberProfileId(date)?`${requested}/${date}`:requested;
       history.replaceState(null,'','#home');
     }
   }else if(!session&&authReady)pendingProtectedPage='';
@@ -1452,7 +1454,7 @@ function route() {
   if(['officers','shop-admin','order-desk'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   if(officerAccessChecked&&(page==='office'&&!officerAccess()||page==='finance-reports'&&!financeReportAccess())){page='home';history.replaceState(null,'','#home');}
   if(page==='founder-room'&&authReady&&!founder()){page='founders';history.replaceState(null,'','#founders');show('Founder access required.');}
-  if(['admin','applications','moderation','system-health'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
+  if(['admin','applications','moderation','system-health','chapter-admin'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   if(page==='messages'){const peer=location.hash.slice(1).split('/')[1]||'';const next=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(peer)?peer:null;if(next!==activePeerId){activePeerId=next;dmRequest++;dmSearchRequest++;dmThreadLoading=false;dmEarlierLoading=false;dmSearchOpen=false;dmSearchBusy=false;dmReactionTarget=null;dmEmojiOpen=false;}}
   setSidebarOpen(false);
   if(session&&authReady&&approved()&&!workspaceHydrating)void refreshVisiblePage({force:true});
@@ -1464,7 +1466,7 @@ function route() {
   if(!networkOffline()&&page==='messages'&&dmReady){if(dmInboxReady)void loadDmInbox().then(()=>{if(page==='messages'&&!activePeerId)render();});if(activePeerId)void loadDmThread();}
 }
 function render() {
-  chapters?.sync();
+  chapters?.sync();chapterOps?.sync();
   updateNetworkStatus();
   const ownProfile=$('#myProfileLink');if(ownProfile&&session?.user.id)ownProfile.href='#members/'+session.user.id;
   if(adminSecurity?.blocked){
@@ -1511,7 +1513,7 @@ function render() {
   if(session&&approved()&&load&&!load.hadData&&['loading','offline','error'].includes(load.status)&&!learningSelectionRequired()){
     analytics?.sync(null);metrics?.sync(null);spaceMap?.sync(null);avatarStudio?.sync(null);sharedGlow?.sync(null);window.SpaceChatWaves?.sync(null);memberWall?.sync(null);bento?.sync(null);cardSwap?.sync(null);$('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
   }
-  const views={chapters:()=>chapters.view(),'space-map':()=>spaceMap?.view()||head('COMMUNITY','SPACE Map','Reload SPACE to open the map.'),'avatar-studio':()=>avatarStudio?.view()||head('YOUR SPACE','Avatar studio','Reload SPACE to open the studio.'),'getting-started':()=>guidance?.welcome()||head('WELCOME','Getting started','Reload SPACE to open your welcome guide.'),'system-health':()=>admin()?(guidance?.healthView()||head('ADMINISTRATION','System health','Reload SPACE to open the checks.')):'',...Object.fromEntries(['shop','cart','orders','order-desk','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
+  const views={chapters:()=>chapters.view(),'chapter-admin':()=>chapterOps.view(),'chapter-offices':()=>chapterOps.view(),'space-map':()=>spaceMap?.view()||head('COMMUNITY','SPACE Map','Reload SPACE to open the map.'),'avatar-studio':()=>avatarStudio?.view()||head('YOUR SPACE','Avatar studio','Reload SPACE to open the studio.'),'getting-started':()=>guidance?.welcome()||head('WELCOME','Getting started','Reload SPACE to open your welcome guide.'),'system-health':()=>admin()?(guidance?.healthView()||head('ADMINISTRATION','System health','Reload SPACE to open the checks.')):'',...Object.fromEntries(['shop','cart','orders','order-desk','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
   $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'?(guidance?.banner()||'')+(commerce?.homeRoleBanner()||'')+(commerce?.homeShopBanner?.()||''):'')+(page==='admin'?'<a class="admin-order-shortcut" href="#order-desk"><strong>Orders &amp; fulfilment</strong><span>Process new purchases, update status and send receipts →</span></a>':'')+views[page]();
   metrics?.sync($('#content'));
@@ -1545,7 +1547,8 @@ function workspaceSearchItems(){
   if(approved())destinations.push(['getting-started','Getting started','Welcome and setup checklist'],['role-updates','Role updates','Assignment notes and acknowledgements']);
   if(investor())destinations.push(['notifications','Notifications','Personal role and club updates']);
   if(clubAccess())destinations.push(['space-map','SPACE Map','Selected people location sharing places and meetups'],['avatar-studio','Avatar studio','Character outfits looks and clothing'],['shop','SPACE shop','Club merchandise components and kits'],['cart','Basket','Review items and collection'],['orders','My orders','Order tracking and messages'],['classroom','Classrooms','Lessons files assignments feedback attendance gradebook certificates'],['meeting-room','Meetings & actions','Club agendas minutes and follow-up'],['project-board','Project workspace','Task boards and build evidence'],['feed','Activity feed','Build updates and conversations'],['messages','Messages','Private conversations'],['channels','Team channels','Discuss and share files'],['members','Members','Find a collaborator'],['courses','Courses','Your practical learning plan'],['projects','Projects','Plans, tasks and progress'],['library','Document library','Shared resources'],['news','Technology news','Ideas worth exploring'],['calendar','Calendar','Workshops and deadlines'],['events','Events','Club meetups and sessions'],['notifications','Inbox','Your notifications'],['announcements','Alerts','Club announcements'],['discussions','Discussions','Questions and ideas'],['inventory','Inventory','Club tools and components']);
-  if(clubAccess())destinations.push(['chapters','University chapters','Campus chapter membership, workshops and projects']);
+  if(clubAccess())destinations.push(['chapters','University chapters','Campus chapter membership, workshops and projects'],['chapter-offices','My chapter offices','Local role and task queue']);
+  if(admin())destinations.push(['chapter-admin','Chapter control centre','Campus oversight, chapter roles and metrics']);
   if(teacher())destinations.push(['teaching','Teaching studio','Workshops, students and feedback']);
   if(founder())destinations.push(['founder-room','Founder room','Meetings and decisions'],['investors','Investors','Club partnerships']);
   if(officerAccess())destinations.push(['office','My office','Officer duties and work records']);
@@ -3229,7 +3232,7 @@ function actions(e) {
   if(action==='accounts')return accountsDialog();
   if(action==='separateAccountHere')return changeAccountTab(true);
   if(action==='mainAccountHere')return changeAccountTab(false);
-  if(chapters?.action(action,id,el))return;
+  if(chapters?.action(action,id,el)||chapterOps?.action(action,id,el))return;
   if(commerce?.action(action,id,el))return;
   if(certification?.action(action,id,el))return;
   if(advancedActions(action,id,el))return;
@@ -3815,6 +3818,7 @@ async function openNotification(id,button) {
     courseTrack='all';render();
     setTimeout(()=>{const target=document.getElementById(`course-${n.target_id}`);target?.querySelector('h2,h3')?.focus({preventScroll:true});target?.scrollIntoView({behavior:'smooth',block:'center'});},80);
   }
+  else if(n.target_type==='chapter_office'){close();location.hash='#chapter-offices';route();return;}
   else if(n.target_type==='office_meeting')location.hash='#meeting-room/'+n.target_id;
   else if(n.target_type==='meeting')location.hash='#founder-room';
   else if(n.target_type==='founder')location.hash='#founder-room';
@@ -4023,7 +4027,7 @@ function uploadRevisionDialog(id) {
 async function submit(e) {
   if(session&&checkSessionExpiry()){e.preventDefault();return;}
   if(sessionEnding&&!session&&!['login','verify','passwordResetRequest'].includes(e.target.dataset.kind)){e.preventDefault();signInDialog('signin');return;}
-  if(chapters?.submit(e))return;
+  if(chapters?.submit(e)||chapterOps?.submit(e))return;
   if(commerce?.handleSubmit(e))return;
   if(certification?.handleSubmit(e))return;
   if(e.target.id==='dmComposer'&&advancedReady&&dmReady||['spaceCoursePicker','spaceProjectPicker','spaceLibrarySearch','spaceNotificationPreferences','spaceEventSearch'].includes(e.target.id)||e.target.id==='editor'&&e.target.dataset.kind?.startsWith('space')){await advancedSubmit(e);return;}
@@ -4971,6 +4975,9 @@ adminSecurity=createAdminSecurity({db,current:()=>({id:session?.user.id||''}),ch
 adminSecurity.bind();
 chapters=createChapterWorkspace({db,esc,head,render,modal,close,show,fail,deadline:requestWithDeadline,missing:schemaUnavailable,
  get:()=>{const slug=location.hash.slice(1).split('/')[1]||'';return {page,id:session?.user.id,generation:authGeneration,admin:admin(),allowed:!sessionEnding&&!workspaceHydrating&&!workspaceLoading&&!workspaceLoadError&&clubAccess(),slug:/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)&&slug.length<=48?slug:''};}
+});
+chapterOps=createChapterOperations({db,esc,head,render,modal,close,show,fail,deadline:requestWithDeadline,missing:schemaUnavailable,
+ get:()=>{const target=location.hash.slice(1).split('/')[1]||'';return {page,id:session?.user.id,generation:authGeneration,admin:admin(),allowed:!sessionEnding&&!workspaceHydrating&&!workspaceLoading&&!workspaceLoadError&&clubAccess(),chapter:memberProfileId(target)?target:''};}
 });
 analytics=window.SpaceAnalytics?.create({db,get:()=>({id:session?.user.id||'',generation:authGeneration,page,admin:admin(),allowed:!!session&&!sessionEnding&&clubAccess()})})||null;
 metrics=window.SpaceMetrics?.create({db,get:()=>({id:session?.user.id||'',generation:authGeneration,page,peer:activePeerId||'',channel:activeChannelId||'',course:activeCourseId||'',admin:admin(),teacher:teacher(),reportAllowed:financeReportAccess(),financeReport,financeMonth,financeReportError,managesCourse:!!activeCourseId&&courseManager((cache.courses||[]).find(c=>c.id===activeCourseId)),allowed:!!session&&!sessionEnding&&clubAccess()})})||null;

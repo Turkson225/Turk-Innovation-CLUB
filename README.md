@@ -676,3 +676,12 @@ workspaces. Central administrators create chapters and appoint chapter leaders;
 coordinators review their own chapter's member requests and publish local
 activities. See the [chapter setup and pilot guide](docs/university_chapters.md)
 for the new Supabase migration, first-coordinator walkthrough and access checks.
+
+### Chapter control centre and offices
+
+Central admins can compare campuses, appoint chapter officers and track local
+work from **Administration → Chapter control centre**. Chapter officers open
+**My chapter offices** to review and submit their assignments. Apply the
+[chapter operations migration](supabase/migrations/20261119000000_chapter_operations.sql)
+after the university chapters migration. See the [activation and operations guide](docs/chapter_operations.md)
+for role permissions, metrics definitions and pilot checks.

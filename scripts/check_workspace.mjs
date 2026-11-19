@@ -22,7 +22,7 @@ function harness({localItems=new Map(),sessionItems=new Map(),location:initialLo
   const storage=items=>({getItem(key){return items.get(key)??null;},setItem(key,value){items.set(key,value);},removeItem(key){items.delete(key);}});
   let clientOptions;
   const context=vm.createContext({console,URL,crypto:globalThis.crypto,Blob,Date,Map,Set,Promise,setTimeout(callback,delay=0){const id=++timerId;timers.set(id,{callback,delay});return id;},clearTimeout(id){timers.delete(id);},setInterval(){return 1;},clearInterval(){},sessionStorage:storage(sessionItems),localStorage:storage(localItems),createClient(_url,_key,options){clientOptions=options;return db;},window:{INNOVATEX_CONFIG:{supabaseUrl:'https://qa.supabase.co',supabaseAnonKey:'fake'},addEventListener(){}},navigator:{},location:initialLocation,history:{replaceState(){}},document:{hidden:false,activeElement:null,querySelector(selector){return elements.get(selector)??null;},querySelectorAll(){return [];},getElementById(id){return elements.get('#'+id)??null;},addEventListener(){},documentElement:{dataset:{theme:'light'}}}});
-  const modules=['workspace-navigation.js','admin-security.js','auth-session.js','space-chapters.js'].map(name=>fs.readFileSync(root+'/'+name,'utf8').replace(/export /g,'')).join('\n');
+  const modules=['workspace-navigation.js','admin-security.js','auth-session.js','space-chapters.js','chapter-operations.js'].map(name=>fs.readFileSync(root+'/'+name,'utf8').replace(/export /g,'')).join('\n');
   const source=modules+'\n'+fs.readFileSync(root+'/app.js','utf8').replace(/^import .*\n/gm,'').replace(/\ninit\(\);\s*$/,'');
   vm.runInContext(source,context,{filename:'app.js'});
   const run=code=>vm.runInContext(code,context);

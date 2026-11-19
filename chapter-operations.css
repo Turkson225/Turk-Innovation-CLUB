@@ -1,0 +1,18 @@
+.chapter-ops-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,10.5rem),1fr)); gap:.7rem; margin:.8rem 0 1.25rem; }
+.chapter-ops-metrics div { min-width:0; border:1px solid var(--line,currentColor); border-radius:.75rem; padding:.85rem; background:var(--white); }
+.chapter-ops-metrics dt { font-size:.9rem; font-weight:700; }
+.chapter-ops-metrics dd { margin:.18rem 0; font-size:1.65rem; font-weight:700; font-variant-numeric:tabular-nums; }
+.chapter-ops-metrics small,.chapter-ops-table small { display:block; opacity:.8; }
+.chapter-ops-table { overflow-x:auto; margin:1rem 0; border:1px solid var(--line,currentColor); border-radius:.7rem; background:var(--white); }
+.chapter-ops-table table { border-collapse:collapse; width:100%; font-size:.95rem; }
+.chapter-ops-table caption { text-align:left; padding:.85rem; font-weight:700; }
+.chapter-ops-table th,.chapter-ops-table td { padding:.7rem .85rem; text-align:left; border-top:1px solid var(--line,currentColor); }
+.chapter-ops-table th { min-width:6rem; }
+.chapter-ops-table td a, .chapter-ops section .chapter-heading > a { color:var(--deep); font-weight:700; }
+.chapter-ops-table th:first-child { min-width:12rem; }
+.chapter-ops-table td:last-child { min-width:7rem; }
+.chapter-ops-filter { margin:.7rem 0; align-items:end; }
+.chapter-ops-filter label { display:grid; gap:.25rem; min-width:min(12rem,100%); }
+.chapter-ops-filter input,.chapter-ops-filter select { max-width:100%; }
+[data-chapterops-dialog] form { margin-top:1rem; }
+[data-chapterops-dialog] label { display:grid; gap:.3rem; }
