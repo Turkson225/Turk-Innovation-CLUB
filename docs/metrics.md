@@ -1,5 +1,7 @@
 # SPACE metrics
 
+See [daily, monthly and annual trends](metric_trends.md) for the cross-workspace charts and activation steps.
+
 ## Finance reports
 
 **Finance reports → Open month** now includes **Report metrics** beneath the selected monthly report. Administrators and assigned treasurers see the same approved-report totals they are already authorized to read. No new migration or extra metrics request is required. The existing approved monthly CSV remains the complete transaction export.
