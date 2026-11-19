@@ -2,6 +2,7 @@ import { createClient } from './vendor/supabase.js';
 import {pages,workspacePageInfo,canOpenWorkspacePage} from './workspace-navigation.js';
 import {createAdminSecurity} from './admin-security.js';
 import {createAuthPersistence} from './auth-session.js';
+import {createChapterWorkspace} from './space-chapters.js';
 
 const cfg = window.INNOVATEX_CONFIG || {};
 const configured = /^https:\/\/.+\.supabase\.co\/?$/.test(cfg.supabaseUrl || '') && !!cfg.supabaseAnonKey;
@@ -15,7 +16,7 @@ let accountNavigationPending=false;
 const {authTabStorage,authBrowserStorage,authBaseStorageKey,separateAccountMarker,separateAccountTab,separateSessionKey,authStorageKey,authPersistentStorage,SIGNED_OUT_KEY,clearSavedAuthTokens,migrateSavedAuth,clearTabEntries}=createAuthPersistence({cfg,configured,startupAuthCallback,startupRecovery,navigationPending:()=>accountNavigationPending});
 const db = configured && !startupRecovery ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storageKey:authStorageKey, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
 let commerce=null,certification=null,mobileWorkspace=null,guidance=null,memberWall=null,bento=null,cardSwap=null,memberId=null,sharedGlow=null,avatarStudio=null,spaceMap=null,metrics=null,analytics=null;
-let adminSecurity=null;
+let adminSecurity=null,chapters=null;
 let sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -334,7 +335,7 @@ const head = (label,title,subtitle,action='') => `<div class="page-head"><div><s
 const avatar = (name,large=false,photoPath='') => {const url=mediaUrl(photoPath);return `<span class="avatar ${large?'large':''}">${url?`<img src="${esc(url)}" alt="" loading="lazy">`:esc(initials(name))}</span>`;};
 const memberAvatar = (id,large=false) => {const p=(cache.profiles||[]).find(x=>x.id===id),fallback=avatar(p?.full_name||'Member',large,p?.avatar_path);return avatarStudio?.member(id,large,fallback)||fallback;};
 const roleBadge = p => {const labels={member:'Member',teacher:'Teacher',founder:'Founder',investor:'Investor',admin:'Administrator'};const role=Object.hasOwn(labels,p?.role)?p.role:'member';return `<span class="member-badge badge-${role}" title="Approved ${esc(labels[role])} account">${labels[role]}</span>${role==='founder'&&p?.founder_teaching_enabled===true?'<span class="member-badge badge-teacher" title="Can lead practical workshops">Teaching lead</span>':''}`;};
-const iconPaths={menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',home:'<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',founders:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',privacy:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',application:'<path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/>',members:'<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M17 5a3 3 0 0 1 0 6M19 14a5 5 0 0 1 2 4v2"/>',messages:'<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3 8.5 8.5 0 0 1 21 11.5z"/>',notifications:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',feed:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',channels:'<path d="M4 5h16v11H8l-4 4zM8 9h8M8 12h5"/>',library:'<path d="M4 4h12l4 4v12H4zM16 4v4h4M8 13h8M8 17h6"/>',news:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h4M13 12h4M7 16h10"/>',projects:'<path d="M3 7h7l2 2h9v11H3zM3 7V4h8l2 3"/>',discussions:'<path d="M4 4h16v12H8l-4 4zM8 9h8M8 12h5"/>',courses:'<path d="M3 6 12 3l9 3-9 3-9-3zM5 10v7c4 3 10 3 14 0v-7M21 7v8"/>',events:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M8 14h3M8 17h3"/>',announcements:'<path d="M3 10h4l12-5v14L7 14H3zM7 14l2 7h4l-2-6M21 9v6"/>','founder-room':'<path d="m12 2 2.5 6.5L21 11l-6.5 2.5L12 20l-2.5-6.5L3 11l6.5-2.5z"/>',applications:'<path d="M5 3h14v18H5zM8 8h8M8 13l2 2 5-5"/>',moderation:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM12 7v6M12 17h.01"/>'};
+const iconPaths={chapters:'<path d="m3 9 9-5 9 5M5 10h14M6 11v7M10 11v7M14 11v7M18 11v7M4 20h16"/>',menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',home:'<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',founders:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',privacy:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',application:'<path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/>',members:'<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M17 5a3 3 0 0 1 0 6M19 14a5 5 0 0 1 2 4v2"/>',messages:'<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3 8.5 8.5 0 0 1 21 11.5z"/>',notifications:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',feed:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',channels:'<path d="M4 5h16v11H8l-4 4zM8 9h8M8 12h5"/>',library:'<path d="M4 4h12l4 4v12H4zM16 4v4h4M8 13h8M8 17h6"/>',news:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h4M13 12h4M7 16h10"/>',projects:'<path d="M3 7h7l2 2h9v11H3zM3 7V4h8l2 3"/>',discussions:'<path d="M4 4h16v12H8l-4 4zM8 9h8M8 12h5"/>',courses:'<path d="M3 6 12 3l9 3-9 3-9-3zM5 10v7c4 3 10 3 14 0v-7M21 7v8"/>',events:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M8 14h3M8 17h3"/>',announcements:'<path d="M3 10h4l12-5v14L7 14H3zM7 14l2 7h4l-2-6M21 9v6"/>','founder-room':'<path d="m12 2 2.5 6.5L21 11l-6.5 2.5L12 20l-2.5-6.5L3 11l6.5-2.5z"/>',applications:'<path d="M5 3h14v18H5zM8 8h8M8 13l2 2 5-5"/>',moderation:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM12 7v6M12 17h.01"/>'};
 iconPaths.investors='<path d="M3 20h18M5 16l5-5 4 3 5-7M16 7h3v3"/>';
 iconPaths['space-map']='<path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0z"/><circle cx="12" cy="10" r="3"/>';
 iconPaths['avatar-studio']='<circle cx="12" cy="7" r="4"/><path d="m8 13-5 4 3 4 3-3v4h6v-4l3 3 3-4-5-4z"/>';
@@ -504,6 +505,7 @@ const networkOffline=()=>navigator.onLine===false;
 const schemaUnavailable=error=>['PGRST202','PGRST204','PGRST205','42P01','42703','42883'].includes(error?.code);
 const pageDataReady=(target=page)=>(pageRefreshDependencies[target]||[]).every(name=>Object.hasOwn(cache,name));
 function clearWorkspaceLoads(){
+  chapters?.reset();
   for(const load of workspacePageLoads.values())clearTimeout(load.timer);
   workspacePageLoads.clear();workspacePageRequests.clear();workspacePageVersions.clear();workspaceCapabilityTask=null;profilesComplete=false;
   updateNetworkStatus();
@@ -1437,7 +1439,7 @@ function route() {
     page='home';
     if(authReady||!configured){
       const [,date,view]=location.hash.slice(1).split('/');
-      pendingProtectedPage=requested==='calendar'&&calendarParseDay(date)?`calendar/${date}/${calendarViews.includes(view)?view:'month'}`:['members','shop','orders'].includes(requested)&&memberProfileId(date)?`${requested}/${date}`:requested;
+      pendingProtectedPage=requested==='calendar'&&calendarParseDay(date)?`calendar/${date}/${calendarViews.includes(view)?view:'month'}`:requested==='chapters'&&/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(date||'')&&date.length<=48?`chapters/${date}`:['members','shop','orders'].includes(requested)&&memberProfileId(date)?`${requested}/${date}`:requested;
       history.replaceState(null,'','#home');
     }
   }else if(!session&&authReady)pendingProtectedPage='';
@@ -1462,6 +1464,7 @@ function route() {
   if(!networkOffline()&&page==='messages'&&dmReady){if(dmInboxReady)void loadDmInbox().then(()=>{if(page==='messages'&&!activePeerId)render();});if(activePeerId)void loadDmThread();}
 }
 function render() {
+  chapters?.sync();
   updateNetworkStatus();
   const ownProfile=$('#myProfileLink');if(ownProfile&&session?.user.id)ownProfile.href='#members/'+session.user.id;
   if(adminSecurity?.blocked){
@@ -1508,7 +1511,7 @@ function render() {
   if(session&&approved()&&load&&!load.hadData&&['loading','offline','error'].includes(load.status)&&!learningSelectionRequired()){
     analytics?.sync(null);metrics?.sync(null);spaceMap?.sync(null);avatarStudio?.sync(null);sharedGlow?.sync(null);window.SpaceChatWaves?.sync(null);memberWall?.sync(null);bento?.sync(null);cardSwap?.sync(null);$('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
   }
-  const views={'space-map':()=>spaceMap?.view()||head('COMMUNITY','SPACE Map','Reload SPACE to open the map.'),'avatar-studio':()=>avatarStudio?.view()||head('YOUR SPACE','Avatar studio','Reload SPACE to open the studio.'),'getting-started':()=>guidance?.welcome()||head('WELCOME','Getting started','Reload SPACE to open your welcome guide.'),'system-health':()=>admin()?(guidance?.healthView()||head('ADMINISTRATION','System health','Reload SPACE to open the checks.')):'',...Object.fromEntries(['shop','cart','orders','order-desk','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
+  const views={chapters:()=>chapters.view(),'space-map':()=>spaceMap?.view()||head('COMMUNITY','SPACE Map','Reload SPACE to open the map.'),'avatar-studio':()=>avatarStudio?.view()||head('YOUR SPACE','Avatar studio','Reload SPACE to open the studio.'),'getting-started':()=>guidance?.welcome()||head('WELCOME','Getting started','Reload SPACE to open your welcome guide.'),'system-health':()=>admin()?(guidance?.healthView()||head('ADMINISTRATION','System health','Reload SPACE to open the checks.')):'',...Object.fromEntries(['shop','cart','orders','order-desk','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
   $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'?(guidance?.banner()||'')+(commerce?.homeRoleBanner()||'')+(commerce?.homeShopBanner?.()||''):'')+(page==='admin'?'<a class="admin-order-shortcut" href="#order-desk"><strong>Orders &amp; fulfilment</strong><span>Process new purchases, update status and send receipts →</span></a>':'')+views[page]();
   metrics?.sync($('#content'));
@@ -1542,6 +1545,7 @@ function workspaceSearchItems(){
   if(approved())destinations.push(['getting-started','Getting started','Welcome and setup checklist'],['role-updates','Role updates','Assignment notes and acknowledgements']);
   if(investor())destinations.push(['notifications','Notifications','Personal role and club updates']);
   if(clubAccess())destinations.push(['space-map','SPACE Map','Selected people location sharing places and meetups'],['avatar-studio','Avatar studio','Character outfits looks and clothing'],['shop','SPACE shop','Club merchandise components and kits'],['cart','Basket','Review items and collection'],['orders','My orders','Order tracking and messages'],['classroom','Classrooms','Lessons files assignments feedback attendance gradebook certificates'],['meeting-room','Meetings & actions','Club agendas minutes and follow-up'],['project-board','Project workspace','Task boards and build evidence'],['feed','Activity feed','Build updates and conversations'],['messages','Messages','Private conversations'],['channels','Team channels','Discuss and share files'],['members','Members','Find a collaborator'],['courses','Courses','Your practical learning plan'],['projects','Projects','Plans, tasks and progress'],['library','Document library','Shared resources'],['news','Technology news','Ideas worth exploring'],['calendar','Calendar','Workshops and deadlines'],['events','Events','Club meetups and sessions'],['notifications','Inbox','Your notifications'],['announcements','Alerts','Club announcements'],['discussions','Discussions','Questions and ideas'],['inventory','Inventory','Club tools and components']);
+  if(clubAccess())destinations.push(['chapters','University chapters','Campus chapter membership, workshops and projects']);
   if(teacher())destinations.push(['teaching','Teaching studio','Workshops, students and feedback']);
   if(founder())destinations.push(['founder-room','Founder room','Meetings and decisions'],['investors','Investors','Club partnerships']);
   if(officerAccess())destinations.push(['office','My office','Officer duties and work records']);
@@ -3225,6 +3229,7 @@ function actions(e) {
   if(action==='accounts')return accountsDialog();
   if(action==='separateAccountHere')return changeAccountTab(true);
   if(action==='mainAccountHere')return changeAccountTab(false);
+  if(chapters?.action(action,id,el))return;
   if(commerce?.action(action,id,el))return;
   if(certification?.action(action,id,el))return;
   if(advancedActions(action,id,el))return;
@@ -4018,6 +4023,7 @@ function uploadRevisionDialog(id) {
 async function submit(e) {
   if(session&&checkSessionExpiry()){e.preventDefault();return;}
   if(sessionEnding&&!session&&!['login','verify','passwordResetRequest'].includes(e.target.dataset.kind)){e.preventDefault();signInDialog('signin');return;}
+  if(chapters?.submit(e))return;
   if(commerce?.handleSubmit(e))return;
   if(certification?.handleSubmit(e))return;
   if(e.target.id==='dmComposer'&&advancedReady&&dmReady||['spaceCoursePicker','spaceProjectPicker','spaceLibrarySearch','spaceNotificationPreferences','spaceEventSearch'].includes(e.target.id)||e.target.id==='editor'&&e.target.dataset.kind?.startsWith('space')){await advancedSubmit(e);return;}
@@ -4963,6 +4969,9 @@ function memberIdState(){
 }
 adminSecurity=createAdminSecurity({db,current:()=>({id:session?.user.id||''}),changed:()=>{if(adminSecurity?.blocked)render();},verified:async owner=>{const {data,error}=await db.auth.getSession();if(error)throw error;if(session?.user.id===owner&&data.session?.user.id===owner)await signedIn(data.session);},signOut});
 adminSecurity.bind();
+chapters=createChapterWorkspace({db,esc,head,render,modal,close,show,fail,deadline:requestWithDeadline,missing:schemaUnavailable,
+ get:()=>{const slug=location.hash.slice(1).split('/')[1]||'';return {page,id:session?.user.id,generation:authGeneration,admin:admin(),allowed:!sessionEnding&&!workspaceHydrating&&!workspaceLoading&&!workspaceLoadError&&clubAccess(),slug:/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)&&slug.length<=48?slug:''};}
+});
 analytics=window.SpaceAnalytics?.create({db,get:()=>({id:session?.user.id||'',generation:authGeneration,page,admin:admin(),allowed:!!session&&!sessionEnding&&clubAccess()})})||null;
 metrics=window.SpaceMetrics?.create({db,get:()=>({id:session?.user.id||'',generation:authGeneration,page,peer:activePeerId||'',channel:activeChannelId||'',course:activeCourseId||'',admin:admin(),teacher:teacher(),reportAllowed:financeReportAccess(),financeReport,financeMonth,financeReportError,managesCourse:!!activeCourseId&&courseManager((cache.courses||[]).find(c=>c.id===activeCourseId)),allowed:!!session&&!sessionEnding&&clubAccess()})})||null;
 avatarStudio=window.SpaceAvatars?.create({db,get:()=>({id:session?.user.id||'',generation:authGeneration,page,allowed:!!session&&!sessionEnding&&clubAccess()}),fallback:(id,large)=>{const p=(cache.profiles||[]).find(x=>x.id===id);return avatar(p?.full_name||'Member',large,p?.avatar_path);}})||null;

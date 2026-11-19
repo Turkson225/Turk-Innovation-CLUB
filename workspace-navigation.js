@@ -1,6 +1,7 @@
 // Route catalogue and capability checks shared by navigation and search.
-export const pages = ['space-map','avatar-studio','getting-started','system-health','shop','cart','orders','order-desk','shop-admin','role-updates','classroom','meeting-room','project-board','home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','finance-reports','officers','office','discussions','courses','teaching','events','calendar','announcements','founder-room'];
+export const pages = ['chapters','space-map','avatar-studio','getting-started','system-health','shop','cart','orders','order-desk','shop-admin','role-updates','classroom','meeting-room','project-board','home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','finance-reports','officers','office','discussions','courses','teaching','events','calendar','announcements','founder-room'];
 export const workspacePageInfo={
+  chapters:{title:'University chapters',section:'Community',aliases:'Campus chapter membership teaching events projects'},
   'space-map':{title:'SPACE Map',section:'Community',aliases:'Location people places meetups sharing ghost mode'},
   'avatar-studio':{title:'Avatar studio',section:'Your workspace',aliases:'Character clothing outfit style wardrobe'},
   'getting-started':{title:'Getting started',section:'Your workspace',aliases:'Welcome checklist onboarding teacher setup'},

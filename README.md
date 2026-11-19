@@ -668,3 +668,11 @@ Run the entire [upgrade_analytics_periods.sql](supabase/upgrade_analytics_period
 # Monthly finance report metrics — 19 October 2026
 
 **Finance reports → Open month** includes income/expense bars, an expense-category pie/bar switch, net movement, approved transaction count and an expenses-to-income ratio. Charts use the complete approved monthly report and follow the selected month, including for assigned treasurers with read-only report access. The existing approved report CSV exports all approved transactions. No new Supabase migration is needed. See [report metric definitions](docs/metrics.md#finance-reports).
+
+## University chapters
+
+SPACE has a signed-in chapter directory, local join requests and university
+workspaces. Central administrators create chapters and appoint chapter leaders;
+coordinators review their own chapter's member requests and publish local
+activities. See the [chapter setup and pilot guide](docs/university_chapters.md)
+for the new Supabase migration, first-coordinator walkthrough and access checks.
