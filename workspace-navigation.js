@@ -1,6 +1,8 @@
 // Route catalogue and capability checks shared by navigation and search.
-export const pages = ['chapters','space-map','avatar-studio','getting-started','system-health','shop','cart','orders','order-desk','shop-admin','role-updates','classroom','meeting-room','project-board','home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','finance-reports','officers','office','discussions','courses','teaching','events','calendar','announcements','founder-room'];
+export const pages = ['chapters','chapter-admin','chapter-offices','space-map','avatar-studio','getting-started','system-health','shop','cart','orders','order-desk','shop-admin','role-updates','classroom','meeting-room','project-board','home','about','founders','investors','investor-portal','admin','privacy','application','applications','moderation','notifications','members','messages','feed','channels','library','news','projects','inventory','finance','finance-review','finance-reports','officers','office','discussions','courses','teaching','events','calendar','announcements','founder-room'];
 export const workspacePageInfo={
+  'chapter-admin':{title:'Chapter control centre',section:'Administration',aliases:'University campuses chapter leadership management metrics'},
+  'chapter-offices':{title:'My chapter offices',section:'Your workspace',aliases:'Chapter assignments office tasks coordinator secretary treasurer'},
   chapters:{title:'University chapters',section:'Community',aliases:'Campus chapter membership teaching events projects'},
   'space-map':{title:'SPACE Map',section:'Community',aliases:'Location people places meetups sharing ghost mode'},
   'avatar-studio':{title:'Avatar studio',section:'Your workspace',aliases:'Character clothing outfit style wardrobe'},
@@ -49,7 +51,7 @@ export const workspacePageInfo={
 };
 
 export function canOpenWorkspacePage(target,c){
- if(target==='system-health')return c.admin;
+ if(['system-health','chapter-admin'].includes(target))return c.admin;
  if(['getting-started','role-updates','notifications'].includes(target))return c.approved;
  if(['shop-admin','order-desk','officers','admin','applications','moderation','finance'].includes(target))return c.admin;
  if(target==='application')return c.signedIn&&!c.approved;

@@ -108,6 +108,7 @@ export function createChapterWorkspace({db,get,esc,head,render,modal,close,show,
       head(c.institution,c.name,c.institution,current.admin?button('edit','Edit chapter'):'')+
       `<div class="chapter-actions"><span class="chapter-tag">${esc(labelStatus(c.status))}</span>${membership?`<span class="chapter-tag">${esc(membership)}</span>`:''}</div>
       ${c.description?`<p class="chapter-copy chapter-description">${esc(c.description)}</p>`:''}
+      ${current.admin?`<p><a href="#chapter-admin/${encodeURIComponent(c.id)}">Manage chapter operations →</a></p>`:mine==='active'&&c.status==='active'?'<p><a href="#chapter-offices">My chapter offices →</a></p>':''}
       ${c.status==='archived'?'<p class="notice">This chapter is archived. Its records are read-only.</p>':''}
       ${c.status==='draft'?'<p class="notice">This draft is visible only to central administrators. Set its status to Open to accept applications.</p>':''}`+
       (!data.can_read?`<section class="chapter-section"><h2>Membership</h2><p>${esc(mine==='pending'?'Chapter leadership will review your request.':mine?'Contact chapter leadership if you have questions about your membership.':'Request membership to open this chapter’s activities and workshop listings.')}</p>${!mine&&c.status==='active'?button('join','Request to join','','button'):''}</section>`:
