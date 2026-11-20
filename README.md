@@ -82,6 +82,16 @@ The regression fixtures cover complete retrieval and CSV export of **2,505 membe
 
 After a valid password sign-in or signup verification, SPACE checks the account profile before allowing access. Course selections load separately and cannot hold the authentication form open. An unavailable or missing learning table leaves existing account access working; the new learning controls still require their migration. Account checks time out after 15 seconds with **Retry account check**, which reuses the authenticated session. Initial workspace loads have a 20-second deadline and a retry screen; other pages load when opened. Course-choice lookups have an 8-second deadline, and late responses cannot restore a signed-out account. This login fix requires no SQL migration. Run `node scripts/check_workspace.mjs` for the offline regression checks, then verify password sign-in, signup verification and password recovery with a test account on the deployed site.
 
+## Upload slides and share files from Google Drive
+
+In **Teaching studio → Materials**, choose **Upload file** or open a classroom and go to **Lessons & files → Upload file**. Choose the workshop, give the material a title, and publish it. Direct uploads accept PDFs, PowerPoint files and Word documents up to 20 MB. SPACE controls file access through the classroom enrollment. Use the general learning library only for material intended for the whole club.
+
+For a file already in Google Drive, select it in Drive and use **Share → Copy link**. In the workshop, choose **+ Google Drive link**, paste the link, and select **Share with workshop**. Share individual files such as Slides, Docs, Sheets, PDFs, PowerPoint files or videos. The file stays in Drive. Students can select **Preview** and use **Open in Google Drive** if their device cannot show the preview.
+
+Keep private Drive files **Restricted** and grant the intended students **Viewer** access in Drive. SPACE enrollment controls who sees the link in the classroom, while Google controls who can open the file. If you use **Anyone with the link**, recipients can forward it outside SPACE. Use a direct upload if you want SPACE alone to control access. Removing or hiding a material in SPACE does not change sharing in Drive.
+
+To enable Drive links on an existing deployment, run the entire [Drive learning materials migration](supabase/migrations/20261121000000_drive_learning_materials.sql) in **Supabase → SQL Editor → New query**, then deploy the matching frontend. There are no Google API keys or OAuth credentials to configure. After deployment, try a link with an enrolled test account and check that the Google account used for the preview has Viewer access.
+
 ## Activate the connected learning dashboards — 14 October 2026
 
 Run the **entire** [`supabase/upgrade_learning_dashboards.sql`](supabase/upgrade_learning_dashboards.sql) in **Supabase → SQL Editor → New query → Run**, after the existing course lifecycle, classroom access, private applications, approval emails and founder teaching upgrades. Then reopen SPACE and sign in. This is one new migration; it runs inside a transaction and is safe to rerun. The new controls activate after the database tables exist. Older workshops and their feedback keep working before activation.
