@@ -1,0 +1,23 @@
+.admin-mail { display:grid; gap:.8rem; margin:1rem 0 1.35rem; }
+.admin-mail > :is(h2,p) { margin:0; }
+.admin-mail .admin-mail-feedback:empty { display:none; }
+.admin-mail .admin-mail-feedback:not(:empty) { background:var(--surface-soft,var(--bg)); border-radius:.55rem; padding:.65rem .8rem; }
+.admin-mail-status { display:flex; gap:.65rem 1rem; flex-wrap:wrap; align-items:center; color:var(--muted); font-size:.85rem; }
+.admin-mail form { display:grid; gap:.8rem; max-width:75ch; }
+.admin-mail .field { margin:0; }
+.admin-mail .field small,.admin-mail-check small { display:block; color:var(--muted); font-size:.85rem; }
+.admin-mail fieldset { min-inline-size:0; margin:0; padding:0; border:0; }
+.admin-mail legend { padding:0; font-weight:700; margin-bottom:.5rem; }
+.admin-mail-categories { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(16rem,100%),1fr)); gap:.55rem; }
+.admin-mail-check { display:flex; align-items:flex-start; gap:.6rem; padding:.65rem .75rem; border:1px solid var(--line); border-radius:.55rem; }
+.admin-mail-check input { flex:none; margin:.2rem 0 0; inline-size:1rem; block-size:1rem; accent-color:var(--deep); }
+.admin-mail-log-head,.admin-mail-job header { display:flex; align-items:flex-start; justify-content:space-between; gap:.55rem 1rem; flex-wrap:wrap; }
+.admin-mail-log-head { padding-top:1rem; border-top:1px solid var(--line); }
+.admin-mail-log-head h3,.admin-mail-log-head p { margin:0 0 .35rem; }
+.admin-mail-log { display:grid; gap:.55rem; min-width:0; }
+.admin-mail-job { padding:.8rem; border:1px solid var(--line); border-radius:.65rem; background:var(--bg); min-width:0; overflow-wrap:anywhere; }
+.admin-mail-job h3 { font-size:1rem; margin:.35rem 0 0; }
+.admin-mail-job p { margin:.2rem 0; color:var(--muted); }
+.admin-mail-job details { font-size:.83rem; margin-top:.5rem; }
+.admin-mail-job summary { cursor:pointer; }
+.admin-mail-job dd { margin:0 0 .45rem; color:var(--muted); }

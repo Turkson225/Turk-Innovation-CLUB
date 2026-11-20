@@ -7,3 +7,7 @@ verify_jwt = false
 # secret API key before touching the private push queue.
 [functions.send-push-notifications]
 verify_jwt = false
+
+# This worker accepts only the named admin_notification_worker secret API key.
+[functions.send-admin-notification-emails]
+verify_jwt = false

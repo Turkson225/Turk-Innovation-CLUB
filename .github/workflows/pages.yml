@@ -30,6 +30,7 @@ jobs:
         run: |
           npm run check:migrations
           npm run check:security
+          npm run check:admin-mail
           npm run check:chapters
           npm run check:chapter-operations
       - name: Check application and public verification
@@ -79,6 +80,7 @@ jobs:
           cp admin-security.js admin-security.css auth-session.js workspace-navigation.js reset-password.css space-chapters.js space-chapters.css chapter-operations.js chapter-operations.css _site/
           cp -R assets about founders icons vendor _site/
           cp space-tours.js space-tours.css _site/
+          cp space-admin-email.js space-admin-email.css _site/
           cp space-workspace-refresh.js space-workspace-refresh.css _site/
       - uses: actions/upload-pages-artifact@v3
         if: github.event_name != 'pull_request'
