@@ -45,5 +45,30 @@ try{
  await check('Hourly limits hold even after the minute counters reset',async()=>{await dm(15);await db.query("update space_private.action_quotas set used=400 where actor_id=$1 and scope='conversation' and seconds=3600",[uuid(15)]);await db.query("update space_private.action_quotas set started_at=clock_timestamp()-interval '2 minutes' where actor_id=$1 and seconds=60",[uuid(15)]);await assert.rejects(()=>dm(15),/too quickly/);});
  await check('Notification fan-out is bounded independently of message inserts',async()=>{await db.query("insert into space_private.action_quotas(actor_id,scope,target,seconds,started_at,used) values($1,'notification-recipient',$2,60,clock_timestamp(),120)",[uuid(16),uuid(11)]);await assert.rejects(()=>dm(16),/too quickly/);assert.equal((await db.query('select count(*)::int n from direct_messages where sender_id=$1',[uuid(16)])).rows[0].n,0);});
  await check('Anonymous users still cannot read private application answers',async()=>{await assert.rejects(()=>db.transaction(async t=>{await t.exec('set local role anon');return t.query('select * from application_answers');}),/permission denied/);});
+ // PostgREST maps the submitted columns to EXCLUDED in its conflict clause.
+ const upsertAnswer=(actor,reason,user=actor)=>as(actor,'aal1',
+   `insert into application_answers (user_id,reason) values ($1,$2)
+    on conflict (user_id) do update set user_id=excluded.user_id,reason=excluded.reason`,
+   [uuid(user),reason]);
+ await db.query("update profiles set membership_status='pending' where id in ($1,$2)",[uuid(8),uuid(9)]);
+ await check('The application fix restores both first-time submissions and edits',async()=>{
+   await assert.rejects(()=>upsertAnswer(8,'First application'),/permission denied for table application_answers/);
+   const fix=sql('20261121010000_fix_application_answer_submission.sql');
+   await client.query(fix);await client.query(fix);
+   await upsertAnswer(8,'First application');
+   await upsertAnswer(8,'Updated application');
+   assert.equal((await as(8,'aal1','select reason from application_answers')).rows[0].reason,'Updated application');
+   assert.equal((await as(1,'aal2','select reason from application_answers where user_id=$1',[uuid(8)])).rows[0].reason,'Updated application');
+ });
+ await check('Applications still enforce row ownership, pending status, and administrator review',async()=>{
+   assert.deepEqual((await as(9,'aal1','select reason from application_answers')).rows,[]);
+   await assert.rejects(()=>upsertAnswer(9,'Cannot submit for someone else',8),/row-level security/);
+   await assert.rejects(()=>upsertAnswer(10,'Already approved'),/row-level security/);
+   await assert.rejects(()=>as(8,'aal1','update application_answers set user_id=$1 where user_id=auth.uid()',[uuid(9)]),/ownership cannot be changed/);
+   await assert.rejects(()=>as(8,'aal1','update application_answers set updated_at=now() where user_id=auth.uid()'),/permission denied/);
+   await assert.rejects(()=>as(1,'aal2',"select review_membership($1,'approved')",[uuid(9)]),/must submit a reason/);
+   await as(1,'aal2',"select review_membership($1,'approved')",[uuid(8)]);
+   await assert.rejects(()=>upsertAnswer(8,'Cannot edit after approval'),/row-level security/);
+ });
  console.log(`${checks}/${checks} security database checks passed.`);
 }finally{await db.close();}
