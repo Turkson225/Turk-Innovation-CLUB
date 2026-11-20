@@ -22,7 +22,7 @@ function harness({localItems=new Map(),sessionItems=new Map(),location:initialLo
   const storage=items=>({getItem(key){return items.get(key)??null;},setItem(key,value){items.set(key,value);},removeItem(key){items.delete(key);}});
   let clientOptions;
   const context=vm.createContext({console,URL,crypto:globalThis.crypto,Blob,Date,Map,Set,Promise,setTimeout(callback,delay=0){const id=++timerId;timers.set(id,{callback,delay});return id;},clearTimeout(id){timers.delete(id);},setInterval(){return 1;},clearInterval(){},sessionStorage:storage(sessionItems),localStorage:storage(localItems),createClient(_url,_key,options){clientOptions=options;return db;},window:{INNOVATEX_CONFIG:{supabaseUrl:'https://qa.supabase.co',supabaseAnonKey:'fake'},addEventListener(){}},navigator:{},location:initialLocation,history:{replaceState(){}},document:{hidden:false,activeElement:null,querySelector(selector){return elements.get(selector)??null;},querySelectorAll(){return [];},getElementById(id){return elements.get('#'+id)??null;},addEventListener(){},documentElement:{dataset:{theme:'light'}}}});
-  const modules=['workspace-navigation.js','admin-security.js','auth-session.js','space-chapters.js','chapter-operations.js'].map(name=>fs.readFileSync(root+'/'+name,'utf8').replace(/export /g,'')).join('\n');
+  const modules=['workspace-navigation.js','admin-security.js','auth-session.js','space-chapters.js','chapter-operations.js','assets/learning-drive.js'].map(name=>fs.readFileSync(root+'/'+name,'utf8').replace(/export /g,'')).join('\n');
   const source=modules+'\n'+fs.readFileSync(root+'/app.js','utf8').replace(/^import .*\n/gm,'').replace(/\ninit\(\);\s*$/,'');
   vm.runInContext(source,context,{filename:'app.js'});
   const run=code=>vm.runInContext(code,context);
@@ -1174,6 +1174,46 @@ test('Teacher work queues contain only selected-course submissions',()=>{const h
 test('Large classroom review queues render 24 submissions and allow the next page',()=>{const h=advancedHarness('teacher');h.run("page='classroom';activeCourseId='c1';classroomView='work';cache.classroom_assignment_submissions=Array.from({length:30},(_,i)=>({id:'attempt'+i,assignment_id:'a1',learner_id:'learner',review_status:'submitted',details:'Review sample '+i,created_at:'2026-10-17'}))");let html=h.run('classroomWorkspace()');assert.equal((html.match(/data-action="classworkSeen"/g)||[]).length,24);assert(html.includes('data-action="classroomWorkPage"'));action(h,{action:'classroomWorkPage',page:'1'});html=h.run('classroomWorkspace()');assert.equal((html.match(/data-action="classworkSeen"/g)||[]).length,6);});
 test('Teacher roster pages are bounded and exclude another course’s students',()=>{const h=advancedHarness('teacher');h.run("classroomView='students';cache.course_roster=Array.from({length:30},(_,i)=>({course_id:'c1',learner_id:'person'+i,full_name:'Student '+i,status:'enrolled'}));cache.course_roster.push({course_id:'c2',learner_id:'outsider',full_name:'PRIVATE_OTHER_STUDENT'})");const html=h.run('classroomWorkspace()');assert.equal((html.match(/data-action="certificateComplete"/g)||[]).length,24);assert(!html.includes('PRIVATE_OTHER_STUDENT'));assert(html.includes('classroomPeoplePage'));});
 test('Shared classroom course links map legacy feedback and materials to their new tabs',()=>{const h=advancedHarness();h.run("openWorkspaceCourse('c1','feedback')");assert.equal(h.context.location.hash,'#classroom/c1/work');h.run("openWorkspaceCourse('c1','materials')");assert.equal(h.context.location.hash,'#classroom/c1/learn');});
+test('Drive links keep the file ID and resource key without embedding arbitrary destinations',()=>{
+  const h=harness();const parse=url=>h.exec('googleDriveMaterial(qaArgs)',url);
+  const file='Example_File-4QB7qh7Dx';
+  assert.equal(parse('https://drive.google.com/open?id='+file+'&resourcekey=0-fileKey').preview,
+    'https://drive.google.com/file/d/'+file+'/preview?resourcekey=0-fileKey');
+  for(const editor of ['presentation','document','spreadsheets']){
+    const base='https://docs.google.com/'+editor+'/d/'+file;
+    assert.equal(parse(base+'/edit?usp=sharing#slide=id.p1').open,base+'/edit');
+    assert.equal(parse(base+'/edit').preview,base+'/preview');
+  }
+  for(const url of [
+    'https://drive.google.com.evil.test/file/d/'+file+'/view',
+    'https://drive.google.com@evil.test/file/d/'+file+'/view',
+    'https://drive.google.com/drive/folders/'+file,
+    'https://docs.google.com/url?q=https://evil.test',
+    'http://drive.google.com/file/d/'+file+'/view',
+    'https://drive.google.com/file/d/'+file+'/view?resourcekey=%22'
+  ])assert.equal(parse(url),null,url);
+});
+test('Workshop materials keep direct downloads and open Drive previews only on request',()=>{
+  const h=advancedHarness();
+  h.elements.set('#modal',node({open:false,showModal(){this.open=true;}}));
+  h.run(`learningReady=true;classroomView='learn';cache.learning_materials=[
+    {id:'upload',course_id:'c1',title:'Local notes',kind:'notes',file_name:'notes.pdf',file_size:120},
+    {id:'drive',course_id:'c1',title:'Example slides',kind:'slides',drive_url:'https://docs.google.com/presentation/d/Example_File-4QB7qh7Dx/edit'},
+    {id:'hidden',course_id:'c1',title:'Hidden slides',kind:'slides',drive_url:'https://drive.google.com/file/d/Example_File-4QB7qh7Dx/view',hidden_at:'2026-11-20'}
+  ];`);
+  const studentPage=h.run('classroomWorkspace()');
+  assert.match(studentPage,/downloadLearning/);
+  assert.match(studentPage,/viewDriveMaterial/);
+  assert.doesNotMatch(studentPage,/driveLearningForm|Hidden slides|<iframe/);
+  action(h,{action:'viewDriveMaterial',id:'hidden'});
+  assert.equal(h.elements.get('#modal').open,false);
+  action(h,{action:'viewDriveMaterial',id:'drive'});
+  const dialog=h.elements.get('#modalContent').innerHTML;
+  assert.match(dialog,/src="https:\/\/docs\.google\.com\/presentation\/d\/Example_File-4QB7qh7Dx\/preview"/);
+  assert.match(dialog,/Open in Google Drive/);
+  const teacher=advancedHarness('teacher');
+  assert.match(teacher.run("learningReady=true;classroomView='learn';classroomWorkspace()"),/driveLearningForm" data-course="c1"/);
+});
 test('Classroom refresh includes resources and welcome refresh includes own learning dependencies',()=>{const h=harness();assert(h.run("pageRefreshDependencies.classroom.includes('learning_materials')"));assert(h.run("pageRefreshDependencies['getting-started'].includes('member_learning_paths')"));});
 test('Onboarding async actions cannot swallow unrelated workspace actions',()=>{const h=learningHarness();let count=0;h.context.guidanceStub={action(){count++;return Promise.resolve(true);}};h.run('guidance=guidanceStub');action(h,{action:'courseView',view:'explore'});assert.equal(h.run('courseView'),'explore');assert.equal(count,0);action(h,{action:'onboardingShow'});assert.equal(count,1);});
 test('An approved teacher’s welcome action opens their teaching profile directly',()=>{const h=learningHarness('teacher');action(h,{action:'onboardingTeachingProfile'});assert.equal(h.run('teachingTab'),'profile');assert.equal(h.context.location.hash,'#teaching');});

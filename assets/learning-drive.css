@@ -1,0 +1,30 @@
+.drive-material-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem .75rem;
+  align-items: center;
+}
+
+#modal:has(.drive-material-viewer) {
+  width: min(980px, calc(100% - 24px));
+  max-height: calc(100dvh - 24px);
+}
+
+.drive-material-viewer {
+  display: grid;
+  gap: 12px;
+}
+
+.drive-material-viewer h2 {
+  padding-inline-end: 24px;
+  overflow-wrap: anywhere;
+}
+
+.drive-material-viewer iframe {
+  display: block;
+  width: 100%;
+  height: clamp(250px, 57dvh, 580px);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--white);
+}

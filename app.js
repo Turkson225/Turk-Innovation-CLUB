@@ -4,6 +4,7 @@ import {createAdminSecurity} from './admin-security.js';
 import {createAuthPersistence} from './auth-session.js';
 import {createChapterWorkspace} from './space-chapters.js';
 import {createChapterOperations} from './chapter-operations.js';
+import {googleDriveMaterial} from './assets/learning-drive.js';
 
 const cfg = window.INNOVATEX_CONFIG || {};
 const configured = /^https:\/\/.+\.supabase\.co\/?$/.test(cfg.supabaseUrl || '') && !!cfg.supabaseAnonKey;
@@ -1299,6 +1300,7 @@ async function init() {
   window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;updateInstallButton();show('SPACE is ready on your home screen.');});
   window.addEventListener('innovatexpush',()=>{if(session){void refreshInboxUnreadCount();void refreshVisiblePage();}});
   $('#modal').addEventListener('click',e=>{ if(e.target===$('#modal')) close(); });
+  $('#modal').addEventListener('close',e=>{if(!e.currentTarget.open)e.currentTarget.querySelector('.drive-material-viewer')?.remove();});
   $('.modal-close').onclick=close;
   setupImageViewer();
   updateDmViewport();
@@ -2495,7 +2497,18 @@ function courses() {
     <div class="course-view-switch" role="group" aria-label="Course views">${tab('mine','My learning',myCourses.length)}${tab('explore','Browse workshops',available.length)}</div>
     ${learningChoicesReady?learningStudentDashboard():''}${courseView==='explore'?explore:myLearning}`;
 }
-function materialRow(m){return `<div class="learning-row"><span class="tag blue">${esc(m.kind)}</span><div><strong>${esc(m.title)}</strong><small>${esc(m.file_name)} · ${fileSize(m.file_size)} · ${date(m.created_at)}</small>${m.description?`<p>${esc(m.description)}</p>`:''}</div>${m.hidden_at?'<span class="tag gold">Hidden</span>':`<button class="text-button" data-action="downloadLearning" data-id="${esc(m.id)}">Download ↓</button>`}</div>`;}
+function materialRow(m){
+  const drive=googleDriveMaterial(m.drive_url);
+  const label=drive?'Google Drive':m.drive_url?'Link unavailable':esc(m.file_name)+' · '+fileSize(m.file_size);
+  const action=m.hidden_at?'<span class="tag gold">Hidden</span>':m.drive_url
+    ?(drive?`<button class="text-button" data-action="viewDriveMaterial" data-id="${esc(m.id)}">Preview</button>`:'')
+    :`<button class="text-button" data-action="downloadLearning" data-id="${esc(m.id)}">Download ↓</button>`;
+  return `<div class="learning-row"><span class="tag blue">${esc(m.kind)}</span><div><strong>${esc(m.title)}</strong><small>${label} · ${date(m.created_at)}</small>${m.description?`<p>${esc(m.description)}</p>`:''}</div>${action}</div>`;
+}
+function learningMaterialButtons(courseId='',uploadLabel='+ Upload file'){
+  const course=courseId?` data-course="${esc(courseId)}"`:'';
+  return `<div class="drive-material-actions"><button class="button button-sm" data-action="learningForm"${course}>${esc(uploadLabel)}</button><button class="button button-outline button-sm" data-action="driveLearningForm"${course}>+ Google Drive link</button></div>`;
+}
 let teachingTab = 'overview';
 function teachingWorkshopCard(c,enrollments,pending){
   const active=courseOpen(c);
@@ -2564,7 +2577,7 @@ function teaching(){
   const pastContent=courseReady&&courseLifecycleReady?`<div class="section-heading"><div><span class="eyebrow">TEACHING HISTORY</span><h2>Past workshops</h2></div><button class="button button-sm" data-action="courseForm">+ Publish next workshop</button></div><p class="subtle">These workshops are closed to new students. Existing students can still submit their work, receive feedback and keep their completion records.</p><div class="teaching-workshops">${pastWorkshops.length?pastWorkshops.map(c=>teachingWorkshopCard(c,enrollments,pending)).join(''):empty('No past workshops yet','End enrollment when a workshop is ready for the next intake.')}</div>`:'';
   const reviewContent=courseReady?`<div class="section-heading"><div><span class="eyebrow">PROJECT FEEDBACK</span><h2>${pending.length} project${pending.length===1?'':'s'} to review</h2></div><p>${courseSeenReady?`${unseen} new · Mark as seen when you read the build, then `:'Read the build and evidence, then '}accept the project or request a specific improvement. Past workshops stay in your review queue.</p></div><div class="grid grid-2">${pending.length?pending.map(s=>courseSubmissionCard(s,true)).join(''):empty('All caught up','New projects from students in your workshops will appear here.')}</div>
     <div class="section-heading"><div><span class="eyebrow">FEEDBACK HISTORY</span><h2>Reviewed projects</h2></div><p>Accepted work has a completion record. Revision requests let students submit an updated build.</p></div><div class="grid grid-2">${reviewed.length?reviewed.map(s=>courseSubmissionCard(s,false)).join(''):empty('No completed reviews yet','Your decisions and feedback will appear here.')}</div>`:'<div class="notice">Run the course journey migration to review project submissions.</div>';
-  const materialContent=learningReady?`<div class="section-heading"><div><span class="eyebrow">LEARNING MATERIALS</span><h2>${admin()?'Club materials':'Materials for my workshops'}</h2></div><button class="button button-sm" data-action="learningForm">+ Upload slides or notes</button></div><p class="subtle">Choose the related workshop when uploading a file so students can find it alongside their project. PDF, PPT, PPTX, DOC or DOCX · up to 20 MB.</p><div class="grid grid-2">${materials.length?materials.map(m=>`<div class="card teaching-card">${materialRow(m)}<div class="card-footer"><span>${m.course_id?esc((cache.courses||[]).find(c=>c.id===m.course_id)?.title||'Workshop'):'General learning library'} · ${esc(memberName(m.uploaded_by))}</span>${admin()?`<button class="text-button" data-action="toggleLearning" data-id="${esc(m.id)}">${m.hidden_at?'Restore':'Hide'}</button>`:''}</div></div>`).join(''):empty('No materials yet','Upload a presentation, worksheet or guide for your students.')}</div>`:'<div class="notice">Run the teacher materials migration to enable slides and learning files.</div>';
+  const materialContent=learningReady?`<div class="section-heading"><div><span class="eyebrow">LEARNING MATERIALS</span><h2>${admin()?'Club materials':'Materials for my workshops'}</h2></div>${learningMaterialButtons()}</div><p class="subtle">Upload slides or notes, or share a Google Drive file with one of your workshops. Uploads: PDF, PPT, PPTX, DOC or DOCX, up to 20 MB.</p><div class="grid grid-2">${materials.length?materials.map(m=>`<div class="card teaching-card">${materialRow(m)}<div class="card-footer"><span>${m.course_id?esc((cache.courses||[]).find(c=>c.id===m.course_id)?.title||'Workshop'):'General learning library'} · ${esc(memberName(m.uploaded_by))}</span>${admin()?`<button class="text-button" data-action="toggleLearning" data-id="${esc(m.id)}">${m.hidden_at?'Restore':'Hide'}</button>`:''}</div></div>`).join(''):empty('No materials yet','Upload a presentation, worksheet or guide for your students.')}</div>`:'<div class="notice">Run the teacher materials migration to enable slides and learning files.</div>';
   return `${head('TEACHING','Teaching studio','Plan practical workshops, support enrolled students and review their project work.',`<div class="profile-buttons"><button class="button button-outline" data-action="certificateSettings">Certificate signature</button><button class="button button-outline" data-action="certificateComplete">Confirm course completion</button>${advancedReady?'<a class="button button-outline" href="#classroom">Lessons, attendance & gradebook →</a>':''}${button('+ Publish workshop','courseForm')}${learningReady?button('+ Upload material','learningForm','button-outline'):''}</div>`)}
     ${learningHubReady?`<section class="learning-role-banner"><div><span class="eyebrow">${admin()?'ALL TEACHING COURSES':'YOUR ASSIGNED TEACHING COURSES'}</span><div class="pill-row">${allowedTeachingTracks().map(track=>`<span class="tag blue">${esc(track)}</span>`).join('')||'<span>Ask an administrator to assign your teaching courses.</span>'}</div><p class="subtle">My students shows your learners. Classwork & feedback handles tasks and reviews. Open workshops holds your class plans, materials and final projects.</p></div></section>`:admin()?'<div class="notice">Activate connected course choices, teacher rosters and role management with <code>supabase/upgrade_learning_dashboards.sql</code>.</div>':''}
     ${courseReady?`<div class="course-summary"><strong>${currentWorkshops.length} open workshop${currentWorkshops.length===1?'':'s'}</strong>${courseLifecycleReady?`<span>${pastWorkshops.length} past</span>`:''}<span>${uniqueLearners} student${uniqueLearners===1?'':'s'}</span><span>${pending.length} awaiting feedback${courseSeenReady?` · ${unseen} new`:''}</span><span>${completions.length} completed project${completions.length===1?'':'s'}</span></div>`:''}
@@ -3656,14 +3669,20 @@ function actions(e) {
     const options='<option value="">Library only</option>'+(cache.channels||[]).map(c=>`<option value="${esc(c.id)}" ${c.id===activeChannelId&&page==='channels'?'selected':''}># ${esc(c.name)}</option>`).join('');
     return modal(`<span class="eyebrow">CLUB LIBRARY</span><h2>Share a document</h2><p class="muted">Files are private to signed-in club members. Maximum size: 10 MB.</p><form id="editor" data-kind="document" class="form-stack"><div class="field"><label for="upload">Choose a file</label><input id="upload" name="upload" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.zip,.png,.jpg,.jpeg,.stl" required></div><div class="field"><label for="channel_id">Share in channel</label><select id="channel_id" name="channel_id">${options}</select></div><button class="button" type="submit">Upload document</button></form>`);
   }
-  if(action==='learningForm'){
+  if(action==='learningForm'||action==='driveLearningForm'){
     if(!teacher()||!learningReady)return show('Teacher access and the learning materials migration are required.');
     const assigned=(cache.courses||[]).filter(c=>admin()||c.instructor_id===session.user.id);
     const selected=assigned.some(c=>c.id===el.dataset.course)?el.dataset.course:'';
+    if(action==='driveLearningForm'){
+      if(!assigned.length)return show('Create or assign a workshop before adding a Google Drive link.');
+      const options='<option value="" disabled '+(!selected?'selected':'')+'>Choose a workshop</option>'+assigned.map(c=>`<option value="${esc(c.id)}" ${c.id===selected?'selected':''}>${esc(c.title)}</option>`).join('');
+      return modal(`<span class="eyebrow">TEACHING STUDIO</span><h2>Add from Google Drive</h2><p class="muted">In Google Drive, select the file, choose Share, then Copy link. Give your students Viewer access in Drive. For material you want SPACE alone to control, upload a file instead.</p><form id="editor" data-kind="driveLearningMaterial" class="form-stack">${field('Title','title')}${select('Type','kind',['slides','notes','worksheet','guide','video'])}<div class="field"><label for="course_id">Workshop</label><select id="course_id" name="course_id" required>${options}</select></div><div class="field"><label for="drive_url">Google Drive share link</label><input id="drive_url" name="drive_url" type="url" maxlength="1000" placeholder="https://drive.google.com/…" required></div><div class="field"><label for="description">Description (optional)</label><textarea id="description" name="description" maxlength="1500"></textarea></div><button class="button" type="submit">Share with workshop</button></form>`);
+    }
     const options='<option value="" '+(!selected?'selected':'')+'>General learning library</option>'+assigned.map(c=>`<option value="${esc(c.id)}" ${c.id===selected?'selected':''}>${esc(c.title)}</option>`).join('');
     return modal(`<span class="eyebrow">TEACHING STUDIO</span><h2>Upload learning material</h2><p class="muted">Choose one of your assigned workshops to make its slides, notes or guides easy for enrolled students to find. Choose the general library for material intended for the wider club. Maximum 20 MB per file.</p><form id="editor" data-kind="learningMaterial" class="form-stack">${field('Title','title')}${select('Type','kind',['slides','notes','worksheet','guide'])}<div class="field"><label for="course_id">Related workshop</label><select id="course_id" name="course_id">${options}</select></div><div class="field"><label for="description">Description (optional)</label><textarea id="description" name="description" maxlength="1500"></textarea></div><div class="field"><label for="learning_file">PDF, PPT, PPTX, DOC or DOCX</label><input id="learning_file" name="learning_file" type="file" accept=".pdf,.ppt,.pptx,.doc,.docx" required></div><button class="button" type="submit">Publish material</button></form>`);
   }
   if(action==='downloadLearning')return downloadLearning(id);
+  if(action==='viewDriveMaterial')return viewDriveMaterial(id);
   if(action==='toggleLearning'&&admin()){
     const m=(cache.learning_materials||[]).find(x=>x.id===id);if(m)return mutate(()=>db.from('learning_materials').update({hidden_at:m.hidden_at?null:new Date().toISOString()}).eq('id',id));return;
   }
@@ -3996,9 +4015,16 @@ async function downloadDocument(id) {
   const doc=(cache.documents||[]).find(d=>d.id===id);if(!doc)return;
   try {const {data,error}=await db.storage.from('club-documents').createSignedUrl(doc.storage_path,120);if(error)throw error;const a=document.createElement('a');a.href=data.signedUrl;a.target='_blank';a.rel='noopener noreferrer';document.body.appendChild(a);a.click();a.remove();}catch(e){fail(e);}
 }
+function viewDriveMaterial(id){
+  if(!clubAccess()||!learningReady)return;
+  const material=(cache.learning_materials||[]).find(m=>m.id===id&&!m.hidden_at);
+  const drive=googleDriveMaterial(material?.drive_url);
+  if(!drive)return;
+  modal(`<section class="drive-material-viewer"><span class="eyebrow">GOOGLE DRIVE</span><h2>${esc(material.title)}</h2><iframe src="${esc(drive.preview)}" title="${esc(material.title)}: Google Drive preview" sandbox="allow-scripts allow-same-origin allow-presentation" allow="fullscreen" referrerpolicy="no-referrer"></iframe><p class="subtle">If the preview is unavailable, open the file in Google Drive and sign in to the Google account your teacher shared it with.</p><div><a class="button button-outline button-sm" href="${esc(drive.open)}" target="_blank" rel="noopener noreferrer">Open in Google Drive ↗</a></div></section>`);
+}
 async function downloadLearning(id){
   if(!clubAccess()||!learningReady)return;
-  const m=(cache.learning_materials||[]).find(x=>x.id===id&&!x.hidden_at);if(!m)return;
+  const m=(cache.learning_materials||[]).find(x=>x.id===id&&!x.hidden_at);if(!m?.storage_path||m.drive_url)return;
   try{
     const {data,error}=await db.storage.from('club-learning').createSignedUrl(m.storage_path,120);
     if(error)throw error;
@@ -4490,6 +4516,19 @@ async function submit(e) {
         show('Profile photo updated.');return;
       }catch(error){if(path&&me?.avatar_path!==path)await db.storage.from('club-media').remove([path]);throw error;}
     }
+    if(kind==='driveLearningMaterial'){
+      if(!teacher()||!learningReady)throw Error('Approved teacher access is required.');
+      if(!(cache.courses||[]).some(c=>c.id===payload.course_id&&courseManager(c)))throw Error('Choose one of your assigned workshops.');
+      const drive=googleDriveMaterial(payload.drive_url);
+      if(!drive)throw Error('Use the share link for a single Google Drive file, Google Slides presentation, Doc or Sheet.');
+      const {error}=await db.from('learning_materials').insert({
+        course_id:payload.course_id,uploaded_by:session.user.id,title:String(payload.title).trim(),
+        description:String(payload.description||'').trim(),kind:payload.kind,drive_url:drive.open
+      });
+      if(error?.code==='PGRST204'||error?.code==='42703')throw Error('Google Drive links are not enabled yet. Ask an administrator to apply the Drive learning materials migration, or upload the file instead.');
+      if(error)throw error;
+      close();await refresh();show('Google Drive material shared with the workshop.');return;
+    }
     if(kind==='learningMaterial'){
       if(!teacher()||!learningReady)throw Error('Approved teacher access is required.');
       if(payload.course_id&&!(cache.courses||[]).some(c=>c.id===payload.course_id&&(admin()||c.instructor_id===session.user.id)))throw Error('Choose one of your assigned workshops.');
@@ -4786,7 +4825,7 @@ function classroomWorkspace(){
  const courseSubmissions=(cache.course_submissions||[]).filter(x=>x.course_id===c.id&&(manage||x.learner_id===session.user.id));
  let content='';
  if(classroomView==='overview')content=`<article class="card journey-course-brief"><h2>What you will build</h2><p class="space-preserve">${esc(brief.goal||'Your teacher will share the course brief here.')}</p>${brief.practice?`<h3>Practice and testing</h3><p class="space-preserve">${esc(brief.practice)}</p>`:''}${brief.tools?`<h3>Tools and components</h3><p class="space-preserve">${esc(brief.tools)}</p>`:''}<div class="profile-buttons"><a class="button" href="#classroom/${esc(c.id)}/learn">${manage?'Prepare lessons & files':'Start learning'} →</a><a class="button button-outline" href="#classroom/${esc(c.id)}/work">${manage?'Review student work':'My work & feedback'} →</a></div></article><section class="journey-course-steps" aria-label="Course journey"><span>1. Learn & practice</span><span>2. Submit work</span><span>3. Improve with feedback</span><span>4. Teacher confirms completion</span></section>${manage?`<details class="card journey-course-settings"><summary>Course settings & enrollment</summary><div class="profile-buttons">${courseOpen(c)?`<button class="button button-outline" data-action="editCourseContentForm" data-id="${esc(c.id)}">Edit course brief</button><button class="button button-outline" data-action="editCourseScheduleForm" data-id="${esc(c.id)}">Set dates</button>`:""}${courseOpen(c)?`<button class="text-button" data-action="endCourseForm" data-id="${esc(c.id)}">End enrollment</button>`:''}${courseLifecycleReady&&c.status!=='archived'?`<button class="text-button" data-action="deleteCourseForm" data-id="${esc(c.id)}">${enrollment||courseSubmissions.length?'Archive / remove':'Remove course'}</button>`:''}</div></details>`:''}`;
- if(classroomView==='learn')content=`<section class="card journey-course-files"><div class="section-heading"><div><h2>Materials & slides</h2><p>Resources for this course.</p></div>${manage&&learningReady?`<button class="button button-sm" data-action="learningForm" data-course="${esc(c.id)}">+ Add file</button>`:''}</div>${cleanUrl(c.resource_url)?`<a class="link" href="${esc(cleanUrl(c.resource_url))}" target="_blank" rel="noopener noreferrer">Open course resource ↗</a>`:''}${materials.map(materialRow).join('')||'<p class="subtle">Your teacher will share files here.</p>'}</section>${classroomRecords(c,'lessons')}`;
+ if(classroomView==='learn')content=`<section class="card journey-course-files"><div class="section-heading"><div><h2>Materials & slides</h2><p>Resources for this course.</p></div>${manage&&learningReady?learningMaterialButtons(c.id):''}</div>${cleanUrl(c.resource_url)?`<a class="link" href="${esc(cleanUrl(c.resource_url))}" target="_blank" rel="noopener noreferrer">Open course resource ↗</a>`:''}${materials.map(materialRow).join('')||'<p class="subtle">Your teacher will share files here.</p>'}</section>${classroomRecords(c,'lessons')}`;
  if(classroomView==='work'){
   if(manage){const pending=courseSubmissions.filter(s=>s.review_status==='submitted'&&s.learner_id!==session.user.id),reviewed=courseSubmissions.filter(s=>s.review_status!=='submitted');classroomProjectPage=Math.min(classroomProjectPage,Math.max(0,Math.ceil(pending.length/24)-1));
    content=`${learningHubReady?teacherClassworkPanel(c.id):'<div class="notice">Classwork is being prepared. Course completion projects remain below.</div>'}<section class="journey-final-project"><div class="section-heading"><div><h2>Course completion projects</h2><p>Accept a completed project with your saved signature to issue its certificate.</p></div><button class="button button-outline" data-action="certificateSettings">My certificate signature</button></div><div class="grid grid-2">${pending.slice(classroomProjectPage*24,(classroomProjectPage+1)*24).map(s=>courseSubmissionCard(s,true)).join('')||empty('No projects awaiting review','Student course completion projects will appear here.')}</div>${advancedPageButtons('classroomProjectPage',classroomProjectPage,pending.length)}<details class="card journey-reviewed-projects"><summary>Reviewed projects · ${reviewed.length}</summary>${reviewed.slice(0,24).map(s=>courseSubmissionCard(s,false)).join('')||'<p>No reviewed projects yet.</p>'}${reviewed.length>24?'<p>Latest 24 shown. Full project history remains in Teaching studio → To review.</p>':''}</details></section><details class="card journey-practical-assessment"><summary>Practical assessment & grade history</summary>${classroomRecords(c,'grades')}</details>`;
