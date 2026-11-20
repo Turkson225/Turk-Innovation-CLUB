@@ -705,6 +705,36 @@ test('New approved members must choose courses while upgraded teachers keep thei
 test('New applicant forms include course choices without exposing other applicants',()=>{
   const h=learningHarness();h.run("me.membership_status='pending';me.application_reason='I want to build and learn practical engineering.'");const markup=h.run('application()');assert(markup.includes('Choose the courses you want to learn'));assert.equal((markup.match(/name="learning_tracks"/g)||[]).length,4);
 });
+test('An applicant can submit with no reason and can remove a previously saved answer',async()=>{
+  const h=learningHarness();
+  h.run("me.membership_status='pending';applicationAnswersReady=true");
+  const markup=h.run('application()');
+  assert.match(markup,/Why do you want to join or partner with SPACE\? \(optional\)/);
+  assert.doesNotMatch(markup.match(/<textarea[^>]*name="application_reason"[^>]*>/)[0],/required/);
+  const form=learningForm('application',[['full_name','Student One'],['programme','Example University'],['application_reason','   '],['learning_tracks','Controls and Automation']]);
+  await h.exec('submit(qaArgs)',form.event);
+  assert(h.requests.some(x=>x.table==='profiles'&&x.ops.some(([op])=>op==='update')));
+  assert(!h.requests.some(x=>x.table==='application_answers'));
+  assert.match(h.elements.get('#toast').textContent,/Application saved for review/);
+  h.run("me.application_reason='Previously entered reason'");
+  await h.exec('submit(qaArgs)',form.event);
+  const clear=h.requests.find(x=>x.table==='application_answers');
+  assert(clear.ops.some(([op])=>op==='delete'));
+  assert(clear.ops.some(([op,key,value])=>op==='eq'&&key==='user_id'&&value==='self'));
+});
+test('Verification enables both approval choices without a reason, while unverified accounts stay blocked',()=>{
+  const h=learningHarness('admin');
+  h.elements.set('#modal',node({open:false,showModal(){this.open=true;}}));
+  h.run("enhancedReady=true;applicationsOwner='self';applicationRows=[{id:'verified',full_name:'Verified applicant',membership_status:'pending',application_type:'member'},{id:'unverified',full_name:'Unverified applicant',membership_status:'pending',application_type:'member'}];applicationVerification=new Map([['verified',{verified:true}],['unverified',{verified:false}]]);");
+  const html=h.run('applications()');
+  assert.match(html,/Reason optional/);
+  assert.match(html,/data-id="verified"\s*>Approve<\/button>/);
+  assert.match(html,/data-id="verified"\s*>Approve as teacher<\/button>/);
+  assert.match(html,/data-id="unverified"\s+disabled>Approve<\/button>/);
+  assert.match(html,/data-id="unverified"\s+disabled>Approve as teacher<\/button>/);
+  action(h,{action:'approveApplicantTeacher',id:'verified'});
+  assert.match(h.elements.get('#modalContent').innerHTML,/Approve Verified applicant as a teacher/);
+});
 test('Saving multiple selected courses sends the complete array to the protected RPC',async()=>{
   const h=learningHarness(),form=learningForm('learningPath',[['learning_tracks','Controls and Automation'],['learning_tracks','Software and Programming']],'learningPathForm');await h.exec('submit(qaArgs)',form.event);assert.equal(h.rpcCalls[0].name,'set_my_learning_tracks');assert.deepEqual(Array.from(h.rpcCalls[0].args.p_tracks),['Controls and Automation','Software and Programming']);assert.equal(form.send.disabled,false);
 });
