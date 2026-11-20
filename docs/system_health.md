@@ -1,5 +1,7 @@
 # SPACE system health and recovery
 
+See [Administrator email alerts](admin_email_notifications.md) for email preferences, monitored events and setup.
+
 In an approved administrator account, open **Administration → System health** (on a phone: **More → Administration → System health**). Other roles cannot query the health RPC or read the private incident table. Apply `supabase/upgrade_guidance_system_health.sql` once, after the existing club migrations, then refresh. It is safe to rerun. Course navigation works with the existing course migrations; this new migration adds cross-device welcome progress, aggregate checks and minimal issue reports.
 
 ## What the page verifies

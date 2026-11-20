@@ -5,6 +5,7 @@
   const e=ctx.esc;let owner='',generation=-1,snapshot=null,health=null,healthError='',loading=false,request=0,reportTimes=new Map(),dismissed=new Set();
   const current=()=>ctx.get(),valid=(id,gen)=>current().id===id&&current().generation===gen;
   const tours=window.SpaceTours?.create({get:current,db:ctx.db,deadline:ctx.deadline});
+  const adminMail=window.SpaceAdminMail?.create(ctx);
   const missing=error=>['PGRST202','42883','42P01'].includes(error?.code);
   function ensure(){const s=current();if(owner!==s.id||generation!==s.generation){owner=s.id;generation=s.generation;snapshot=null;health=null;healthError='';loading=false;request++;reportTimes=new Map();}return s;}
   function mode(s){return s.teacher&&!s.admin?'teacher':'member';}
@@ -45,9 +46,10 @@
    const id=s.id,gen=s.generation,version=++request;
    if(page==='system-health'){
     if(!s.admin)return;loading=true;healthError='';
+    const mailReady=adminMail?.load();
     try{const result=await ctx.deadline(()=>ctx.db.rpc('space_admin_system_health'),12000,'Health checks timed out.');if(!valid(id,gen)||version!==request)return;if(result.error)throw result.error;if(!result.data||!Array.isArray(result.data.schema_checks))throw Error('Invalid health response');health=result.data;}
     catch(error){if(valid(id,gen)&&version===request){health=null;healthError=missing(error)?'Run upgrade_guidance_system_health.sql in Supabase to activate these checks.':'System checks are temporarily unavailable. Refresh to try again.';}}
-    finally{if(valid(id,gen)&&version===request)loading=false;}
+    finally{await mailReady;if(valid(id,gen)&&version===request)loading=false;}
     return;
    }
    if(!s.club||s.admin)return;
@@ -55,7 +57,7 @@
   }
   function healthView(){
    const s=ensure();if(!s.admin)return '';
-   const intro=`<header class="page-head"><div><span class="eyebrow">ADMINISTRATION</span><h1>System health</h1><p>Delivery queues, setup checks and member-reported problems.</p></div><button class="button button-outline" data-action="healthReload" ${loading?'disabled':''}>${loading?'Checking…':'Refresh checks'}</button></header>`;
+   const intro=`<header class="page-head"><div><span class="eyebrow">ADMINISTRATION</span><h1>System health</h1><p>Delivery queues, setup checks and member-reported problems.</p></div><button class="button button-outline" data-action="healthReload" ${loading?'disabled':''}>${loading?'Checking…':'Refresh checks'}</button></header>`+(adminMail?.view()||'');
    if(!health)return intro+`<div class="notice" role="status">${e(healthError||'Open this page online to load current checks.')}</div><a class="link" href="${ctx.runbook}" target="_blank" rel="noopener noreferrer">Setup and recovery guide ↗</a>`;
    const checked=health.checked_at,date=value=>value?new Date(value).toLocaleString():'No delivery recorded';
    const state=(data,bad)=>!data?'Not set up':bad?'Needs attention':'No queued failures';
@@ -83,7 +85,7 @@
    if(!['upload','notifications'].includes(el?.dataset.category)||!health||el.dataset.before!==health.checked_at)return true;
    el.disabled=true;try{const result=await ctx.deadline(()=>ctx.db.rpc('space_admin_review_client_issues',{p_category:el.dataset.category,p_before:health.checked_at}),10000,'Review timed out.');if(result.error)throw result.error;if(!valid(s.id,s.generation))return true;await load('system-health');if(valid(s.id,s.generation)){ctx.show('Reports marked reviewed. New reports remain visible.');ctx.render();}}catch{if(valid(s.id,s.generation))ctx.show('Reports could not be reviewed. Refresh and try again.');}finally{if(el.isConnected)el.disabled=false;}return true;
   }
-  return {load,banner,welcome,healthView,report,action,steps,reset(){tours?.reset();owner='';generation=-1;snapshot=null;health=null;healthError='';request++;}};
+  return {load,banner,welcome,healthView,report,action,steps,reset(){tours?.reset();adminMail?.reset();owner='';generation=-1;snapshot=null;health=null;healthError='';request++;}};
  }
  window.SpaceGuidance={create};
 })();
