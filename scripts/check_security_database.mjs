@@ -70,5 +70,28 @@ try{
    await as(1,'aal2',"select review_membership($1,'approved')",[uuid(8)]);
    await assert.rejects(()=>upsertAnswer(8,'Cannot edit after approval'),/row-level security/);
  });
+ await check('A verified administrator can approve an applicant without a saved reason',async()=>{
+   const optional=sql('20261121020000_optional_application_reason.sql');
+   await client.query(optional);await client.query(optional);
+   await as(1,'aal2',"select review_membership($1,'approved')",[uuid(9)]);
+   assert.equal((await db.query('select membership_status from profiles where id=$1',[uuid(9)])).rows[0].membership_status,'approved');
+   assert.equal((await db.query('select reason from application_answers where user_id=$1',[uuid(9)])).rows.length,0);
+   assert.equal((await db.query("select action from audit_events where target_id=$1 and action='membership_approved_member'",[uuid(9)])).rows.length,1);
+   assert.equal((await db.query("select id from notifications where user_id=$1 and kind='membership' and title='Your SPACE application was approved'",[uuid(9)])).rows.length,1);
+   assert.equal((await db.query('select user_id from approval_email_outbox where user_id=$1',[uuid(9)])).rows.length,1);
+ });
+ await check('Optional reasons keep email verification and fresh administrator MFA on all approval paths',async()=>{
+   await db.query("update profiles set membership_status='pending' where id in ($1,$2)",[uuid(6),uuid(7)]);
+   await db.query('update auth.users set email_confirmed_at=null where id=$1',[uuid(7)]);
+   for(const call of ["select review_membership($1,'approved')","select approve_member_applicant_as_teacher($1)"]){
+     await assert.rejects(()=>as(10,'aal2',call,[uuid(6)]),/Administrator access required/);
+     await assert.rejects(()=>as(1,'aal1',call,[uuid(6)]),/verification required/);
+     await assert.rejects(()=>as(1,'aal2',call,[uuid(6)],[]),/Verify your authenticator again/);
+     await assert.rejects(()=>as(1,'aal2',call,[uuid(7)]),/verify their email/);
+   }
+   await assert.rejects(()=>db.query("update profiles set membership_status='approved' where id=$1",[uuid(7)]),/verify their email/);
+   await as(1,'aal2','select approve_member_applicant_as_teacher($1)',[uuid(6)]);
+   assert.deepEqual((await db.query('select role,membership_status from profiles where id=$1',[uuid(6)])).rows[0],{role:'teacher',membership_status:'approved'});
+ });
  console.log(`${checks}/${checks} security database checks passed.`);
 }finally{await db.close();}
