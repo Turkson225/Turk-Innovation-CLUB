@@ -23,6 +23,14 @@ export function createChapterOperations({db,get,esc,head,render,modal,close,show
     return db&&c.id&&c.allowed&&(c.page==='chapter-offices'||(c.page==='chapter-admin'&&c.admin))?c:null;
   };
   const routeKey=c=>c?[c.id,c.generation,c.admin,c.page,c.chapter].join(':'):'';
+  const trends=globalThis.SpaceMetricTrends?.create({db,id:'chapters',get:()=>{
+    const c=current();if(!c||!data||error)return null;
+    if(!c.chapter)return c.page==='chapter-admin'?{...c,scope:'chapter',target:null,access:'network',note:'Published activity includes archived listings. Current staffing and pending totals above are snapshots.'}:null;
+    if(data.chapter?.id!==c.chapter)return null;
+    return {...c,scope:'chapter',target:c.chapter,access:data.manager?'manager':(data.my_offices||[]).join(','),
+      offices:(data.office_metrics||[]).map(o=>[o.office,splitName(o.office)]),
+      note:data.manager?'Use Scope to chart tasks for a specific office. The all-activity view counts historical publications, including archived listings.':'Only tasks assigned to you in offices you currently hold.'};
+  }});
   const splitName=office=>chapterOffices[office]?.[0]||'Chapter office';
   const el=(action,id,label,style='button button-outline')=>`<button type="button" class="${style}" data-action="chapterops-${action}" data-id="${esc(id)}"${busy?' disabled':''}>${esc(label)}</button>`;
   const label=(text,name,type='text',attrs='')=>`<label>${esc(text)}<input name="${name}" type="${type}" ${attrs}></label>`;
@@ -34,6 +42,7 @@ export function createChapterOperations({db,get,esc,head,render,modal,close,show
   const hasDialog=()=>document.querySelector('#modal[open] [data-chapterops-dialog]');
   function reset(){
     if(key&&hasDialog())close();
+    trends?.reset();
     key='';serial++;editorId++;data=null;rows=[];loading=false;busy=false;error='';lastLoad=0;
     tab='work';offset=0;workStatus='all';officeFilter='';search='';
   }
@@ -41,6 +50,7 @@ export function createChapterOperations({db,get,esc,head,render,modal,close,show
     const c=current(), next=routeKey(c);
     if(next!==key){reset();key=next;if(c)void load(c);}
     else if(c&&!loading&&!busy&&!error&&!hasDialog()&&Date.now()-lastLoad>45000)void load(c);
+    trends?.sync();
   }
   async function rpc(name,params){
     const r=await deadline(()=>db.rpc(name,params),12000,'Chapter operations took too long to load.');
@@ -99,9 +109,10 @@ export function createChapterOperations({db,get,esc,head,render,modal,close,show
     return `<div class="chapter-ops-table" tabindex="0" role="region" aria-label="${esc(caption)}"><table><caption>${esc(caption)}</caption><thead><tr>${columns.map(l=>`<th scope="col">${esc(l)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div>`;
   }
   function central(){
+    const compare=globalThis.SpaceMetricTrends?.comparison('Compare current campus memberships (this page)',(data.rows||[]).map(c=>({label:c.name,values:[chapterOpsNumber(c.metrics?.active),chapterOpsNumber(c.metrics?.pending)]})),['Active','Pending']);
     return head('ADMINISTRATION','Chapter control centre','Compare campuses, review what needs attention and manage local leadership.',`<a class="button button-outline" href="#chapters">Chapter directory</a>`)+
       `<section class="chapter-section"><div class="chapter-heading"><h2>Network overview</h2>${periodButtons()}</div><p>${fmt(data.open_chapters)} open chapters out of ${fmt(data.total)}. Totals include draft and archived chapters where records exist.</p>${summary(data.metrics||{},true)}</section>`+
-      (data.rows?.length?table('Campus comparison',['Chapter','Status','Active','Pending','Published','Open work','Overdue','Action'],data.rows.map(c=>{
+      (trends?.view()||'')+(compare||'')+(data.rows?.length?table('Campus comparison',['Chapter','Status','Active','Pending','Published','Open work','Overdue','Action'],data.rows.map(c=>{
         const m=c.metrics||{}, published=['announcements','events','projects','workshops'].reduce((n,k)=>n+chapterOpsNumber(m[k]),0);
         return `<tr><th scope="row">${esc(c.name)}<small>${esc(c.institution)}</small></th><td>${esc(c.status==='active'?'Open':c.status)}${c.status==='active'&&!c.has_coordinator?'<small>No coordinator</small>':''}</td><td>${fmt(m.active)}</td><td>${fmt(m.pending)}</td><td>${fmt(published)}</td><td>${fmt(chapterOpsNumber(m.open)+chapterOpsNumber(m.submitted))}</td><td>${fmt(m.overdue)}</td><td><a href="${dashboardUrl('chapter-admin',c.id)}">Manage chapter <span class="sr-only">${esc(c.name)}</span> →</a></td></tr>`;
       }).join('')):'<p>No chapters on this page. Create a chapter in the directory first.</p>')+pager(offset+chapterOpsPageSize<chapterOpsNumber(data.total));
@@ -153,12 +164,13 @@ export function createChapterOperations({db,get,esc,head,render,modal,close,show
         <div class="chapter-actions">${data.chapter.status==='active'?(data.admin?el('role',p.user_id,'Chapter role')+el('office',p.user_id,'Edit office appointments'):'')+(p.offices.length?el('new-task',p.user_id,'Assign task','button'):''):''}</div></article>`).join('')||'<p>No active chapter members match your search.</p>'}</div>${pager(rows.length>chapterOpsPageSize)}</section>`;
   }
   function detail(c){
+    const compare=globalThis.SpaceMetricTrends?.comparison('Compare current office workloads',(data.office_metrics||[]).map(o=>({label:splitName(o.office),values:[chapterOpsNumber(o.open),chapterOpsNumber(o.submitted)]})),['Open','Awaiting review']);
     return `<p><a href="#${c.page}">← ${c.page==='chapter-admin'?'Chapter control centre':'My chapter offices'}</a></p>`+
       head('CHAPTER OFFICES',data.chapter.name,data.manager?'Monitor chapter activity, staffing and office work.':'Track your chapter responsibilities and submit work for review.',`<a class="button button-outline" href="${chapterUrl(data.chapter)}">Open chapter</a>`)+
       (data.chapter.status!=='active'?'<p class="notice">This chapter is not open. Its operations records are read-only.</p>':'')+
       `<section class="chapter-section"><div class="chapter-heading"><h2>${data.manager?'Chapter overview':'My office overview'}</h2>${periodButtons()}</div>
       ${data.metrics?summary(data.metrics):`<p>Your assignments: ${esc(data.my_offices.map(splitName).join(', '))}.</p>`}
-      ${officeMetrics()}</section>`+
+      ${officeMetrics()}</section>`+(trends?.view()||'')+(compare||'')+
       (data.manager?`<div class="chapter-actions" aria-label="Operations sections">${[['work','Work queue'],['people','People & roles']].map(([v,l])=>`<button class="button button-outline" type="button" data-action="chapterops-tab" data-id="${v}" aria-pressed="${v===tab}">${esc(l)}</button>`).join('')}</div>`:'')+(tab==='people'&&data.manager?people():work(c));
   }
   function view(){

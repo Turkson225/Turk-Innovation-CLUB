@@ -5,6 +5,7 @@
   "scripts": {
     "vendor": "node scripts/build_vendor.mjs",
     "check:security": "node scripts/check_security_ui.mjs && node scripts/check_security_database.mjs",
+    "check:metric-trends": "node scripts/check_metric_trends_database.mjs && node scripts/check_metric_trends_ui.mjs",
     "check:chapter-operations": "node scripts/check_chapter_operations_database.mjs && node scripts/check_chapter_operations_ui.mjs",
     "check:chapters": "node scripts/check_chapters_database.mjs && node scripts/check_chapters_ui.mjs",
     "check:migrations": "node scripts/database_migrations.mjs --check"
