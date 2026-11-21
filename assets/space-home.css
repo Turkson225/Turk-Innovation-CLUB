@@ -1,11 +1,25 @@
 .space-home {
   --home-card-radius: 16px;
+  --home-photo: url("./home-photos/circuit-board.webp");
+  --home-photo-position: 50% 51%;
   --home-violet: #eee7fc; --home-violet-ink: #5f32af;
   --home-blue: #e8effd; --home-blue-ink: #315891;
   --home-amber: #fbefdf; --home-amber-ink: #92491d;
   --home-mint: #e5f2ef; --home-mint-ink: #226358;
   max-inline-size: 70rem;
   margin-inline: auto;
+}
+.space-home:has([data-home-tab="learning"][aria-selected="true"]) {
+  --home-photo: url("./home-photos/arduino-lab.webp");
+  --home-photo-position: 51% 56%;
+}
+.space-home:has([data-home-tab="community"][aria-selected="true"]) {
+  --home-photo: url("./home-photos/student-team.webp");
+  --home-photo-position: 57% 41%;
+}
+.space-home:has(:is([data-home-tab="club"], [data-home-tab="manage"])[aria-selected="true"]) {
+  --home-photo: url("./home-photos/maker-workshop.webp");
+  --home-photo-position: 60% 51%;
 }
 :root[data-theme=dark] .space-home {
   --home-violet: #392950; --home-violet-ink: #dec9ff;
@@ -22,7 +36,7 @@
   background: linear-gradient(115deg, #21173c 0%, #342459 62%, #493073 100%);
   color: #fff;
 }
-.space-home-greeting > div:first-child { position: relative; z-index: 1; }
+.space-home-greeting > div:first-child { position: relative; z-index: 1; max-inline-size: min(66%, 26rem); }
 .space-home-greeting p { margin: 0; color: #dfd3f4; font-size: 1rem; }
 .space-home-greeting p:first-child {
   font-size: .875rem;
@@ -40,28 +54,14 @@
 .space-home-orbit {
   position: absolute;
   inset: 0 0 0 auto;
-  inline-size: min(39%, 20rem);
-  background: radial-gradient(ellipse at 70% 59%, #a17ee879, transparent 66%);
+  inline-size: min(62%, 42rem);
+  background-image: linear-gradient(135deg, #24153e50, transparent 80%), var(--home-photo);
+  background-position: center, var(--home-photo-position);
+  background-size: cover;
+  mask-image: linear-gradient(to right, transparent, #000 55%);
   pointer-events: none;
 }
-.space-home-orbit span {
-  position: absolute;
-  inset: 50% auto auto 54%;
-  inline-size: 100%;
-  block-size: 59%;
-  border: 1px solid #d5b9f375;
-  border-radius: 50%;
-  transform: translate(-49%, -49%) rotate(-25deg);
-}
-.space-home-orbit span:nth-child(2) { transform: translate(-43%, -46%) rotate(24deg); inline-size: 89%; }
-.space-home-orbit span:nth-child(3) {
-  inline-size: .65rem;
-  block-size: .65rem;
-  inset: 34% auto auto 61%;
-  border: 0;
-  background: #ffc2a3;
-  box-shadow: 0 0 17px #ffb5ad95;
-}
+.space-home-orbit span { display: none; }
 .space-home-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -175,7 +175,8 @@
 }
 @media (max-width: 480px) {
   .space-home-greeting { border-radius: var(--home-card-radius); }
-  .space-home-orbit { opacity: .58; }
+  .space-home-greeting > div:first-child { max-inline-size: 80%; }
+  .space-home-orbit { inline-size: 56%; opacity: .78; mask-image: linear-gradient(to right, transparent 18%, #000 73%); }
   .space-home-tabs { gap: .125rem; width: 100%; }
   .space-home-tabs button { padding-inline: .43rem; flex: 1 0 auto; font-size: .875rem; }
   .space-home-card { gap: .6rem; padding: .72rem; min-block-size: 4.65rem; }
@@ -183,4 +184,7 @@
   .space-home-card-end { justify-self: end; flex-direction: column; gap: .15rem; }
   .space-home-card-end small { font-size: .72rem; padding-inline: .3rem; }
   .space-home-next { gap: .65rem; }
+}
+@media (forced-colors: active) {
+  .space-home-orbit { display: none; }
 }
