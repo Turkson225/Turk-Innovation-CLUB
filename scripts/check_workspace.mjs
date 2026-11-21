@@ -1298,6 +1298,48 @@ test('Workshop materials keep direct downloads and open Drive previews only on r
   const teacher=advancedHarness('teacher');
   assert.match(teacher.run("learningReady=true;classroomView='learn';classroomWorkspace()"),/driveLearningForm" data-course="c1"/);
 });
+test('The upload entry point offers Drive in the same dialog and preserves the selected workshop',()=>{
+  const h=advancedHarness('teacher');
+  h.elements.set('#modal',node({open:false,showModal(){this.open=true;}}));
+  h.run('learningReady=true');
+  action(h,{action:'learningForm',course:'c1'});
+  let markup=h.elements.get('#modalContent').innerHTML;
+  assert.match(markup,/data-source="upload" aria-pressed="true">Upload a file/);
+  assert.match(markup,/data-source="drive" aria-pressed="false">Google Drive link/);
+  assert.match(markup,/data-learning-source-panel="drive" hidden/);
+  assert.match(markup,/id="drive_url"[^>]* disabled>/);
+  assert.match(markup,/<option value="c1" selected>/);
+  action(h,{action:'driveLearningForm',course:'c1'});
+  markup=h.elements.get('#modalContent').innerHTML;
+  assert.match(markup,/id="drive_url"[^>]* required>/);
+  assert.match(markup,/id="learning_file"[^>]* disabled>/);
+  assert.match(markup,/name="course_id" required>/);
+});
+test('Switching sources requires the right input and sends only a Drive URL when sharing a link',async()=>{
+  const h=learningHarness('teacher');
+  const send=node(),file=node({required:true}),link=node({disabled:true}),video=node({disabled:true});
+  const inputs=[['upload',file],['drive',link]].map(([source,input])=>node({dataset:{learningSourcePanel:source},querySelector(){return input;}}));
+  const form=node({id:'editor',dataset:{kind:'learningMaterial'},matches(){return false;},
+    querySelector(){return send;},querySelectorAll(s){return s==='[data-learning-source-panel]'?inputs:[];},
+    elements:{course_id:{value:'c1',options:[{}]},kind:{value:'slides',querySelector(){return video;}}},
+    entries:[['course_id','c1'],['title','Starter slides'],['kind','slides'],['drive_url','https://docs.google.com/presentation/d/Example_File-4QB7qh7Dx/edit?usp=sharing']]
+  });
+  h.exec("selectLearningMaterialSource(qaArgs,'drive')",form);
+  assert.equal(form.elements.course_id.value,'c1');
+  assert.equal(form.elements.course_id.required,true);
+  assert.equal(file.disabled,true);assert.equal(file.required,false);
+  assert.equal(link.disabled,false);assert.equal(link.required,true);
+  assert.equal(send.textContent,'Share with workshop');
+  await h.exec('submit(qaArgs)',{target:form,preventDefault(){}});
+  const call=h.requests.find(r=>r.table==='learning_materials').ops.find(([op])=>op==='insert')[1];
+  assert.equal(call.drive_url,'https://docs.google.com/presentation/d/Example_File-4QB7qh7Dx/edit');
+  assert.equal(call.course_id,'c1');
+  assert(!('storage_path' in call));
+  assert(!h.requests.some(r=>r.table==='club-learning'));
+  h.exec("selectLearningMaterialSource(qaArgs,'upload')",form);
+  assert.equal(form.elements.course_id.required,false);
+  assert.equal(file.required,true);assert.equal(link.disabled,true);
+});
 test('Classroom refresh includes resources and welcome refresh includes own learning dependencies',()=>{const h=harness();assert(h.run("pageRefreshDependencies.classroom.includes('learning_materials')"));assert(h.run("pageRefreshDependencies['getting-started'].includes('member_learning_paths')"));});
 test('Onboarding async actions cannot swallow unrelated workspace actions',()=>{const h=learningHarness();let count=0;h.context.guidanceStub={action(){count++;return Promise.resolve(true);}};h.run('guidance=guidanceStub');action(h,{action:'courseView',view:'explore'});assert.equal(h.run('courseView'),'explore');assert.equal(count,0);action(h,{action:'onboardingShow'});assert.equal(count,1);});
 test('An approved teacher’s welcome action opens their teaching profile directly',()=>{const h=learningHarness('teacher');action(h,{action:'onboardingTeachingProfile'});assert.equal(h.run('teachingTab'),'profile');assert.equal(h.context.location.hash,'#teaching');});

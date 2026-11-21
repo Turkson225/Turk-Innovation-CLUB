@@ -2467,6 +2467,50 @@ function learningMaterialButtons(courseId='',uploadLabel='+ Upload file'){
   const course=courseId?` data-course="${esc(courseId)}"`:'';
   return `<div class="drive-material-actions"><button class="button button-sm" data-action="learningForm"${course}>${esc(uploadLabel)}</button><button class="button button-outline button-sm" data-action="driveLearningForm"${course}>+ Google Drive link</button></div>`;
 }
+function learningMaterialEditor(courseId='',source='upload'){
+  if(!teacher()||!learningReady)return show('Teacher access and the learning materials migration are required.');
+  const courses=(cache.courses||[]).filter(courseManager);
+  const selected=courses.some(c=>c.id===courseId)?courseId:'';
+  const drive=source==='drive';
+  const options=`<option value="" ${!selected?'selected':''}>${drive?'Choose a workshop':'General learning library'}</option>`
+    +courses.map(c=>`<option value="${esc(c.id)}" ${c.id===selected?'selected':''}>${esc(c.title)}</option>`).join('');
+  const toggle=(id,label)=>`<button type="button" class="button button-outline button-sm" data-action="learningMaterialSource" data-source="${id}" aria-pressed="${source===id}">${label}</button>`;
+  return modal(`<span class="eyebrow">TEACHING STUDIO</span><h2>Add learning material</h2>
+    <form id="editor" data-kind="${drive?'driveLearningMaterial':'learningMaterial'}" data-learning-material class="form-stack">
+      <div class="drive-material-actions drive-source-switch" role="group" aria-label="Material source">${toggle('upload','Upload a file')}${toggle('drive','Google Drive link')}</div>
+      <div class="field" data-learning-source-panel="upload"${drive?' hidden':''}>
+        <label for="learning_file">Choose a file</label><input id="learning_file" name="learning_file" type="file" accept=".pdf,.ppt,.pptx,.doc,.docx" ${drive?'disabled':'required'}>
+        <p class="hint">PDF, PPT, PPTX, DOC or DOCX, up to 20 MB.</p>
+      </div>
+      <div class="field" data-learning-source-panel="drive"${drive?'':' hidden'}>
+        <label for="drive_url">Google Drive share link</label><input id="drive_url" name="drive_url" type="url" maxlength="1000" placeholder="https://drive.google.com/…" aria-describedby="driveLinkHint" ${drive?'required':'disabled'}>
+        <p class="hint" id="driveLinkHint">In Google Drive, choose Share → Copy link. Give your students Viewer access in Drive. Use a link to one file.</p>
+        ${courses.length?'':'<p class="hint">Create or assign a workshop before sharing a Drive link.</p>'}
+      </div>
+      ${field('Title','title')}
+      <div class="field"><label for="kind">Type</label><select id="kind" name="kind"><option value="slides">Slides</option><option value="notes">Notes</option><option value="worksheet">Worksheet</option><option value="guide">Guide</option><option value="video" ${drive?'':'disabled hidden'}>Video</option></select></div>
+      <div class="field"><label for="course_id">Workshop</label><select id="course_id" name="course_id" ${drive?'required':''}>${options}</select></div>
+      <div class="field"><label for="description">Description (optional)</label><textarea id="description" name="description" maxlength="1500"></textarea></div>
+      <button class="button" type="submit">${drive?'Share with workshop':'Publish material'}</button>
+    </form>`);
+}
+function selectLearningMaterialSource(editor,source){
+  if(!editor||!['upload','drive'].includes(source))return;
+  const submitButton=editor.querySelector('[type=submit]');
+  if(submitButton.disabled)return;
+  const drive=source==='drive';
+  editor.dataset.kind=drive?'driveLearningMaterial':'learningMaterial';
+  for(const choice of editor.querySelectorAll('[data-source]'))choice.setAttribute('aria-pressed',String(choice.dataset.source===source));
+  for(const panel of editor.querySelectorAll('[data-learning-source-panel]')){
+    const active=panel.dataset.learningSourcePanel===source,input=panel.querySelector('input');
+    panel.hidden=!active;input.disabled=!active;input.required=active;
+  }
+  const course=editor.elements.course_id,kind=editor.elements.kind,video=kind.querySelector('[value=video]');
+  course.required=drive;course.options[0].text=drive?'Choose a workshop':'General learning library';
+  if(!drive&&kind.value==='video')kind.value='slides';
+  video.hidden=!drive;video.disabled=!drive;
+  submitButton.textContent=drive?'Share with workshop':'Publish material';
+}
 let teachingTab = 'overview';
 function teachingWorkshopCard(c,enrollments,pending){
   const active=courseOpen(c);
@@ -3629,18 +3673,8 @@ function actions(e) {
     const options='<option value="">Library only</option>'+(cache.channels||[]).map(c=>`<option value="${esc(c.id)}" ${c.id===activeChannelId&&page==='channels'?'selected':''}># ${esc(c.name)}</option>`).join('');
     return modal(`<span class="eyebrow">CLUB LIBRARY</span><h2>Share a document</h2><p class="muted">Files are private to signed-in club members. Maximum size: 10 MB.</p><form id="editor" data-kind="document" class="form-stack"><div class="field"><label for="upload">Choose a file</label><input id="upload" name="upload" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.zip,.png,.jpg,.jpeg,.stl" required></div><div class="field"><label for="channel_id">Share in channel</label><select id="channel_id" name="channel_id">${options}</select></div><button class="button" type="submit">Upload document</button></form>`);
   }
-  if(action==='learningForm'||action==='driveLearningForm'){
-    if(!teacher()||!learningReady)return show('Teacher access and the learning materials migration are required.');
-    const assigned=(cache.courses||[]).filter(c=>admin()||c.instructor_id===session.user.id);
-    const selected=assigned.some(c=>c.id===el.dataset.course)?el.dataset.course:'';
-    if(action==='driveLearningForm'){
-      if(!assigned.length)return show('Create or assign a workshop before adding a Google Drive link.');
-      const options='<option value="" disabled '+(!selected?'selected':'')+'>Choose a workshop</option>'+assigned.map(c=>`<option value="${esc(c.id)}" ${c.id===selected?'selected':''}>${esc(c.title)}</option>`).join('');
-      return modal(`<span class="eyebrow">TEACHING STUDIO</span><h2>Add from Google Drive</h2><p class="muted">In Google Drive, select the file, choose Share, then Copy link. Give your students Viewer access in Drive. For material you want SPACE alone to control, upload a file instead.</p><form id="editor" data-kind="driveLearningMaterial" class="form-stack">${field('Title','title')}${select('Type','kind',['slides','notes','worksheet','guide','video'])}<div class="field"><label for="course_id">Workshop</label><select id="course_id" name="course_id" required>${options}</select></div><div class="field"><label for="drive_url">Google Drive share link</label><input id="drive_url" name="drive_url" type="url" maxlength="1000" placeholder="https://drive.google.com/…" required></div><div class="field"><label for="description">Description (optional)</label><textarea id="description" name="description" maxlength="1500"></textarea></div><button class="button" type="submit">Share with workshop</button></form>`);
-    }
-    const options='<option value="" '+(!selected?'selected':'')+'>General learning library</option>'+assigned.map(c=>`<option value="${esc(c.id)}" ${c.id===selected?'selected':''}>${esc(c.title)}</option>`).join('');
-    return modal(`<span class="eyebrow">TEACHING STUDIO</span><h2>Upload learning material</h2><p class="muted">Choose one of your assigned workshops to make its slides, notes or guides easy for enrolled students to find. Choose the general library for material intended for the wider club. Maximum 20 MB per file.</p><form id="editor" data-kind="learningMaterial" class="form-stack">${field('Title','title')}${select('Type','kind',['slides','notes','worksheet','guide'])}<div class="field"><label for="course_id">Related workshop</label><select id="course_id" name="course_id">${options}</select></div><div class="field"><label for="description">Description (optional)</label><textarea id="description" name="description" maxlength="1500"></textarea></div><div class="field"><label for="learning_file">PDF, PPT, PPTX, DOC or DOCX</label><input id="learning_file" name="learning_file" type="file" accept=".pdf,.ppt,.pptx,.doc,.docx" required></div><button class="button" type="submit">Publish material</button></form>`);
-  }
+  if(action==='learningForm'||action==='driveLearningForm')return learningMaterialEditor(el.dataset.course,action==='driveLearningForm'?'drive':'upload');
+  if(action==='learningMaterialSource'&&teacher()&&learningReady)return selectLearningMaterialSource(el.closest('form[data-learning-material]'),el.dataset.source);
   if(action==='downloadLearning')return downloadLearning(id);
   if(action==='viewDriveMaterial')return viewDriveMaterial(id);
   if(action==='toggleLearning'&&admin()){
