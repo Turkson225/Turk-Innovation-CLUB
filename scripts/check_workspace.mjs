@@ -22,7 +22,7 @@ function harness({localItems=new Map(),sessionItems=new Map(),location:initialLo
   const storage=items=>({getItem(key){return items.get(key)??null;},setItem(key,value){items.set(key,value);},removeItem(key){items.delete(key);}});
   let clientOptions;
   const context=vm.createContext({console,URL,crypto:globalThis.crypto,Blob,Date,Map,Set,Promise,setTimeout(callback,delay=0){const id=++timerId;timers.set(id,{callback,delay});return id;},clearTimeout(id){timers.delete(id);},setInterval(){return 1;},clearInterval(){},sessionStorage:storage(sessionItems),localStorage:storage(localItems),createClient(_url,_key,options){clientOptions=options;return db;},window:{INNOVATEX_CONFIG:{supabaseUrl:'https://qa.supabase.co',supabaseAnonKey:'fake'},addEventListener(){}},navigator:{},location:initialLocation,history:{replaceState(){}},document:{hidden:false,activeElement:null,querySelector(selector){return elements.get(selector)??null;},querySelectorAll(){return [];},getElementById(id){return elements.get('#'+id)??null;},addEventListener(){},documentElement:{dataset:{theme:'light'}}}});
-  const modules=['workspace-navigation.js','admin-security.js','auth-session.js','space-chapters.js','chapter-operations.js','assets/learning-drive.js'].map(name=>fs.readFileSync(root+'/'+name,'utf8').replace(/export /g,'')).join('\n');
+  const modules=['workspace-navigation.js','admin-security.js','auth-session.js','space-chapters.js','chapter-operations.js','assets/learning-drive.js','assets/space-home.js'].map(name=>fs.readFileSync(root+'/'+name,'utf8').replace(/export /g,'')).join('\n');
   const source=modules+'\n'+fs.readFileSync(root+'/app.js','utf8').replace(/^import .*\n/gm,'').replace(/\ninit\(\);\s*$/,'');
   vm.runInContext(source,context,{filename:'app.js'});
   const run=code=>vm.runInContext(code,context);
@@ -363,19 +363,32 @@ test('Event search result opens the matching calendar details',()=>{
 test('Course search opens the relevant catalog or the enrolled classroom',()=>{
   const h=harness();h.run("cache.courses=[{id:'course',title:'Bench build',category:'Electronics'}];cache.course_enrollments=[];");action(h,{action:'workspaceResult',key:'course:course'});assert.equal(h.run('courseView'),'explore');assert.equal(h.context.location.hash,'#courses');h.run("cache.course_enrollments=[{course_id:'course',learner_id:'self',status:'enrolled'}];");action(h,{action:'workspaceResult',key:'course:course'});assert.equal(h.run('courseView'),'mine');assert.equal(h.run('activeCourseId'),'course');
 });
-for(const role of ['member','teacher','founder','admin'])test(`Personal home prioritizes the ${role} role and authorized agenda`,()=>{
-  const h=harness(),future=new Date(Date.now()+3600000).toISOString();h.exec("me.role=qaArgs.role;courseReady=true;coursePlanningReady=true;cache.events=[{id:'event',title:'Club showcase',starts_at:qaArgs.future}];cache.courses=[{id:'mine',title:'Enrolled workshop',category:'Electronics',starts_at:qaArgs.future},{id:'assigned',title:'Assigned teaching workshop',category:'Electronics',instructor_id:'self',starts_at:qaArgs.future}];cache.course_enrollments=[{course_id:'mine',learner_id:'self',status:'enrolled'}];cache.founder_meetings=[{id:'private',title:'Private founders meeting',starts_at:qaArgs.future}];cache.project_tasks=[{id:'own',title:'My task',assignee_id:'self',status:'open',due_at:qaArgs.future},{id:'other',title:'Another member task',assignee_id:'a',status:'open',due_at:qaArgs.future}];",{role,future});
-  const markup=h.run('home()');assert(markup.includes('Welcome back'));assert(markup.includes('Enrolled workshop'));assert(markup.includes('My task'));assert(!markup.includes('Another member task'));assert.equal(markup.includes('Assigned teaching workshop'),['teacher','admin'].includes(role),'Former teaching assignments must not create inaccessible member agenda rows');assert.equal(markup.includes('Private founders meeting'),['founder','admin'].includes(role));assert.equal(markup.includes('ADMINISTRATOR · APPLICATIONS'),role==='admin');assert.equal(markup.includes('TEACHER · PROJECT REVIEWS'),role==='teacher');assert.equal(markup.includes('FOUNDER · NEXT MEETING'),role==='founder');
+for(const role of ['member','teacher','founder','admin'])test(`Personal home prioritizes the ${role} role and one authorized next item`,()=>{
+  const h=harness(),future=new Date(Date.now()+3600000).toISOString();
+  h.exec("me.role=qaArgs.role;cache.project_tasks=[{id:'mine',title:'My task',assignee_id:'self',status:'open',due_at:qaArgs.future},{id:'other',title:'Another member task',assignee_id:'other',status:'open'}];", {role,future});
+  const markup=h.run('home()');
+  assert.match(markup,/Hi, Tester/);
+  assert.match(markup,/My task/);
+  assert.doesNotMatch(markup,/Another member task/);
+  assert.equal((markup.match(/data-home-card="next"/g)||[]).length,1);
+  assert.equal(markup.includes('href="#applications"'),role==='admin');
+  assert.equal(markup.includes('href="#teaching"'),['teacher','admin'].includes(role));
+  assert.equal(markup.includes('href="#founder-room"'),['founder','admin'].includes(role));
 });
-test('Founder teaching enablement adds the appropriate review priority',()=>{
-  const h=harness();h.run("me.role='founder';me.founder_teaching_enabled=true;");assert(h.run('home()').includes('TEACHING LEAD · REVIEWS'));h.run('me.founder_teaching_enabled=false');assert(!h.run('home()').includes('TEACHING LEAD · REVIEWS'));
+test('Founder teaching enablement exposes Teaching studio on Home',()=>{
+  const h=harness();h.run("me.role='founder';me.founder_teaching_enabled=true;");
+  assert(h.run('home()').includes('href="#teaching"'));
+  h.run('me.founder_teaching_enabled=false');assert(!h.run('home()').includes('href="#teaching"'));
 });
 test('Investor and guest home exclude private club agenda and priorities',()=>{
   const h=harness();h.run("cache.founder_meetings=[{id:'private',title:'Secret founder call',starts_at:new Date(Date.now()+3600000).toISOString()}];me.role='investor'");let markup=h.run('home()');assert(markup.includes('Investor portal'));assert(!markup.includes('Secret founder call'));assert(!markup.includes('Your agenda'));h.run('session=null;me=null');markup=h.run('home()');assert(!markup.includes('Secret founder call'));assert(!markup.includes('Your agenda'));assert(!markup.includes('ADMINISTRATOR'));
 });
-test('Agenda keeps overdue own tasks, drops past events, limits rows, and escapes recent content',()=>{
-  const h=harness();h.exec("cache.events=qaArgs.events;cache.project_tasks=qaArgs.tasks;cache.activity_posts=qaArgs.posts;",{events:[{id:'old',title:'Past event hidden',starts_at:new Date(Date.now()-7200000).toISOString()},...Array.from({length:6},(_,i)=>({id:'e'+i,title:'Future '+i,starts_at:new Date(Date.now()+(i+1)*3600000).toISOString()}))],tasks:[{id:'late',title:'Late own task',assignee_id:'self',status:'open',due_at:new Date(Date.now()-3600000).toISOString()},{id:'done',title:'Done task hidden',assignee_id:'self',status:'done',due_at:new Date(Date.now()-3600000).toISOString()}],posts:[{id:'post',title:'<script>unsafe</script>',body:'<img onerror=alert(1)>',author_id:'a',created_at:new Date().toISOString()}]});
-  const markup=h.run("homeAgendaMarkup('self',new Set(),[])");assert(markup.includes('Late own task'));assert(markup.includes('Past due'));assert(!markup.includes('Past event hidden'));assert(!markup.includes('Done task hidden'));assert.equal((markup.match(/class="home-agenda-item"/g)||[]).length,5);assert(markup.includes('&lt;script&gt;'));assert(markup.includes('&lt;img'));assert(!markup.includes('<script>'));
+test('Home keeps a past-due own task, escapes its title and leaves detailed agenda on Calendar',()=>{
+  const h=harness();
+  h.run("cache.events=[{id:'past',title:'Past event hidden',starts_at:new Date(Date.now()-7200000).toISOString()}];cache.project_tasks=[{id:'late',title:'<img src=broken> Late own task',assignee_id:'self',status:'open',due_at:new Date(Date.now()-3600000).toISOString()},{id:'done',title:'Done task hidden',assignee_id:'self',status:'done'}];");
+  const markup=h.run('home()');
+  assert.match(markup,/&lt;img.*Late own task/);assert.doesNotMatch(markup,/<img src=broken|Past event hidden|Done task hidden/);
+  assert.match(markup,/href="#calendar"/);
 });
 test('Agenda task and meeting actions respect caller visibility and role',()=>{
   const h=harness();h.exec("cache.project_tasks=[qaArgs.task];cache.founder_meetings=[qaArgs.meeting];",{task:{id:'task',title:'Own deadline',assignee_id:'self',project_id:'project',due_at:new Date(Date.now()+3600000).toISOString()},meeting:{id:'private',title:'Private leadership call',starts_at:new Date(Date.now()+3600000).toISOString()}});action(h,{action:'calendarItem',kind:'task',id:'task'});assert(h.elements.get('#modalContent').innerHTML.includes('Own deadline'));h.elements.get('#modalContent').innerHTML='';action(h,{action:'calendarItem',kind:'meeting',id:'private'});assert.equal(h.elements.get('#modalContent').innerHTML,'');h.run("me.role='founder'");action(h,{action:'calendarItem',kind:'meeting',id:'private'});assert(h.elements.get('#modalContent').innerHTML.includes('Private leadership call'));
@@ -443,20 +456,20 @@ test('Renamed pages remain discoverable using familiar search terms',()=>{
 });
 test('A new member gets one learning starting point instead of four empty work cards',()=>{
   const h=harness();h.run("page='home';courseReady=true;cache.courses=[];cache.course_enrollments=[];cache.course_submissions=[];cache.project_tasks=[];cache.events=[];");
-  const markup=h.run('home()');assert(markup.includes('Start with a practical workshop'));assert(!markup.includes('No feedback yet'));assert(!markup.includes('No tasks assigned'));assert.equal((markup.match(/class="home-focus-card /g)||[]).length,0);
+  const markup=h.run('home()');assert(markup.includes('data-home-card="courses"'));assert(!markup.includes('No feedback yet'));assert(!markup.includes('No tasks assigned'));assert(!markup.includes('data-home-card="next"'));
 });
 test('Home workshops and feedback open the exact enrolled classroom and appropriate tab',()=>{
   const h=harness(),future=new Date(Date.now()+3600000).toISOString();
-  h.exec("courseReady=true;cache.courses=[{id:'build',title:'My build',starts_at:qaArgs}];cache.course_enrollments=[{course_id:'build',learner_id:'self',status:'completed'}];cache.course_submissions=[{course_id:'build',learner_id:'self',review_status:'accepted',teacher_feedback:'Well tested.',reviewed_at:qaArgs}];",future);
-  const feedback=h.run('personalHome()');assert(feedback.includes('data-id="build" data-view="feedback"'));assert(feedback.includes('Read teacher feedback'));
+  h.exec("courseReady=true;cache.courses=[{id:'build',title:'My build',starts_at:qaArgs}];cache.course_enrollments=[{course_id:'build',learner_id:'self',status:'completed'}];cache.course_submissions=[{course_id:'build',learner_id:'self',review_status:'revision_requested',teacher_feedback:'Well tested.',reviewed_at:qaArgs}];",future);
+  const feedback=h.run('home()');assert(feedback.includes('data-id="build" data-view="feedback"'));assert(feedback.includes('Your teacher has feedback'));
   action(h,{action:'focusCourse',id:'build',view:'feedback'});assert.equal(h.run('activeCourseId'),'build');assert.equal(h.run('courseDetailView'),'feedback');assert.equal(h.run('courseView'),'mine');
-  h.run("cache.course_enrollments[0].status='enrolled'");assert(h.run('personalHome()').includes('data-id="build" data-view="overview"'));
+  h.run("cache.course_submissions=[];cache.course_enrollments[0].status='enrolled'");assert(h.run('home()').includes('data-id="build" data-view="overview"'));
   action(h,{action:'focusCourse',id:'build',view:'invalid'});assert.equal(h.run('courseDetailView'),'overview');
-  h.run('cache.course_enrollments=[]');action(h,{action:'focusCourse',id:'build',view:'feedback'});assert.equal(h.run('courseView'),'explore');assert.equal(h.run('courseDetailView'),'overview');assert(!h.run('personalHome()').includes('Read teacher feedback'));
+  h.run('cache.course_enrollments=[]');action(h,{action:'focusCourse',id:'build',view:'feedback'});assert.equal(h.run('courseView'),'explore');assert.equal(h.run('courseDetailView'),'overview');assert(!h.run('home()').includes('Your teacher has feedback'));
 });
 test('Home direct-message count excludes channel messages and opens the correct inbox',()=>{
   const h=harness();h.run("page='home';unreadCountsReady=true;unreadCounts={channels:{general:9},direct_total:2,direct_messages:{},direct_peers:[]};");
-  const markup=h.run('home()');assert(markup.includes('<a href="#messages"><small>Unread direct messages</small><strong>2</strong>'));assert(!markup.includes('<strong>11</strong>'));
+  const markup=h.run('home()');assert.match(markup,/data-home-card="messages" href="#messages">[\s\S]*?<small>2 unread<\/small>/);assert(!markup.includes('11 unread'));
 });
 test('Learner views direct teachers to Teaching studio without duplicate publishing controls',()=>{
   const h=harness();h.run("page='courses';me.role='teacher';courseReady=true;courseView='mine';cache.courses=[];cache.course_enrollments=[];");
@@ -787,7 +800,7 @@ test('New dashboards escape names, assignment instructions and feedback',()=>{
   const h=learningHarness('teacher');h.run("cache.learning_track_roster[0].full_name='<script>bad</script>';cache.course_roster=[];cache.classroom_assignments[0].instructions='<img src=x onerror=bad>';cache.classroom_assignment_submissions=[{id:'s',assignment_id:'a1',learner_id:'self',details:'A valid description of my practical work.',review_status:'revision_requested',teacher_feedback:'<svg onload=bad>',created_at:'2026-10-01'}]");assert(!h.run('teachingStudentsPanel()').includes('<script>bad'));const markup=h.run("studentClassworkPanel('c1')");assert(!markup.includes('<img src=x'));assert(!markup.includes('<svg onload'));assert(markup.includes('&lt;svg onload=bad&gt;'));
 });
 test('Student Home and calendar include assigned classwork without exposing personal work for others',()=>{
-  const h=learningHarness();const home=h.run('personalHome()');assert(home.includes('YOUR NEXT CLASSWORK'));const entries=Array.from(h.run('calendarEntries()'));assert(entries.some(e=>e.assignment_id==='a1'));assert(!entries.some(e=>e.assignment_id==='personal'));assert.equal(h.exec('calendarPersonal(qaArgs)',entries.find(e=>e.assignment_id==='a1')),true);
+  const h=learningHarness();const home=h.run('home()');assert(home.includes('Test three setpoints'));const entries=Array.from(h.run('calendarEntries()'));assert(entries.some(e=>e.assignment_id==='a1'));assert(!entries.some(e=>e.assignment_id==='personal'));assert.equal(h.exec('calendarPersonal(qaArgs)',entries.find(e=>e.assignment_id==='a1')),true);
 });
 test('Role dashboard entry points match each approved account capability',()=>{
   const h=learningHarness();assert(h.run('roleDashboardIntro()').includes('STUDENT DASHBOARD'));h.run("me.role='teacher'");assert(h.run('roleDashboardIntro()').includes('TEACHER DASHBOARD'));h.run("me.role='founder';me.founder_teaching_enabled=true");assert(h.run('roleDashboardIntro()').includes('FOUNDER DASHBOARD'));h.run("me.role='admin'");assert(h.run('roleDashboardIntro()').includes('ADMINISTRATOR DASHBOARD'));
@@ -908,7 +921,7 @@ test('Storage reads do not resurrect tokens deleted by another browser tab',()=>
  const h=harness();h.clientOptions.auth.storage.setItem('sb-qa-auth-token','value');h.localItems.delete('sb-qa-auth-token');assert.equal(h.clientOptions.auth.storage.getItem('sb-qa-auth-token'),null);
 });
 test('Assigned offices open workspaces without granting finance management or removing teaching',()=>{
- const h=officeHarness('teacher',['secretary','events_coordinator']);assert.equal(h.run('officerAccess()'),true);assert.equal(h.run('teacher()'),true);assert.equal(h.run('financeReportAccess()'),false);assert(h.run('officePage()').includes('Secretary'));assert(h.run('finance()').includes('Administrator access required'));assert(h.run('personalHome()').includes('#office'));
+ const h=officeHarness('teacher',['secretary','events_coordinator']);assert.equal(h.run('officerAccess()'),true);assert.equal(h.run('teacher()'),true);assert.equal(h.run('financeReportAccess()'),false);assert(h.run('officePage()').includes('Secretary'));assert(h.run('finance()').includes('Administrator access required'));assert(h.run('home()').includes('#office'));
 });
 test('Treasurers see approved reports with no recording, approval or month-close controls',()=>{
  const h=officeHarness('member',['treasurer']);h.run("financeReport={month:'2026-09-01',opening_balance:0,income:100,expense:20,closing_balance:80,approved_count:0,categories:[],review:null};");const markup=h.run('financeReportsPage()');assert(markup.includes('read-only access'));assert(!markup.includes('data-action="closeFinanceMonthForm"'));assert(!markup.includes('data-action="reviewFinance"'));assert(!markup.includes('Record transaction'));assert(h.run('finance()').includes('Administrator access required'));
@@ -1194,6 +1207,47 @@ test('Applying authoritative DM counts immediately updates the phone navigation'
 });
 test('Desktop Home is retained when the optional mobile shell is unavailable',()=>{
  const h=harness();assert.equal(h.run("homeViews('<section>Original desktop home</section>')"),'<section>Original desktop home</section>');h.run("mobileWorkspace={home:()=>'<section>Compact phone home</section>'}");const html=h.run("homeViews('<section>Original desktop home</section>')");assert(html.includes('class="mobile-home"'));assert(html.includes('class="desktop-home"'));assert(html.includes('Original desktop home'));
+});
+test('Signed-in Home starts with four shortcuts and hides management destinations from ordinary members',()=>{
+  const h=learningHarness();
+  const html=h.run('home()');
+  assert.match(html,/Hi, Student\./);
+  const overview=html.split('data-home-panel="overview"')[1].split('</section>')[0];
+  assert.equal((overview.match(/data-home-card="(?!next)/g)||[]).length,4);
+  for(const target of ['courses','messages','calendar','projects'])assert(overview.includes('href="#'+target+'"'));
+  assert.match(html,/data-home-panel="learning"[^>]* hidden>/s);
+  assert.doesNotMatch(html,/data-home-tab="manage"|href="#applications"|href="#teaching"/);
+  assert.equal((html.match(/<h1>/g)||[]).length,1);
+});
+test('Home links reflect the current account permissions and only one section is active',()=>{
+  const admin=learningHarness('admin');
+  admin.run("adminPendingCount=4;spaceHomeSection='manage'");
+  const adminHome=admin.run('home()');
+  assert.match(adminHome,/data-home-tab="manage"[^>]+aria-selected="true"/);
+  assert.match(adminHome,/href="#applications"/);
+  assert.match(adminHome,/>4 pending</);
+  assert.equal((adminHome.match(/aria-selected="true"/g)||[]).length,1);
+  const teacher=learningHarness('teacher').run('home()');
+  assert.match(teacher,/href="#teaching"/);
+  assert.doesNotMatch(teacher,/href="#applications"/);
+  const investor=learningHarness('investor').run('home()');
+  assert.match(investor,/href="#investor-portal"/);
+  assert.doesNotMatch(investor,/href="#messages"|href="#courses"/);
+});
+test('Click and keyboard tab selection update focus and panel visibility in place',()=>{
+  const h=learningHarness();h.run("page='home'");
+  const buttons=['overview','learning','community'].map(homeTab=>node({dataset:{homeTab},tabIndex:-1,focus(){this.focused=true;},setAttribute(k,v){this[k]=v;}}));
+  const panels=buttons.map(b=>node({dataset:{homePanel:b.dataset.homeTab},hidden:true}));
+  const root={querySelectorAll(s){return s==='[data-home-tab]'?buttons:panels;}};
+  for(const button of buttons)button.parentElement=root;
+  h.elements.set('#content .space-home',root);
+  h.exec('actions(qaArgs)',{target:{closest(s){return s==='[data-home-tab]'?buttons[1]:null;}}});
+  assert.equal(h.run('spaceHomeSection'),'learning');
+  assert.equal(buttons[1]['aria-selected'],'true');
+  assert.equal(buttons[1].tabIndex,0);assert.equal(buttons[1].focused,true);
+  assert.deepEqual(panels.map(p=>p.hidden),[true,false,true]);
+  assert.equal(h.exec('spaceHomeKeyboardTarget(qaArgs.event,qaArgs.tab)',{event:{key:'ArrowRight'},tab:buttons[2]}),'overview');
+  assert.equal(h.exec('spaceHomeKeyboardTarget(qaArgs.event,qaArgs.tab)',{event:{key:'End'},tab:buttons[0]}),'community');
 });
 test('Shared classroom offers one set of navigable course tabs for enrolled members',()=>{const h=advancedHarness();const markup=h.run('classroomWorkspace()');for(const tab of ['overview','learn','work','sessions','certificates'])assert(markup.includes('#classroom/c1/'+tab));assert(!markup.includes('#classroom/c1/students'));assert(markup.includes('Teacher confirms completion'));});
 test('A shared classroom link never silently switches to a different enrolled course',()=>{const h=advancedHarness();h.run("activeCourseId='not-enrolled';classroomView='work'");const markup=h.run('classroomWorkspace()');assert(markup.includes('Choose a classroom'));assert(!markup.includes('Test three setpoints'));assert.equal(h.run('activeCourseId'),'not-enrolled');});
