@@ -5,6 +5,7 @@ import {createAuthPersistence} from './auth-session.js';
 import {createChapterWorkspace} from './space-chapters.js';
 import {createChapterOperations} from './chapter-operations.js';
 import {googleDriveMaterial} from './assets/learning-drive.js';
+import {renderSpaceHome,selectSpaceHomeTab,spaceHomeKeyboardTarget} from './assets/space-home.js';
 
 const cfg = window.INNOVATEX_CONFIG || {};
 const configured = /^https:\/\/.+\.supabase\.co\/?$/.test(cfg.supabaseUrl || '') && !!cfg.supabaseAnonKey;
@@ -132,6 +133,11 @@ let pendingProtectedPage = '';
 let founderPortraitReady = false;
 let toastTimer;
 let sidebarContext='',sidebarPage='';
+let spaceHomeSection='overview',spaceHomeOwner=null;
+function workspaceCapabilities(){
+  return {signedIn:!!session,approved:approved(),admin:admin(),teacher:teacher(),founder:founder(),
+    officer:officerAccess(),financeReport:financeReportAccess(),investor:investor(),club:clubAccess()};
+}
 function pageGuide(current=page){
   if(!clubAccess())return '';
   const guides={
@@ -157,7 +163,8 @@ function pageGuide(current=page){
 function updateWorkspaceNavigation(){
   const nav=$('#nav');if(!nav)return;
   const links=[...nav.querySelectorAll('a[data-page]')];
-  const allowed=target=>canOpenWorkspacePage(target,{signedIn:!!session,approved:approved(),admin:admin(),teacher:teacher(),founder:founder(),officer:officerAccess(),financeReport:financeReportAccess(),investor:investor(),club:clubAccess()});
+  const capabilities=workspaceCapabilities();
+  const allowed=target=>canOpenWorkspacePage(target,capabilities);
   for(const link of links){
     const active=link.dataset.page===page;
     link.hidden=!allowed(link.dataset.page);link.classList.toggle('active',active);
@@ -1174,6 +1181,7 @@ async function signedIn(newSession,showWelcome=false) {
   learningChoicesReady=false;learningHubReady=false;ownLearningTracks=[];teachingStudentSearch='';teachingStudentTrack='all';teachingStudentPage=0;
   resetMemberDirectory();
   me=null;cache={};applicationAnswersReady=false;workspaceLoading=!!session;workspaceHydrating=!!session;workspaceLoadError='';
+  if(spaceHomeOwner!==session?.user.id){spaceHomeOwner=session?.user.id;spaceHomeSection='overview';}
   communityReady=false;enhancedReady=false;feedReady=false;dmReady=false;mediaReady=false;avatarReady=false;roleReady=false;learningReady=false;courseReady=false;coursePlanningReady=false;courseLifecycleReady=false;courseSeenReady=false;teacherProfileReady=false;teacherProfile=null;privacyReady=false;inventoryReady=false;inventoryCatalogReady=false;financeReady=false;financeApprovalsReady=false;mediaUrls.clear();
   inboxUnreadCount=null;inboxCountRequest++;dismissMemberAlert();memberDeferredNotification=null;memberNotificationPrimed=false;
   unreadCounts={channels:{},direct_messages:{},direct_peers:[],direct_total:0};unreadCountsReady=false;
@@ -1316,6 +1324,8 @@ async function init() {
   document.addEventListener('click',actions);
   document.addEventListener('keydown',e=>{
     if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openWorkspaceSearch();return;}
+    const homeTab=spaceHomeKeyboardTarget(e,e.target.closest?.('[data-home-tab]'));
+    if(homeTab&&page==='home'&&approved()){e.preventDefault();activateSpaceHomeSection(homeTab);return;}
     if(calendarKeyboard(e))return;
     if(memberDirectoryKeyboard(e))return;
     if(e.target.id==='workspaceSearchInput'||e.target.closest?.('.workspace-search-results')){
@@ -1479,6 +1489,8 @@ function render() {
     return;
   }
   memberId?.check();
+  const compactHome=page==='home'&&!!session&&approved();
+  const homeFocus=compactHome&&document.activeElement?.closest?.('.space-home')?document.activeElement.dataset:null;
   const memberFocus=page==='members'&&document.activeElement?.id==='memberSearch'?{start:document.activeElement.selectionStart,end:document.activeElement.selectionEnd}:null;
   const previousDmStream=page==='messages'?$('#dmStream'):null;
   const previousDmList=page==='messages'?$('.dm-list'):null;
@@ -1517,7 +1529,9 @@ function render() {
   }
   const views={chapters:()=>chapters.view(),'chapter-admin':()=>chapterOps.view(),'chapter-offices':()=>chapterOps.view(),'space-map':()=>spaceMap?.view()||head('COMMUNITY','SPACE Map','Reload SPACE to open the map.'),'avatar-studio':()=>avatarStudio?.view()||head('YOUR SPACE','Avatar studio','Reload SPACE to open the studio.'),'getting-started':()=>guidance?.welcome()||head('WELCOME','Getting started','Reload SPACE to open your welcome guide.'),'system-health':()=>admin()?(guidance?.healthView()||head('ADMINISTRATION','System health','Reload SPACE to open the checks.')):'',...Object.fromEntries(['shop','cart','orders','order-desk','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
-  $('#content').innerHTML=(advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'?(guidance?.banner()||'')+(commerce?.homeRoleBanner()||'')+(commerce?.homeShopBanner?.()||''):'')+(page==='admin'?'<a class="admin-order-shortcut" href="#order-desk"><strong>Orders &amp; fulfilment</strong><span>Process new purchases, update status and send receipts →</span></a>':'')+views[page]();
+  $('#content').innerHTML=(!compactHome&&advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'&&!compactHome?(guidance?.banner()||''):'')+(page==='admin'?'<a class="admin-order-shortcut" href="#order-desk"><strong>Orders &amp; fulfilment</strong><span>Process new purchases, update status and send receipts →</span></a>':'')+views[page]();
+  if(homeFocus?.homeTab)$('#space-home-tab-'+homeFocus.homeTab)?.focus({preventScroll:true});
+  if(homeFocus?.homeCard)$('#content .space-home-panel:not([hidden]) [data-home-card="'+homeFocus.homeCard+'"]')?.focus({preventScroll:true});
   metrics?.sync($('#content'));
   analytics?.sync($('#content'));
   window.SpaceChatWaves?.sync($('#content'));
@@ -1592,22 +1606,6 @@ function openWorkspaceCourse(id,detailView='overview'){
   courseDetailView=enrolled&&['overview','materials','classwork','submit','feedback'].includes(detailView)?detailView:'overview';courseTrack='all';location.hash='#courses';render();
   setTimeout(()=>{const target=document.getElementById(`course-${id}`);target?.querySelector('h2,h3')?.focus({preventScroll:true});target?.scrollIntoView({behavior:'smooth',block:'center'});},80);
 }
-function homeAgendaMarkup(userId,activeIds,assigned){
-  const now=Date.now(),items=[],seen=new Set(),myCourseIds=new Set([...activeIds,...assigned.map(c=>c.id)]);
-  const add=(id,title,at,label,kind)=>{const stamp=new Date(at).getTime();if(!at||!Number.isFinite(stamp)||seen.has(kind+id))return;if(stamp<now&&!['task','course_due'].includes(kind))return;seen.add(kind+id);items.push({id,title,at,label,kind,stamp});};
-  for(const e of cache.events||[])add(e.id,e.title,e.starts_at,'Club event','event');
-  for(const c of cache.courses||[])if(myCourseIds.has(c.id)){add(c.id,c.title,c.starts_at,'Practical workshop','course');if(coursePlanningReady)add(c.id,c.title,c.submission_due_at,'Project deadline','course_due');}
-  for(const t of cache.project_tasks||[])if(t.assignee_id===userId&&t.status!=='done')add(t.id,t.title,t.due_at,'Your project task','task');
-  if(founder())for(const m of cache.founder_meetings||[])add(m.id,m.title,m.starts_at,'Founder meeting','meeting');
-  const upcoming=items.sort((a,b)=>a.stamp-b.stamp).slice(0,5);
-  const agenda=upcoming.length?upcoming.map(item=>{const d=new Date(item.at);return `<button type="button" class="home-agenda-item" data-action="calendarItem" data-kind="${item.kind}" data-id="${esc(item.id)}"><span class="home-agenda-date"><b>${d.getDate()}</b><small>${esc(d.toLocaleDateString(undefined,{month:'short'}))}</small></span><div><strong>${esc(item.title)}</strong><small>${esc(item.label)} · ${item.stamp<now?'Past due · ':''}${esc(dateTime(item.at))}</small></div><span aria-hidden="true">↗</span></button>`;}).join(''):empty('Room for the next build','Your scheduled workshops, events and assigned deadlines will appear here.');
-  const posts=(cache.activity_posts||[]).slice().sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,4);
-  const recent=posts.length?posts.map(post=>`<a class="home-recent-item" href="#feed">${memberAvatar(post.author_id)}<div><strong>${esc(post.title||post.category||'Club update')}</strong><p>${esc(String(post.body||'').slice(0,130))}${String(post.body||'').length>130?'…':''}</p><small>${esc(memberName(post.author_id))} · ${esc(date(post.created_at))}</small></div></a>`).join(''):`<div class="empty-state"><h3>Share what you’re building</h3><p>A question, a prototype or a useful resource can get the next conversation started.</p><a href="#feed" class="link">Open Member feed →</a></div>`;
-  return `<div class="home-workspace-columns"><section><div class="section-heading"><div><span class="eyebrow">ON YOUR HORIZON</span><h2>Your agenda</h2></div><a class="link" href="#calendar">Calendar →</a></div><div class="home-agenda">${agenda}</div></section><section><div class="section-heading"><div><span class="eyebrow">FROM THE CLUB</span><h2>Recent member posts</h2></div><a class="link" href="#feed">Member feed →</a></div><div class="home-agenda">${recent}</div></section></div>`;
-}
-function homeFocusCard(icon,label,title,detail,href,action='Open details',urgent=false,priority=false,courseId='',detailView='overview'){
-  return `<a class="home-focus-card ${urgent?'is-urgent':''} ${urgent||priority?'is-priority':''}" href="${href}"${courseId?` data-action="focusCourse" data-id="${esc(courseId)}" data-view="${esc(detailView)}"`:''}><span class="home-focus-icon">${iconSvg(icon)}</span><span class="home-focus-label">${esc(label)}</span><strong>${esc(title)}</strong><span class="home-focus-detail">${esc(detail)}</span><span class="home-focus-action">${esc(action)} →</span></a>`;
-}
 function guidanceState(){
  const id=session?.user.id||'',ownCourses=(cache.courses||[]).filter(c=>c.instructor_id===id),ownIds=new Set(ownCourses.map(c=>c.id));
  return {id,generation:authGeneration,approved:!!id&&approved(),club:!!id&&clubAccess(),admin:admin(),teacher:teacher(),profileDone:!!(me?.headline?.trim()||me?.bio?.trim())&&memberSkills(me).length>0,
@@ -1622,20 +1620,21 @@ function mobileWorkspaceState(){
   const mine=new Set((cache.course_enrollments||[]).filter(x=>x.learner_id===id&&x.status!=='completed').map(x=>x.course_id));
   const assigned=teacher()?(cache.courses||[]).filter(c=>c.instructor_id===id):[],assignedIds=new Set(assigned.map(c=>c.id));
   const courses=(cache.courses||[]).filter(c=>mine.has(c.id)||assignedIds.has(c.id)),actions=[],agenda=[];
-  const add=(href,title,detail,rank=5,urgent=false)=>actions.push({href,title,detail,rank,urgent});
-  const scheduled=(href,title,at,kind)=>{const stamp=new Date(at).getTime();if(at&&Number.isFinite(stamp)&&stamp>=now)agenda.push({href,title,detail:kind+' · '+dateTime(at),stamp});};
+  const add=(href,title,detail,rank=5,urgent=false,courseId='',view='overview')=>actions.push({href,title,detail,rank,urgent,courseId,view});
+  const scheduled=(href,title,at,kind,courseId='')=>{const stamp=new Date(at).getTime();if(at&&Number.isFinite(stamp)&&stamp>=now)agenda.push({href,title,detail:kind+' · '+dateTime(at),stamp,courseId});};
   if(admin()&&adminPendingCount)add('#applications',`${adminPendingCount} membership ${adminPendingCount===1?'application':'applications'}`,'Review accounts waiting for approval',0,true);
   if(teacher()){
     const workIds=new Set(managedClasswork().map(a=>a.id));
     const reviews=(cache.course_submissions||[]).filter(x=>assignedIds.has(x.course_id)&&x.review_status==='submitted').length+(cache.classroom_assignment_submissions||[]).filter(x=>workIds.has(x.assignment_id)&&x.review_status==='submitted'&&x.learner_id!==id).length;
     if(reviews)add('#teaching',`${reviews} student ${reviews===1?'submission':'submissions'}`,'Review work and give feedback',1,true);
   }
-  if(learningHubReady){const work=classworkForStudent().find(a=>!classworkAttempts(a.id)[0]||classworkAttempts(a.id)[0].review_status==='revision_requested');if(work)add('#courses',work.title,work.due_at?'Classwork · due '+dateTime(work.due_at):'Classwork from your teacher',2,!!work.due_at&&new Date(work.due_at).getTime()<now);}
-  const feedback=(cache.course_submissions||[]).filter(x=>x.learner_id===id&&x.review_status==='revision_requested').sort((a,b)=>new Date(b.reviewed_at||b.created_at)-new Date(a.reviewed_at||a.created_at))[0];
-  if(feedback)add('#courses','Your teacher has feedback','Read the review and improve your submission',2,true);
+  if(learningHubReady){const work=classworkForStudent().find(a=>!classworkAttempts(a.id)[0]||classworkAttempts(a.id)[0].review_status==='revision_requested');if(work)add('#courses',work.title,work.due_at?'Classwork · due '+dateTime(work.due_at):'Classwork from your teacher',2,!!work.due_at&&new Date(work.due_at).getTime()<now,work.course_id,'classwork');}
+  const enrolledIds=new Set((cache.course_enrollments||[]).filter(x=>x.learner_id===id).map(x=>x.course_id));
+  const feedback=(cache.course_submissions||[]).filter(x=>x.learner_id===id&&enrolledIds.has(x.course_id)&&x.review_status==='revision_requested').sort((a,b)=>new Date(b.reviewed_at||b.created_at)-new Date(a.reviewed_at||a.created_at))[0];
+  if(feedback)add('#courses','Your teacher has feedback','Read the review and improve your submission',2,true,feedback.course_id,'feedback');
   const task=(cache.project_tasks||[]).filter(x=>x.assignee_id===id&&x.status!=='done').sort((a,b)=>new Date(a.due_at||'9999-12-31')-new Date(b.due_at||'9999-12-31'))[0];
   if(task)add('#projects',task.title,task.due_at?'Project task · due '+dateTime(task.due_at):'Your assigned project task',3,!!task.due_at&&new Date(task.due_at).getTime()<now);
-  for(const c of courses){scheduled('#courses',c.title,c.starts_at,assignedIds.has(c.id)?'Teaching session':'Workshop');if(mine.has(c.id)&&coursePlanningReady&&c.submission_due_at)add('#courses',c.title,'Project deadline · '+dateTime(c.submission_due_at),new Date(c.submission_due_at).getTime()<now?2:6,new Date(c.submission_due_at).getTime()<now);}
+  for(const c of courses){scheduled('#courses',c.title,c.starts_at,assignedIds.has(c.id)?'Teaching session':'Workshop',c.id);if(mine.has(c.id)&&coursePlanningReady&&c.submission_due_at)add('#courses',c.title,'Project deadline · '+dateTime(c.submission_due_at),new Date(c.submission_due_at).getTime()<now?2:6,new Date(c.submission_due_at).getTime()<now,c.id,'submit');}
   for(const event of cache.events||[])scheduled('#calendar',event.title,event.starts_at,'Club event');
   if(founder())for(const m of cache.founder_meetings||[])scheduled('#founder-room',m.title,m.starts_at,'Founder meeting');
   for(const c of cache.space_class_sessions||[])if(mine.has(c.course_id)||assignedIds.has(c.course_id))scheduled('#classroom/'+c.course_id,c.title,c.starts_at,'Class session');
@@ -1646,59 +1645,18 @@ function mobileWorkspaceState(){
 function homeViews(desktop){
   return (metrics?.view()||'')+(mobileWorkspace?`<div class="mobile-home">${mobileWorkspace.home()}</div><div class="desktop-home">${desktop}</div>`:desktop);
 }
-function personalHome(){
-  const userId=session.user.id,now=Date.now();
-  const soon=value=>{const at=value?new Date(value).getTime():NaN;return Number.isFinite(at)&&at>=now&&at-now<=7*24*60*60*1000;};
-  const name=(me?.full_name||session.user.email||'member').trim().split(/\s+/)[0];
-  const enrollments=courseReady?(cache.course_enrollments||[]).filter(e=>e.learner_id===userId):[];
-  const activeIds=new Set(enrollments.filter(e=>e.status!=='completed').map(e=>e.course_id));
-  const myCourses=(cache.courses||[]).filter(c=>activeIds.has(c.id));
-  const workshop=myCourses.filter(c=>c.starts_at&&new Date(c.starts_at).getTime()>=now).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at))[0];
-  const deadlines=coursePlanningReady?myCourses.filter(c=>courseDeadline(c)).sort((a,b)=>courseDeadline(a)-courseDeadline(b)):[];
-  const deadline=deadlines.find(c=>courseDeadline(c).getTime()<now)||deadlines[0];
-  const feedback=courseReady?(cache.course_submissions||[]).filter(s=>s.learner_id===userId&&s.review_status!=='submitted'&&s.teacher_feedback).sort((a,b)=>new Date(b.reviewed_at||b.created_at)-new Date(a.reviewed_at||a.created_at))[0]:null;
-  const feedbackCourse=feedback?(cache.courses||[]).find(c=>c.id===feedback.course_id):null;
-  const feedbackClassroom=feedbackCourse&&enrollments.some(e=>e.course_id===feedbackCourse.id)?feedbackCourse:null;
-  const tasks=(cache.project_tasks||[]).filter(t=>t.assignee_id===userId&&t.status!=='done').sort((a,b)=>new Date(a.due_at||'9999-12-31')-new Date(b.due_at||'9999-12-31'));
-  const event=(cache.events||[]).filter(e=>new Date(e.starts_at).getTime()>=now).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at))[0];
-  const notifications=(cache.notifications||[]).filter(n=>!n.read_at).length;
-  const unreadMessages=unreadCountsReady?unreadCounts.direct_total:null;
-  const assigned=teacher()?(cache.courses||[]).filter(c=>c.instructor_id===userId):[],assignedIds=new Set(assigned.map(c=>c.id));
-  const assignedWorkIds=new Set(managedClasswork().map(a=>a.id));
-  const reviews=courseReady?[...(cache.course_submissions||[]).filter(s=>assignedIds.has(s.course_id)&&s.review_status==='submitted'),...(learningHubReady?(cache.classroom_assignment_submissions||[]).filter(s=>assignedWorkIds.has(s.assignment_id)&&s.review_status==='submitted'&&s.learner_id!==userId):[])]:[];
-  const teachingDate=assigned.flatMap(c=>[{title:c.title,at:c.starts_at,label:'Workshop starts'},{title:c.title,at:coursePlanningReady?c.submission_due_at:null,label:'Project deadline'}]).filter(x=>x.at&&new Date(x.at).getTime()>=now).sort((a,b)=>new Date(a.at)-new Date(b.at))[0];
-  const meeting=founder()?(cache.founder_meetings||[]).filter(m=>new Date(m.starts_at).getTime()>=now).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at))[0]:null;
-  const financePending=admin()&&financeApprovalsReady?(cache.finance_entries||[]).filter(e=>financeStatus(e)==='pending').length:0;
-  const reports=admin()?(cache.reports||[]).filter(r=>r.status==='open').length:0;
-  const queue=admin()?[
-    homeFocusCard('applications','ADMINISTRATOR · APPLICATIONS',`${adminPendingCount} waiting for review`,adminPendingCount?'Check verification and application details before deciding.':'New applications will appear here.','#applications','Review applications',adminPendingCount>0),
-    homeFocusCard('moderation','ADMINISTRATOR · REPORTS',`${reports} open ${reports===1?'report':'reports'}`,reports?'Review reported posts, messages and shared content.':'Your moderation queue is clear.','#moderation','Open moderation',reports>0)
-  ]:founderOnly()?[
-    homeFocusCard('founder-room','FOUNDER · NEXT MEETING',meeting?.title||'No meeting scheduled',meeting?dateTime(meeting.starts_at):'Plan the next founder discussion.','#founder-room','Open founder room',false,soon(meeting?.starts_at)),
-  ]:teacher()?[
-    homeFocusCard('teaching','TEACHER · PROJECT REVIEWS',courseReady?`${reviews.length} ${reviews.length===1?'submission':'submissions'} awaiting feedback`:'Project reviews',courseReady?'Give learners a clear next step on their builds.':'Open Teaching studio for setup details.','#teaching','Review projects',reviews.length>0),
-    homeFocusCard('calendar','TEACHER · COMING UP',teachingDate?.title||'No session scheduled',teachingDate?`${teachingDate.label} · ${dateTime(teachingDate.at)}`:'Set a date or deadline for your next workshop.','#teaching','Plan teaching',false,soon(teachingDate?.at))
-  ]:[];
-  if(founderOnly()&&teacher())queue.push(homeFocusCard('teaching','TEACHING LEAD · REVIEWS',courseReady?`${reviews.length} ${reviews.length===1?'submission':'submissions'} awaiting feedback`:'Project reviews',teachingDate?`${teachingDate.label}: ${teachingDate.title} · ${dateTime(teachingDate.at)}`:'Open Teaching studio to plan your workshops.','#teaching','Open teaching studio',reviews.length>0));
-  const priority=admin()?'Club oversight':founderOnly()?'Founder priorities':teacher()?'Teaching priorities':'';
-  const focus=[
-    learningHubReady&&classworkForStudent().filter(a=>!classworkAttempts(a.id)[0]||classworkAttempts(a.id)[0].review_status==='revision_requested').slice(0,1).map(a=>homeFocusCard('courses','YOUR NEXT CLASSWORK',a.title,a.due_at?'Due '+dateTime(a.due_at):'Open your task instructions and share your results.','#courses','Open classwork',!!a.due_at&&new Date(a.due_at)<new Date(),soon(a.due_at),a.course_id,'classwork')).join(''),
-    workshop&&homeFocusCard('courses','YOUR NEXT WORKSHOP',workshop.title,`${dateTime(workshop.starts_at)} · ${courseTrackFor(workshop)}`,'#courses','Open my classroom',false,soon(workshop.starts_at),workshop.id),
-    deadline&&homeFocusCard('calendar','PROJECT DEADLINE',deadline?.title||'No project deadline set',deadline?`${courseDeadline(deadline).getTime()<now?'Past due · submissions remain open':'Due'} ${dateTime(deadline.submission_due_at)}`:'Your course deadlines will appear here.','#calendar','View calendar',!!deadline&&courseDeadline(deadline).getTime()<now,soon(deadline?.submission_due_at)),
-    feedback&&homeFocusCard('courses','TEACHER FEEDBACK',feedbackCourse?.title||'Latest project review',`${feedback.review_status==='revision_requested'?'Revision requested':'Project accepted'} · ${feedback.teacher_feedback.slice(0,130)}${feedback.teacher_feedback.length>130?'…':''}`,'#courses',feedbackClassroom?'Read teacher feedback':'Open My learning',feedback.review_status==='revision_requested',false,feedbackClassroom?.id,'feedback'),
-    tasks.length>0&&homeFocusCard('projects','ASSIGNED PROJECT TASKS',tasks.length?`${tasks.length} ${tasks.length===1?'task':'tasks'} in progress`:'No tasks assigned',tasks.length?`${tasks[0].title}${tasks[0].due_at?' · due '+dateTime(tasks[0].due_at):''}`:'Join a project or start one with your team.','#projects','View projects',!!tasks[0]?.due_at&&new Date(tasks[0].due_at).getTime()<now,soon(tasks[0]?.due_at))
-  ].filter(Boolean);
-  const orientation=admin()?'Start with membership approvals and reports, then check club activity.':founderOnly()?'Start with founder meetings and club projects. Your teaching and learning work is below.':teacher()?'Review student builds in Teaching studio. Use My learning for workshops you have joined.':'Follow your workshops and project tasks below. Direct messages are private; Team chat is for groups.';
-  return `${officerAccess()?`<section class="officer-home-banner"><div><span class="eyebrow">CLUB RESPONSIBILITIES</span><strong>${admin()?'Club offices & work reviews':ownOfficerRoles.map(officerTitle).join(' · ')}</strong><p>Keep plans, minutes and progress in your office workspace.</p></div><a class="button button-outline button-sm" href="#office">Open my office →</a>${admin()?'<a class="link" href="#officers">Assign offices →</a>':''}</section>`:''}<section class="home-personal-intro"><div><span class="eyebrow">YOUR SPACE WORKSPACE</span><h1>Welcome back, ${esc(name)}.</h1><p>${esc(orientation)}</p></div><a class="button button-outline" href="#calendar">Open calendar ↗</a></section>
-  <div class="home-glance" data-bento="summary"><a href="#courses"><small>My workshops</small><strong>${courseReady?enrollments.length:'—'}</strong><span>Open My learning →</span></a><a href="#events"><small>Next club event</small><strong class="home-glance-date">${esc(event?date(event.starts_at):'To be announced')}</strong><span>${esc(event?.title||'See the calendar')} →</span></a><a href="#notifications"><small>Unread notifications</small><strong>${notifications}</strong><span>Open Notifications →</span></a><a href="#messages"><small>Unread direct messages</small><strong>${unreadMessages??'—'}</strong><span>${'Open Direct messages'} →</span></a></div>
-  ${queue.length?`<div class="section-heading"><div><span class="eyebrow">YOUR ROLE</span><h2>${priority}</h2></div></div><div class="home-focus-grid home-role-grid" data-bento="focus">${queue.join('')}</div>`:''}
-  <div class="section-heading"><div><span class="eyebrow">YOUR NEXT MOVES</span><h2>Learning and projects</h2></div><a class="link" href="#calendar">See full calendar →</a></div>${focus.length?`<div class="home-focus-grid" data-bento="focus">${focus.join('')}</div>`:`<div class="home-start"><div><strong>Start with a practical workshop</strong><p>Open My learning, browse the four tracks and choose your first build. Your next workshop, feedback and assigned tasks will appear here.</p></div><a class="button button-sm" href="#courses">Open My learning →</a></div>`}
-  ${homeAgendaMarkup(userId,activeIds,assigned)}
-  <div class="section-heading"><div><span class="eyebrow">BUILD TOGETHER</span><h2>Stay in the conversation</h2></div></div><div class="home-community-links" data-bento="links"><a href="#feed">Share a build update <span>Member feed →</span></a><a href="#channels">Talk with your team <span>Team chat →</span></a><a href="#library">Find a document <span>Shared files →</span></a></div>`;
+function activateSpaceHomeSection(id){
+  if(selectSpaceHomeTab($('#content .space-home'),id,true))spaceHomeSection=id;
+}
+function signedInSpaceHome(){
+  const state=mobileWorkspaceState();
+  const capabilities=workspaceCapabilities();
+  return renderSpaceHome({state,capabilities:{...capabilities,office:capabilities.officer},
+    allowed:target=>canOpenWorkspacePage(target,capabilities),esc,icon:iconSvg,selected:spaceHomeSection,
+    visitNext:state.actions.find(item=>item.href!=='#applications')||state.agenda[0],pendingRole:!!commerce?.homeRoleBanner()});
 }
 function home() {
-  if(investor())return homeViews(`${head('SPACE PARTNERS','Welcome, '+(me?.full_name||'investor'),'Your approved investor space brings together curated updates and a direct inquiry form.')}<div class="grid grid-2" data-bento="links"><a class="card feature-card" href="#investor-portal"><span class="feature-icon">${iconSvg('investors')}</span><h3>Investor portal</h3><p>Read updates the club has approved for investors and send a question to the team.</p><span class="link">Open portal →</span></a><a class="card feature-card" href="founders/"><span class="feature-icon">${iconSvg('founders')}</span><h3>Meet the founders</h3><p>Learn about the people guiding SPACE.</p><span class="link">View founders →</span></a></div>`);
-  if(clubAccess())return homeViews(roleDashboardIntro()+advancedMyDay()+personalHome());
+  if(session&&approved())return signedInSpaceHome();
   const count=n=>(cache[n]||[]).length;
   const latest=(cache.announcements||[]).slice(0,3);
   const upcoming=(cache.events||[]).filter(e=>new Date(e.starts_at)>new Date()).sort((a,b)=>new Date(a.starts_at)-new Date(b.starts_at)).slice(0,3);
@@ -3237,6 +3195,8 @@ async function deleteAnnouncement(id){
 
 function actions(e) {
   if(session&&checkSessionExpiry()){e.preventDefault();return;}
+  const homeTab=e.target.closest?.('[data-home-tab]');
+  if(homeTab?.dataset.homeTab&&page==='home'&&approved()){activateSpaceHomeSection(homeTab.dataset.homeTab);return;}
   const el=e.target.closest('[data-action]'); if(!el)return; const action=el.dataset.action,id=el.dataset.id;
   if(['onboardingDismiss','onboardingShow','onboardingReload','healthReload','healthReview'].includes(action)){void guidance?.action(action,el);return;}
   if(action==='onboardingTeachingProfile'&&teacher()){teachingTab='profile';location.hash='#teaching';render();return;}

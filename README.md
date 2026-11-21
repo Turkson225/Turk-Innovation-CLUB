@@ -159,6 +159,8 @@ The role tool cannot change the signed-in administrator's own access. Reassign e
 
 ## Finding your way around SPACE
 
+The signed-in Home opens on **Overview** with four shortcuts and, when available, one upcoming item. Use **Learning**, **Community**, and **Club** to find more destinations without leaving Home. Founders, officers and administrators also have a **Manage** tab for the tools their roles allow. The same layout works on phones and desktops, and the sidebar still has the full navigation.
+
 Home, Notifications, Direct messages and Calendar are the daily shortcuts. The sidebar groups the rest into Learning & projects, Community, Club activities, Leadership & partners, Administration and About SPACE. Open a group to see its pages; selecting a page opens its group, and background refreshes preserve a group you manually collapsed. Groups with no pages permitted for the current account are hidden.
 
 Use **My learning** for workshops you have joined, their materials, your submissions and teacher feedback. Approved teachers manage classes and upload slides in **Teaching studio**. **Direct messages** are private conversations; **Team chat** contains group channels and threads; **Discussion forum** holds longer questions and decisions. **Notifications** are personal updates, while **Announcements** are official club notices. **Shared files** is the club document library; course-specific slides stay in the workshop classroom. Search also recognizes familiar names such as Inbox, Channels, Courses and Document library.
