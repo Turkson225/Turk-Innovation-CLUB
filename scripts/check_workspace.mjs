@@ -1263,6 +1263,9 @@ test('Drive links keep the file ID and resource key without embedding arbitrary 
   const file='Example_File-4QB7qh7Dx';
   assert.equal(parse('https://drive.google.com/open?id='+file+'&resourcekey=0-fileKey').preview,
     'https://drive.google.com/file/d/'+file+'/preview?resourcekey=0-fileKey');
+  const folder=parse('https://drive.google.com/drive/u/1/folders/'+file+'?usp=sharing&resourcekey=0-fileKey');
+  assert.equal(folder.open,'https://drive.google.com/drive/folders/'+file+'?resourcekey=0-fileKey');
+  assert.equal(folder.preview,null);
   for(const editor of ['presentation','document','spreadsheets']){
     const base='https://docs.google.com/'+editor+'/d/'+file;
     assert.equal(parse(base+'/edit?usp=sharing#slide=id.p1').open,base+'/edit');
@@ -1271,13 +1274,13 @@ test('Drive links keep the file ID and resource key without embedding arbitrary 
   for(const url of [
     'https://drive.google.com.evil.test/file/d/'+file+'/view',
     'https://drive.google.com@evil.test/file/d/'+file+'/view',
-    'https://drive.google.com/drive/folders/'+file,
+    'https://drive.google.com/drive/folders/'+file+'/wrong',
     'https://docs.google.com/url?q=https://evil.test',
     'http://drive.google.com/file/d/'+file+'/view',
     'https://drive.google.com/file/d/'+file+'/view?resourcekey=%22'
   ])assert.equal(parse(url),null,url);
 });
-test('Workshop materials keep direct downloads and open Drive previews only on request',()=>{
+test('Workshop materials open Drive directly and still offer optional file previews',()=>{
   const h=advancedHarness();
   h.elements.set('#modal',node({open:false,showModal(){this.open=true;}}));
   h.run(`learningReady=true;classroomView='learn';cache.learning_materials=[
@@ -1288,6 +1291,7 @@ test('Workshop materials keep direct downloads and open Drive previews only on r
   const studentPage=h.run('classroomWorkspace()');
   assert.match(studentPage,/downloadLearning/);
   assert.match(studentPage,/viewDriveMaterial/);
+  assert.match(studentPage,/href="https:\/\/docs\.google\.com\/presentation\/d\/Example_File-4QB7qh7Dx\/edit" target="_blank" rel="noopener noreferrer">Open in Google Drive<\/a>/);
   assert.doesNotMatch(studentPage,/driveLearningForm|Hidden slides|<iframe/);
   action(h,{action:'viewDriveMaterial',id:'hidden'});
   assert.equal(h.elements.get('#modal').open,false);
@@ -1367,15 +1371,17 @@ test('Teachers can send Drive materials to their assigned track without selectin
 test('Track materials appear under the matching track and never in the general library',()=>{
   const h=learningHarness();
   h.run(`activeCourseId='c1';courseView='mine';classroomView='learn';cache.learning_materials=[
-    {id:'my-track',title:'Controller video',kind:'video',learning_track:'Controls and Automation',drive_url:'https://drive.google.com/file/d/Example_File-4QB7qh7Dx/view'},
+    {id:'my-track',title:'Controller resources folder',kind:'guide',learning_track:'Controls and Automation',drive_url:'https://drive.google.com/drive/folders/Example_File-4QB7qh7Dx'},
     {id:'not-mine',title:'Robotics notes',kind:'notes',learning_track:'Electronics and Robotics',file_name:'private.pdf'},
     {id:'general',title:'Club safety note',kind:'notes',file_name:'general.pdf'}
   ];`);
   const mine=h.run('courses()');
-  assert.match(mine,/TRACK MATERIALS[\s\S]*Controller video[\s\S]*Club learning library[\s\S]*Club safety note/);
+  assert.match(mine,/TRACK MATERIALS[\s\S]*Controller resources folder[\s\S]*Club learning library[\s\S]*Club safety note/);
+  assert.match(mine,/href="https:\/\/drive\.google\.com\/drive\/folders\/Example_File-4QB7qh7Dx"[^>]*>Open in Google Drive/);
+  assert.doesNotMatch(mine,/Preview in SPACE/);
   assert.doesNotMatch(mine,/Robotics notes/);
   const classroom=h.run('classroomWorkspace()');
-  assert.match(classroom,/TRACK MATERIALS[\s\S]*Controller video/);
+  assert.match(classroom,/TRACK MATERIALS[\s\S]*Controller resources folder/);
   assert.doesNotMatch(classroom,/Robotics notes|Club safety note/);
 });
 test('Classroom refresh includes resources and welcome refresh includes own learning dependencies',()=>{const h=harness();assert(h.run("pageRefreshDependencies.classroom.includes('learning_materials')"));assert(h.run("pageRefreshDependencies['getting-started'].includes('member_learning_paths')"));});

@@ -4,7 +4,7 @@ import {createAdminSecurity} from './admin-security.js';
 import {createAuthPersistence} from './auth-session.js';
 import {createChapterWorkspace} from './space-chapters.js';
 import {createChapterOperations} from './chapter-operations.js';
-import {googleDriveMaterial} from './assets/learning-drive.js';
+import {googleDriveMaterial} from './assets/learning-drive.js?v=space-drive-folder-20261122';
 import {renderSpaceHome,selectSpaceHomeTab,spaceHomeKeyboardTarget} from './assets/space-home.js';
 
 const cfg = window.INNOVATEX_CONFIG || {};
@@ -2461,9 +2461,9 @@ function courses() {
 }
 function materialRow(m){
   const drive=googleDriveMaterial(m.drive_url);
-  const label=drive?'Google Drive':m.drive_url?'Link unavailable':esc(m.file_name)+' · '+fileSize(m.file_size);
+  const label=drive?(drive.preview?'Google Drive':'Google Drive folder'):m.drive_url?'Link unavailable':esc(m.file_name)+' · '+fileSize(m.file_size);
   const action=m.hidden_at?'<span class="tag gold">Hidden</span>':m.drive_url
-    ?(drive?`<button class="text-button" data-action="viewDriveMaterial" data-id="${esc(m.id)}">Preview</button>`:'')
+    ?(drive?`<div class="drive-material-actions learning-drive-links"><a class="link" href="${esc(drive.open)}" target="_blank" rel="noopener noreferrer">Open in Google Drive</a>${drive.preview?`<button type="button" class="text-button" data-action="viewDriveMaterial" data-id="${esc(m.id)}">Preview in SPACE</button>`:''}</div>`:'')
     :`<button class="text-button" data-action="downloadLearning" data-id="${esc(m.id)}">Download ↓</button>`;
   return `<div class="learning-row"><span class="tag blue">${esc(m.kind)}</span><div><strong>${esc(m.title)}</strong><small>${label} · ${date(m.created_at)}</small>${m.description?`<p>${esc(m.description)}</p>`:''}</div>${action}</div>`;
 }
@@ -2505,7 +2505,7 @@ function learningMaterialEditor(courseId='',source='upload'){
       </div>
       <div class="field" data-learning-source-panel="drive"${drive?'':' hidden'}>
         <label for="drive_url">Google Drive share link</label><input id="drive_url" name="drive_url" type="url" maxlength="1000" placeholder="https://drive.google.com/…" aria-describedby="driveLinkHint" ${drive?'required':'disabled'}>
-        <p class="hint" id="driveLinkHint">In Google Drive, choose Share → Copy link. Give your students Viewer access in Drive. Use a link to one file.</p>
+        <p class="hint" id="driveLinkHint">In Google Drive, choose Share → Copy link on a file or folder. Students can open the link directly. Access follows the sharing settings in Drive.</p>
         ${courses.length||tracks.length?'':'<p class="hint">Ask an admin to assign a learning track or workshop before sharing a Drive link.</p>'}
       </div>
       ${field('Title','title')}
@@ -4038,7 +4038,7 @@ function viewDriveMaterial(id){
   if(!clubAccess()||!learningReady)return;
   const material=(cache.learning_materials||[]).find(m=>m.id===id&&!m.hidden_at);
   const drive=googleDriveMaterial(material?.drive_url);
-  if(!drive)return;
+  if(!drive?.preview)return;
   modal(`<section class="drive-material-viewer"><span class="eyebrow">GOOGLE DRIVE</span><h2>${esc(material.title)}</h2><iframe src="${esc(drive.preview)}" title="${esc(material.title)}: Google Drive preview" sandbox="allow-scripts allow-same-origin allow-presentation" allow="fullscreen" referrerpolicy="no-referrer"></iframe><p class="subtle">If the preview is unavailable, open the file in Google Drive and sign in to the Google account your teacher shared it with.</p><div><a class="button button-outline button-sm" href="${esc(drive.open)}" target="_blank" rel="noopener noreferrer">Open in Google Drive ↗</a></div></section>`);
 }
 async function downloadLearning(id){
@@ -4542,7 +4542,7 @@ async function submit(e) {
       if(!teacher()||!learningReady)throw Error('Approved teacher access is required.');
       const target=resolveLearningMaterialTarget(payload.material_destination,true);
       const drive=googleDriveMaterial(payload.drive_url);
-      if(!drive)throw Error('Use the share link for a single Google Drive file, Google Slides presentation, Doc or Sheet.');
+      if(!drive)throw Error('Use the share link for a Google Drive file or folder, Google Slides presentation, Doc or Sheet.');
       const {error}=await db.from('learning_materials').insert({
         ...target,uploaded_by:session.user.id,title:String(payload.title).trim(),
         description:String(payload.description||'').trim(),kind:payload.kind,drive_url:drive.open
@@ -4550,8 +4550,12 @@ async function submit(e) {
       if(error?.code==='PGRST204'||error?.code==='42703')throw Error(target.learning_track
         ?'Track sharing is not enabled yet. Apply the learning track materials migration or choose a workshop.'
         :'Google Drive links are not enabled yet. Ask an administrator to apply the Drive learning materials migration, or upload the file instead.');
+      if(!drive.preview&&error?.code==='23514'&&error.message?.includes('learning_materials_source_check')){
+        throw Error('Folder links are not enabled yet. Apply the Drive folder migration, or share an individual file.');
+      }
       if(error)throw error;
-      close();await refresh();show(target.learning_track?'Google Drive material shared with '+target.learning_track+'.':'Google Drive material shared with the workshop.');return;
+      close();if(page==='teaching')teachingTab='materials';
+      await refresh();show(target.learning_track?'Google Drive link shared with '+target.learning_track+'.':'Google Drive link shared with the workshop.');return;
     }
     if(kind==='learningMaterial'){
       if(!teacher()||!learningReady)throw Error('Approved teacher access is required.');

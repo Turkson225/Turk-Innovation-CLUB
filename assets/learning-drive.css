@@ -5,6 +5,18 @@
   align-items: center;
 }
 
+.learning-row .learning-drive-links {
+  flex: 0 1 auto;
+  margin-inline-start: auto;
+  gap: .35rem .65rem;
+}
+
+.learning-drive-links :is(a, button) {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 40px;
+}
+
 .drive-source-switch {
   gap: .4rem;
   padding: .3rem;
