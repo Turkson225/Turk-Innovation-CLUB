@@ -1384,6 +1384,35 @@ test('Track materials appear under the matching track and never in the general l
   assert.match(classroom,/TRACK MATERIALS[\s\S]*Controller resources folder/);
   assert.doesNotMatch(classroom,/Robotics notes|Club safety note/);
 });
+test('Teaching studio separates deleted materials and offers delete or restore only to authorized staff',()=>{
+  const h=learningHarness('teacher');
+  h.run(`page='teaching';teachingTab='materials';cache.learning_materials=[
+    {id:'own',course_id:'c1',uploaded_by:'self',kind:'slides',title:'Current slides',file_name:'slides.pdf'},
+    {id:'other',course_id:'c1',uploaded_by:'someone-else',kind:'notes',title:'Other teacher notes',file_name:'notes.pdf'},
+    {id:'archived',uploaded_by:'self',learning_track:'Controls and Automation',kind:'guide',title:'Old Drive folder',hidden_at:'2026-11-22',teacher_can_restore:true}
+  ];`);
+  const markup=h.run('teaching()');
+  assert.match(markup,/data-action="learningRemovalForm" data-id="own">Delete from SPACE/);
+  assert.doesNotMatch(markup,/data-action="learningRemovalForm" data-id="other"/);
+  assert.match(markup,/<summary>Deleted materials \(1\)<\/summary>[\s\S]*Old Drive folder[\s\S]*data-id="archived">Restore/);
+  h.run("me.role='admin'");
+  assert.match(h.run('teaching()'),/data-action="learningRemovalForm" data-id="other">Delete from SPACE/);
+  h.run("me.role='member';classroomView='learn';activeCourseId='c1'");
+  assert.doesNotMatch(h.run('classroomWorkspace()'),/Delete from SPACE|Old Drive folder/);
+});
+test('Drive removal requires confirmation and changes only the SPACE material',async()=>{
+  const h=learningHarness('teacher');
+  h.run("page='teaching';cache.learning_materials=[{id:'drive',course_id:'c1',uploaded_by:'self',kind:'slides',title:'Intro slides',drive_url:'https://docs.google.com/presentation/d/Example_File-4QB7qh7Dx/edit'}]");
+  action(h,{action:'learningRemovalForm',id:'drive'});
+  assert.match(h.elements.get('#modalContent').innerHTML,/Delete from SPACE\?[\s\S]*stay in Google Drive/);
+  assert.equal(h.rpcCalls.length,0);
+  const form=learningForm('learningRemoval',[['material_id','drive'],['removed','true']]);
+  await h.exec('submit(qaArgs)',form.event);
+  assert.equal(h.rpcCalls[0].name,'set_learning_material_removed');
+  assert.equal(h.rpcCalls[0].args.p_material,'drive');
+  assert.equal(h.rpcCalls[0].args.p_removed,true);
+  assert.equal(h.requests.length,0);
+});
 test('Classroom refresh includes resources and welcome refresh includes own learning dependencies',()=>{const h=harness();assert(h.run("pageRefreshDependencies.classroom.includes('learning_materials')"));assert(h.run("pageRefreshDependencies['getting-started'].includes('member_learning_paths')"));});
 test('Onboarding async actions cannot swallow unrelated workspace actions',()=>{const h=learningHarness();let count=0;h.context.guidanceStub={action(){count++;return Promise.resolve(true);}};h.run('guidance=guidanceStub');action(h,{action:'courseView',view:'explore'});assert.equal(h.run('courseView'),'explore');assert.equal(count,0);action(h,{action:'onboardingShow'});assert.equal(count,1);});
 test('An approved teacher’s welcome action opens their teaching profile directly',()=>{const h=learningHarness('teacher');action(h,{action:'onboardingTeachingProfile'});assert.equal(h.run('teachingTab'),'profile');assert.equal(h.context.location.hash,'#teaching');});

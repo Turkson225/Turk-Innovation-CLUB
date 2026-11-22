@@ -149,6 +149,46 @@ await check('A Drive folder link stays in the selected track and does not change
   await reject(()=>insert(actors.admin,folder,null),/learning_materials_source_check/);
   await reject(()=>insert(actors.admin,'https://drive.google.com.invalid/drive/folders/Example_File-4QB7qh7Dx'),/learning_materials_source_check/);
 });
+const removeLearning=(actor,id,removed)=>as(actor,'select public.set_learning_material_removed($1,$2)',[id,removed]);
+await check('Teachers can delete and restore their own workshop files without touching storage or losing audit history',async()=>{
+  const sql=fs.readFileSync(new URL('supabase/migrations/20261122020000_remove_learning_materials.sql',root),'utf8');
+  await db.exec(sql);await db.exec(sql);
+  const path=actors.teacher+'/reversible-material.pdf';
+  await as(actors.teacher,"insert into storage.objects(bucket_id,name) values('club-learning',$1)",[path]);
+  const id=(await as(actors.teacher,
+    "insert into public.learning_materials(course_id,uploaded_by,title,kind,file_name,storage_path,file_size) values($1,auth.uid(),'Temporary notes','notes','notes.pdf',$2,2048) returning id",[c1,path])).rows[0].id;
+  const rows=async actor=>(await as(actor,'select hidden_at from public.learning_materials where id=$1',[id])).rows;
+  const file=async actor=>(await as(actor,"select name from storage.objects where bucket_id='club-learning' and name=$1",[path])).rows;
+  assert.equal((await file(actors.student)).length,1);
+  await reject(()=>removeLearning(actors.student,id,true),/Approved teaching access/);
+  await reject(()=>removeLearning(actors.otherTeacher,id,true),/cannot manage/);
+  await removeLearning(actors.teacher,id,true);await removeLearning(actors.teacher,id,true);
+  assert((await rows(actors.teacher))[0].hidden_at);
+  assert.deepEqual(await rows(actors.student),[]);
+  assert.deepEqual(await file(actors.student),[]);
+  await removeLearning(actors.teacher,id,false);
+  assert.equal((await rows(actors.student))[0].hidden_at,null);
+  assert.equal((await file(actors.student)).length,1);
+  const audit=(await db.query("select action,actor_id from public.audit_events where target_type='learning_material' and target_id=$1 order by created_at",[id])).rows;
+  assert.deepEqual(audit.map(a=>a.action).sort(),['learning_material_removed','learning_material_restored']);
+  assert(audit.every(a=>a.actor_id===actors.teacher));
+});
+await check('Admins can remove any Drive link and a teacher who lost the track cannot restore it',async()=>{
+  const id=(await shareTrack(actors.teacher,controlsTrack)).rows[0].id;
+  await removeLearning(actors.admin,id,true);
+  assert.deepEqual((await as(actors.teacher,'select hidden_at from public.learning_materials where id=$1',[id])).rows,[]);
+  await reject(()=>removeLearning(actors.teacher,id,false),/Only an administrator/);
+  await removeLearning(actors.admin,id,false);
+  await removeLearning(actors.teacher,id,true);
+  assert((await as(actors.teacher,'select hidden_at from public.learning_materials where id=$1',[id])).rows[0].hidden_at);
+  await db.query('delete from public.teaching_track_assignments where teacher_id=$1 and track=$2',[actors.teacher,controlsTrack]);
+  await reject(()=>removeLearning(actors.teacher,id,false),/cannot manage/);
+  assert.deepEqual((await as(actors.teacher,'select id from public.learning_materials where id=$1',[id])).rows,[]);
+  await removeLearning(actors.admin,id,false);
+  assert.equal((await as(actors.student,'select drive_url from public.learning_materials where id=$1',[id])).rows[0].drive_url,driveUrl);
+  await db.query('insert into public.teaching_track_assignments(teacher_id,track) values($1,$2)',[actors.teacher,controlsTrack]);
+  await reject(()=>db.transaction(async tx=>{await tx.exec('set local role anon');return tx.query('select public.set_learning_material_removed($1,true)',[id]);}),/permission denied/);
+});
 await check('Empty, duplicate and invented courses are rejected',async()=>{for(const tracks of [[],['fake'],['Controls and Automation','Controls and Automation']])await reject(()=>as(actors.student,'select public.set_my_learning_tracks($1)',[tracks]),/Select one or more/);});
 await check('Unverified and investor accounts cannot choose member courses',async()=>{for(const actor of [actors.unverified,actors.investor])await reject(()=>as(actor,"select public.set_my_learning_tracks(array['Controls and Automation'])"),/Verified club account/);});
 await check('Pending applicants save choices without joining a private class',async()=>{await as(actors.pending,"select public.set_my_learning_tracks(array['Controls and Automation'])");assert.equal((await db.query('select * from public.course_enrollments where learner_id=$1',[actors.pending])).rows.length,0);});
