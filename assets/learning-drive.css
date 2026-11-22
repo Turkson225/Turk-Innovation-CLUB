@@ -17,6 +17,15 @@
   min-block-size: 40px;
 }
 
+.removed-learning-materials {
+  margin-block-start: 1rem;
+}
+
+.removed-learning-materials > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
 .drive-source-switch {
   gap: .4rem;
   padding: .3rem;
