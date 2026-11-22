@@ -189,6 +189,55 @@ await check('Admins can remove any Drive link and a teacher who lost the track c
   await db.query('insert into public.teaching_track_assignments(teacher_id,track) values($1,$2)',[actors.teacher,controlsTrack]);
   await reject(()=>db.transaction(async tx=>{await tx.exec('set local role anon');return tx.query('select public.set_learning_material_removed($1,true)',[id]);}),/permission denied/);
 });
+const deliverMaterialAlerts=async()=>(await db.query('select space_private.deliver_learning_material_alerts() sent')).rows[0].sent;
+const materialAlerts=async id=>(await db.query("select user_id,kind from public.notifications where target_type='learning_material' and target_id=$1 order by user_id",[id])).rows;
+await check('Learning alerts notify new and existing learners once, and never notify other tracks or pending accounts',async()=>{
+  const migration=fs.readFileSync(new URL('supabase/migrations/20261122030000_learning_material_alerts.sql',root),'utf8');
+  await db.exec(migration); // Projects without Cron can queue while finishing setup.
+  await db.exec(`create schema cron;
+    create table cron.learning_schedule(name text primary key, interval text, command text);
+    create function cron.schedule(job_name text, cadence text, sql_command text) returns bigint language sql as $$
+      insert into cron.learning_schedule values(job_name,cadence,sql_command) on conflict (name)
+        do update set interval=excluded.interval,command=excluded.command returning 1::bigint $$;`);
+  await db.exec(migration);await db.exec(migration);
+  assert.equal((await db.query("select name from cron.learning_schedule where name='space-learning-material-alerts'")).rows.length,1);
+  assert.equal(await deliverMaterialAlerts(),0);
+  await db.query('insert into public.member_learning_paths(user_id,tracks) select id,array[$1::text] from public.profiles where id=any($2::uuid[])',
+    [controlsTrack,[actors.outsider,actors.pending,actors.unverified]]);
+  const mid=(await shareTrack(actors.teacher,controlsTrack)).rows[0].id;
+  const ownClass=(await linkMaterial(actors.teacher,c1)).rows[0].id;
+  const deleted=(await shareTrack(actors.teacher,controlsTrack)).rows[0].id;
+  await removeLearning(actors.admin,deleted,true);
+  await as(actors.teacher,
+    "insert into public.learning_materials(uploaded_by,title,kind,file_name,storage_path,file_size) values(auth.uid(),'Shared safety notes','notes','safety.pdf',$1,1024)",
+    [actors.teacher+'/general-alert-check.pdf']);
+  assert.equal(await deliverMaterialAlerts(),3);
+  assert.deepEqual((await materialAlerts(mid)).map(r=>r.user_id),[actors.student,actors.outsider]);
+  assert.deepEqual((await materialAlerts(ownClass)).map(r=>r.user_id),[actors.student]);
+  assert.deepEqual(await materialAlerts(deleted),[]);
+  await removeLearning(actors.admin,deleted,false);
+  assert.equal(await deliverMaterialAlerts(),0);
+  assert.equal((await as(actors.outsider,'select id from public.learning_materials where id=$1',[deleted])).rows.length,1);
+  await reject(()=>as(actors.teacher,'select space_private.deliver_learning_material_alerts()'),/permission denied/);
+  await db.query('delete from public.member_learning_paths where user_id=any($1::uuid[])',[[actors.outsider,actors.pending,actors.unverified]]);
+});
+await check('A large track receives every alert across bounded batches and even after a retry',async()=>{
+  const ai='AI & Machine Learning';
+  await db.exec(`insert into auth.users(id,email,email_confirmed_at)
+    select md5('track-alert-test-'||i)::uuid,'track-alert-'||i||'@example.test',now() from generate_series(1,251)i;
+    insert into public.profiles(id,full_name,role,membership_status,application_type)
+    select id,'Synthetic track learner','member','approved','member' from auth.users where email like 'track-alert-%@example.test';`);
+  await db.query("insert into public.member_learning_paths(user_id,tracks) select id,array[$1::text] from auth.users where email like 'track-alert-%@example.test'",[ai]);
+  const material=(await shareTrack(actors.admin,ai)).rows[0].id;
+  assert.equal(await deliverMaterialAlerts(),250);
+  assert.equal(await deliverMaterialAlerts(),0);
+  await db.query('update space_private.learning_material_alert_jobs set after_user=null,next_batch_at=now() where material_id=$1',[material]);
+  assert.equal(await deliverMaterialAlerts(),0); // First batch replay is deduplicated.
+  await db.query('update space_private.learning_material_alert_jobs set next_batch_at=now() where material_id=$1',[material]);
+  assert.equal(await deliverMaterialAlerts(),1);
+  assert.equal((await materialAlerts(material)).length,251);
+  assert.equal(await deliverMaterialAlerts(),0);
+});
 await check('Empty, duplicate and invented courses are rejected',async()=>{for(const tracks of [[],['fake'],['Controls and Automation','Controls and Automation']])await reject(()=>as(actors.student,'select public.set_my_learning_tracks($1)',[tracks]),/Select one or more/);});
 await check('Unverified and investor accounts cannot choose member courses',async()=>{for(const actor of [actors.unverified,actors.investor])await reject(()=>as(actor,"select public.set_my_learning_tracks(array['Controls and Automation'])"),/Verified club account/);});
 await check('Pending applicants save choices without joining a private class',async()=>{await as(actors.pending,"select public.set_my_learning_tracks(array['Controls and Automation'])");assert.equal((await db.query('select * from public.course_enrollments where learner_id=$1',[actors.pending])).rows.length,0);});

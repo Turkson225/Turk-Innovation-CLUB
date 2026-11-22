@@ -1413,6 +1413,24 @@ test('Drive removal requires confirmation and changes only the SPACE material',a
   assert.equal(h.rpcCalls[0].args.p_removed,true);
   assert.equal(h.requests.length,0);
 });
+test('A learning alert looks up only visible material and opens the file without leaving Notifications',async()=>{
+  const h=learningHarness();
+  const id='00000000-0000-0000-0000-000000000054';
+  h.exec("page='notifications';setSidebarOpen=()=>{};cache.notifications=[{id:'asset-alert',read_at:'2026-11-22',target_type:'learning_material',target_id:qaArgs}];",id);
+  h.queued.push({data:{id,title:'Practice lab PDF',kind:'notes',learning_track:'Electronics and Robotics',drive_url:'https://drive.google.com/file/d/Example_File-4QB7qh7Dx/view'},error:null});
+  await h.run("openNotification('asset-alert')");
+  const modal=h.elements.get('#modalContent').innerHTML;
+  assert.match(modal,/Electronics and Robotics[\s\S]*Practice lab PDF[\s\S]*Open in Google Drive/);
+  const query=h.requests.find(r=>r.table==='learning_materials');
+  assert(query.ops.some(([op,key,value])=>op==='eq'&&key==='id'&&value===id));
+  assert(query.ops.some(([op,key,value])=>op==='is'&&key==='hidden_at'&&value===null));
+  assert.equal(h.run('page'),'notifications');
+  h.elements.get('#modal').close();
+  h.queued.push({data:null,error:null});
+  await h.run("openNotification('asset-alert')");
+  assert.equal(h.elements.get('#modal').open,false);
+  assert.match(h.elements.get('#toast').textContent,/no longer available/);
+});
 test('Classroom refresh includes resources and welcome refresh includes own learning dependencies',()=>{const h=harness();assert(h.run("pageRefreshDependencies.classroom.includes('learning_materials')"));assert(h.run("pageRefreshDependencies['getting-started'].includes('member_learning_paths')"));});
 test('Onboarding async actions cannot swallow unrelated workspace actions',()=>{const h=learningHarness();let count=0;h.context.guidanceStub={action(){count++;return Promise.resolve(true);}};h.run('guidance=guidanceStub');action(h,{action:'courseView',view:'explore'});assert.equal(h.run('courseView'),'explore');assert.equal(count,0);action(h,{action:'onboardingShow'});assert.equal(count,1);});
 test('An approved teacher’s welcome action opens their teaching profile directly',()=>{const h=learningHarness('teacher');action(h,{action:'onboardingTeachingProfile'});assert.equal(h.run('teachingTab'),'profile');assert.equal(h.context.location.hash,'#teaching');});
