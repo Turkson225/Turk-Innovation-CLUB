@@ -1431,6 +1431,55 @@ test('A learning alert looks up only visible material and opens the file without
   assert.equal(h.elements.get('#modal').open,false);
   assert.match(h.elements.get('#toast').textContent,/no longer available/);
 });
+test('Teachers can publish a website only to a permitted audience, without a Storage upload',async()=>{
+  const h=learningHarness('teacher');
+  action(h,{action:'webLearningForm',course:'c1'});
+  const modal=h.elements.get('#modalContent').innerHTML;
+  assert.match(modal,/id="external_url"[^>]* required>/);
+  assert.match(modal,/<option value="workshop:c1" selected>/);
+  assert.match(modal,/value="library" >/);
+  assert.match(modal,/Learn Arduino: RGB LED lesson[\s\S]*Cirkit Designer[\s\S]*BenchTwin/);
+  const suggestions={dataset:{kind:'webLearningMaterial'},querySelector:()=>({disabled:false}),
+    elements:{external_url:{value:'',focus(){}},title:{value:''}}};
+  h.exec("fillLearningWebsiteSuggestion(qaArgs,'0')",suggestions);
+  assert.equal(suggestions.elements.external_url.value,'https://learn-arduino-red.vercel.app/#rgb');
+  h.exec("fillLearningWebsiteSuggestion(qaArgs,'2')",suggestions);
+  assert.equal(suggestions.elements.title.value,'BenchTwin');
+  assert.equal(suggestions.elements.external_url.value,'https://benchtwin.com/');
+  const post=(destination,url)=>h.exec('submit(qaArgs)',learningForm('webLearningMaterial',[
+    ['material_destination',destination],['title','Learn Arduino'],['kind','guide'],['external_url',url]
+  ]).event);
+  const url='https://learn-arduino-red.vercel.app/#rgb';
+  await post('track:Software and Programming',url);
+  await post('workshop:c1','https://teacher:password@example.test/');
+  assert.equal(h.requests.filter(r=>r.table==='learning_materials').length,0);
+  await post('track:Controls and Automation',url);
+  await post('library','https://benchtwin.com/');
+  const records=h.requests.filter(r=>r.table==='learning_materials').map(r=>r.ops.find(([op])=>op==='insert')?.[1]).filter(Boolean);
+  assert.equal(records.length,2);
+  assert.equal(records[0].external_url,url);
+  assert.equal(records[0].learning_track,'Controls and Automation');
+  assert.equal(records[0].external_library,false);
+  assert.equal(records[1].external_library,true);
+  assert(records.every(r=>!r.storage_path&&!r.drive_url));
+});
+test('Students can open website links with their query and fragment but never open unsafe or hidden links',async()=>{
+  const h=learningHarness();
+  h.run("classroomView='learn';cache.learning_materials=[{id:'web',course_id:'c1',title:'RGB lab',kind:'guide',external_url:'https://www.example.test/?a=1&b=2#rgb'}]");
+  const page=h.run('classroomWorkspace()');
+  assert.match(page,/www\.example\.test ·/);
+  assert.match(page,/href="https:\/\/www\.example\.test\/\?a=1&amp;b=2#rgb" target="_blank" rel="noopener noreferrer"[^>]*>Open website/);
+  assert.doesNotMatch(page,/webLearningForm|viewDriveMaterial|downloadLearning|iframe/);
+  for(const url of ['http://example.test','https:///example.test','https://me@example.test','javascript:alert(1)','https://example.test/a'+String.fromCharCode(92)+'b']){
+    assert.equal(h.exec('learningWebsite(qaArgs)',url),null);
+    assert.doesNotMatch(h.exec("materialRow({title:'Example',kind:'guide',external_url:qaArgs})",url),/<a\b/);
+  }
+  assert.doesNotMatch(h.run("materialRow({...cache.learning_materials[0],hidden_at:'2026-11-22'})"),/Open website/);
+  const id='00000000-0000-0000-0000-000000000024';
+  h.queued.push({data:{id,title:'RGB lab',kind:'guide',learning_track:'Electronics and Robotics',external_url:'https://learn-arduino-red.vercel.app/#rgb'},error:null});
+  await h.exec('openLearningMaterialAlert(qaArgs)',id);
+  assert.match(h.elements.get('#modalContent').innerHTML,/Electronics and Robotics[\s\S]*learn-arduino-red\.vercel\.app\/#rgb[\s\S]*Open website/);
+});
 test('Classroom refresh includes resources and welcome refresh includes own learning dependencies',()=>{const h=harness();assert(h.run("pageRefreshDependencies.classroom.includes('learning_materials')"));assert(h.run("pageRefreshDependencies['getting-started'].includes('member_learning_paths')"));});
 test('Onboarding async actions cannot swallow unrelated workspace actions',()=>{const h=learningHarness();let count=0;h.context.guidanceStub={action(){count++;return Promise.resolve(true);}};h.run('guidance=guidanceStub');action(h,{action:'courseView',view:'explore'});assert.equal(h.run('courseView'),'explore');assert.equal(count,0);action(h,{action:'onboardingShow'});assert.equal(count,1);});
 test('An approved teacher’s welcome action opens their teaching profile directly',()=>{const h=learningHarness('teacher');action(h,{action:'onboardingTeachingProfile'});assert.equal(h.run('teachingTab'),'profile');assert.equal(h.context.location.hash,'#teaching');});

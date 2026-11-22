@@ -238,6 +238,58 @@ await check('A large track receives every alert across bounded batches and even 
   assert.equal((await materialAlerts(material)).length,251);
   assert.equal(await deliverMaterialAlerts(),0);
 });
+const externalMigration=fs.readFileSync(new URL('supabase/migrations/20261122040000_external_learning_links.sql',root),'utf8');
+const arduinoLab='https://learn-arduino-red.vercel.app/#rgb';
+const shareWebsite=(actor,{course=null,track=null,site=arduinoLab,library=false,by=actor,kind='guide'}={})=>as(actor,
+  `insert into public.learning_materials(course_id,learning_track,uploaded_by,title,kind,external_url,external_library)
+    values($1,$2,$3,'Arduino practice website',$4,$5,$6) returning id`,
+  [course,track,by,kind,site,library]);
+const visibleWebsite=async(actor,id)=>(await as(actor,'select external_url from public.learning_materials where id=$1',[id])).rows[0]?.external_url;
+await check('External links preserve older resources and obey lesson, track and club audiences',async()=>{
+  await db.exec(externalMigration);await db.exec(externalMigration);
+  assert((await as(actors.student,'select storage_path from public.learning_materials where storage_path like $1',[actors.teacher+'/%'])).rows.length);
+  assert((await as(actors.student,'select drive_url from public.learning_materials where drive_url is not null')).rows.length);
+  const workshop=(await shareWebsite(actors.teacher,{course:c1})).rows[0].id;
+  const track=(await shareWebsite(actors.teacher,{track:controlsTrack})).rows[0].id;
+  const library=(await shareWebsite(actors.admin,{library:true,site:'https://benchtwin.com/'})).rows[0].id;
+  const teacherLibrary=(await shareWebsite(actors.teacher,{library:true,site:'https://app.cirkitdesigner.com/'})).rows[0].id;
+  for(const id of [workshop,track]) {
+    assert.equal(await visibleWebsite(actors.student,id),arduinoLab);
+    assert.equal(await visibleWebsite(actors.outsider,id),undefined);
+    assert.equal(await visibleWebsite(actors.pending,id),undefined);
+  }
+  assert.equal(await visibleWebsite(actors.outsider,library),'https://benchtwin.com/');
+  assert.equal(await visibleWebsite(actors.outsider,teacherLibrary),'https://app.cirkitdesigner.com/');
+  assert.equal(await visibleWebsite(actors.pending,library),undefined);
+  await reject(()=>shareWebsite(actors.student,{library:true}),/row-level security/);
+  await reject(()=>shareWebsite(actors.otherTeacher,{course:c1}),/row-level security/);
+  await reject(()=>shareWebsite(actors.teacher,{track:'Electronics and Robotics'}),/row-level security/);
+  await reject(()=>shareWebsite(actors.teacher,{course:c1,by:actors.admin}),/row-level security/);
+  await reject(()=>db.query('update public.learning_materials set course_id=null where id=$1',[workshop]),/learning_materials_source_check/);
+  await deliverMaterialAlerts();
+  assert((await materialAlerts(workshop)).some(r=>r.user_id===actors.student));
+  assert((await materialAlerts(track)).some(r=>r.user_id===actors.student));
+  assert.equal((await materialAlerts(library)).length,0);
+  assert.equal(await deliverMaterialAlerts(),0);
+  await removeLearning(actors.teacher,track,true);
+  assert.equal(await visibleWebsite(actors.student,track),undefined);
+  await removeLearning(actors.teacher,track,false);
+  assert.equal(await visibleWebsite(actors.student,track),arduinoLab);
+});
+await check('A website must have a safe HTTPS address and exactly one material source',async()=>{
+  for(const site of ['javascript:alert(1)','http://example.test','https://','https:///example.test',
+    'https://name:secret@example.test','https://example.test/path with space',
+    'https://example.test/'+String.fromCharCode(92)+'path','https://example.test/'+String.fromCharCode(10),'https://example.test/'+('a'.repeat(2000))]){
+    await reject(()=>shareWebsite(actors.teacher,{course:c1,site}),/learning_materials_source_check/);
+  }
+  await reject(()=>shareWebsite(actors.teacher),/learning_materials_source_check/);
+  await reject(()=>shareWebsite(actors.teacher,{course:c1,library:true}),/learning_materials_source_check/);
+  await reject(()=>as(actors.teacher,
+    "insert into public.learning_materials(course_id,uploaded_by,title,kind,drive_url,external_url) values($1,auth.uid(),'Mixed sources','guide',$2,$3)",
+    [c1,driveUrl,arduinoLab]),/learning_materials_source_check/);
+  await shareWebsite(actors.admin,{course:c1,site:'https://example.test:8443/lesson?q=arduino&unit=rgb#exercise',kind:'video'});
+  await shareWebsite(actors.admin,{course:c1,site:'https://[2001:db8::1]/lesson'});
+});
 await check('Empty, duplicate and invented courses are rejected',async()=>{for(const tracks of [[],['fake'],['Controls and Automation','Controls and Automation']])await reject(()=>as(actors.student,'select public.set_my_learning_tracks($1)',[tracks]),/Select one or more/);});
 await check('Unverified and investor accounts cannot choose member courses',async()=>{for(const actor of [actors.unverified,actors.investor])await reject(()=>as(actor,"select public.set_my_learning_tracks(array['Controls and Automation'])"),/Verified club account/);});
 await check('Pending applicants save choices without joining a private class',async()=>{await as(actors.pending,"select public.set_my_learning_tracks(array['Controls and Automation'])");assert.equal((await db.query('select * from public.course_enrollments where learner_id=$1',[actors.pending])).rows.length,0);});

@@ -102,6 +102,14 @@ New files and Drive links shared with a track or workshop send a **New learning 
 
 To enable alerts, confirm Supabase **Cron** is enabled and run [the learning material alerts migration](supabase/migrations/20261122030000_learning_material_alerts.sql) after the track materials migration. In **Integrations → Cron**, check that `space-learning-material-alerts` is active and running every minute. The database delivers larger audiences in batches. Opening the alert in SPACE looks up the material through its normal access rules. Device push also uses the existing push worker and the member’s device permission.
 
+## Share websites with students
+
+Administrators and approved teaching staff can choose **Teaching studio → Materials → + Website link**, or open **Classroom → Lessons & files → + Website link**. Paste an HTTPS address, add a title and an optional description, and choose a workshop, an assigned track, or the general learning library. Administrators can post to all tracks. Links open in a new browser tab when students select **Open website**. SPACE shows the destination host before they click.
+
+The website form includes shortcuts for **Learn Arduino (RGB LED)**, **Cirkit Designer**, and **BenchTwin**. Pick one to fill in its link, select the audience (for example, **Electronics and Robotics**), then choose **Publish website link**. Students find track and general links in **My learning** and workshop links in **Classroom → Lessons & files**. Track and workshop posts use the existing learning alerts; general library posts do not notify the whole club. Teachers can remove their own links through **Materials → Delete from SPACE**, and administrators can remove any link.
+
+For an existing deployment, run the entire [external learning links migration](supabase/migrations/20261122040000_external_learning_links.sql) in **Supabase → SQL Editor** after the Drive folder, track and removal migrations, then deploy the matching frontend. No keys or accounts are required to share the links from SPACE. External websites may have their own sign-in or access requirements.
+
 ## Activate the connected learning dashboards — 14 October 2026
 
 Run the **entire** [`supabase/upgrade_learning_dashboards.sql`](supabase/upgrade_learning_dashboards.sql) in **Supabase → SQL Editor → New query → Run**, after the existing course lifecycle, classroom access, private applications, approval emails and founder teaching upgrades. Then reopen SPACE and sign in. This is one new migration; it runs inside a transaction and is safe to rerun. The new controls activate after the database tables exist. Older workshops and their feedback keep working before activation.
