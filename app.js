@@ -245,7 +245,7 @@ function showMemberAlert(notification){
   if(memberAlertNotificationId===notification.id&&!$('#memberAlert').hidden)return;
   memberDeferredNotification=null;
   memberAlertNotificationId=notification.id;
-  $('#memberAlertTitle').textContent=notification.kind==='direct_message'?'New direct message':notification.kind==='shop_product'?'New in SPACE shop':'New club update';
+  $('#memberAlertTitle').textContent=notification.kind==='direct_message'?'New direct message':notification.kind==='shop_product'?'New in SPACE shop':notification.kind==='learning_material'?'New learning material':'New club update';
   $('#memberAlertMessage').textContent=String(notificationTitle(notification)||'Open Notifications for the latest update.').slice(0,180);
   $('#memberAlert').hidden=false;
   void spacePlayNotificationSound();
@@ -263,6 +263,7 @@ function receiveMemberNotification(notification){
   if(!known&&['role','role_assignment'].includes(notification.kind))void refreshVisiblePage({force:true}).then(()=>{if(page==='home'||page==='office')render();});
   if(page==='notifications')render();
   if(!known&&notification.kind==='shop_product'&&page==='shop')void refreshVisiblePage({force:true});
+  if(!known&&notification.kind==='learning_material'&&['courses','classroom'].includes(page))void refreshVisiblePage({force:true});
   if(!known&&notification.target_type==='shop_order'&&['orders','shop-admin','order-desk'].includes(page))void refreshVisiblePage({force:true});
   if(!known&&notification.kind==='direct_message'&&notification.target_type==='direct_message')void refreshDmAfterNotification(notification.target_id);
   if(!known&&!(page==='messages'&&activePeerId===notification.target_id&&!document.hidden&&notification.kind==='direct_message'))showMemberAlert(notification);
@@ -3866,6 +3867,7 @@ async function openNotification(id,button) {
   if(n.target_type==='certificate'){if(!certification)throw Error('Reload SPACE to open your certificate.');await certification.open(n.target_id);return;}
   if(n.target_type==='role_change'){if(!commerce)throw Error('Reload SPACE to open role updates.');await commerce.openRole(n.target_id);return;}
   if(n.target_type==='shop_product'){close();location.hash='#shop/'+n.target_id;route();return;}
+  if(n.target_type==='learning_material'){await openLearningMaterialAlert(n.target_id);return;}
   if(n.target_type==='shop_order'){commerce?.clearOrderRoute?.();close();location.hash='#'+(admin()?'order-desk':'orders')+'/'+n.target_id;route();return;}
   if(n.kind==='membership'&&/^Your account role is now /i.test(n.title||'')){await refreshCurrentAccess();location.hash='#'+(commerce?.roleDestination()||'home');route();return;}
   if(n.target_type==='channel'){activeChannelId=n.target_id;location.hash='#channels';}
@@ -4057,18 +4059,42 @@ async function downloadDocument(id) {
   const doc=(cache.documents||[]).find(d=>d.id===id);if(!doc)return;
   try {const {data,error}=await db.storage.from('club-documents').createSignedUrl(doc.storage_path,120);if(error)throw error;const a=document.createElement('a');a.href=data.signedUrl;a.target='_blank';a.rel='noopener noreferrer';document.body.appendChild(a);a.click();a.remove();}catch(e){fail(e);}
 }
-function viewDriveMaterial(id){
-  if(!clubAccess()||!learningReady)return;
-  const material=(cache.learning_materials||[]).find(m=>m.id===id&&!m.hidden_at);
-  const drive=googleDriveMaterial(material?.drive_url);
-  if(!drive?.preview)return;
-  modal(`<section class="drive-material-viewer"><span class="eyebrow">GOOGLE DRIVE</span><h2>${esc(material.title)}</h2><iframe src="${esc(drive.preview)}" title="${esc(material.title)}: Google Drive preview" sandbox="allow-scripts allow-same-origin allow-presentation" allow="fullscreen" referrerpolicy="no-referrer"></iframe><p class="subtle">If the preview is unavailable, open the file in Google Drive and sign in to the Google account your teacher shared it with.</p><div><a class="button button-outline button-sm" href="${esc(drive.open)}" target="_blank" rel="noopener noreferrer">Open in Google Drive ↗</a></div></section>`);
+async function readVisibleLearningMaterial(id){
+  if(!clubAccess()||!session||!memberProfileId(id))return null;
+  const owner=session.user.id,generation=authGeneration;
+  const {data,error}=await requestWithDeadline(()=>db.from('learning_materials').select('*')
+    .eq('id',id).is('hidden_at',null).maybeSingle(),8000,'Could not load the material. Try again.');
+  if(owner!==session?.user.id||generation!==authGeneration||!clubAccess())return null;
+  if(error)throw error;
+  return data;
+}
+async function openLearningMaterialAlert(id){
+  const owner=session?.user.id,generation=authGeneration;
+  const material=await readVisibleLearningMaterial(id);
+  if(owner!==session?.user.id||generation!==authGeneration||!clubAccess())return;
+  if(!material)return show('This learning material is no longer available to your account.');
+  const scope=material.learning_track||(cache.courses||[]).find(c=>c.id===material.course_id)?.title||'Workshop materials';
+  const destination=material.course_id?`#classroom/${esc(material.course_id)}/learn`:'#courses';
+  modal(`<span class="eyebrow">LEARNING MATERIALS</span><h2>${esc(scope)}</h2>${materialRow(material)}
+    <a class="button button-outline button-sm" href="${destination}" data-action="close">See course materials</a>`);
+}
+async function viewDriveMaterial(id){
+  if(!clubAccess())return;
+  try{
+    const material=(cache.learning_materials||[]).find(m=>m.id===id&&!m.hidden_at)||await readVisibleLearningMaterial(id);
+    const drive=googleDriveMaterial(material?.drive_url);
+    if(!drive?.preview)return;
+    modal(`<section class="drive-material-viewer"><span class="eyebrow">GOOGLE DRIVE</span><h2>${esc(material.title)}</h2><iframe src="${esc(drive.preview)}" title="${esc(material.title)}: Google Drive preview" sandbox="allow-scripts allow-same-origin allow-presentation" allow="fullscreen" referrerpolicy="no-referrer"></iframe><p class="subtle">If the preview is unavailable, open the file in Google Drive and sign in to the Google account your teacher shared it with.</p><div><a class="button button-outline button-sm" href="${esc(drive.open)}" target="_blank" rel="noopener noreferrer">Open in Google Drive ↗</a></div></section>`);
+  }catch(error){fail(error);}
 }
 async function downloadLearning(id){
-  if(!clubAccess()||!learningReady)return;
-  const m=(cache.learning_materials||[]).find(x=>x.id===id&&!x.hidden_at);if(!m?.storage_path||m.drive_url)return;
+  if(!clubAccess())return;
+  const owner=session?.user.id,generation=authGeneration;
   try{
+    const m=(cache.learning_materials||[]).find(x=>x.id===id&&!x.hidden_at)||await readVisibleLearningMaterial(id);
+    if(!m?.storage_path||m.drive_url)return;
     const {data,error}=await db.storage.from('club-learning').createSignedUrl(m.storage_path,120);
+    if(owner!==session?.user.id||generation!==authGeneration||!clubAccess())return;
     if(error)throw error;
     const a=document.createElement('a');a.href=data.signedUrl;a.target='_blank';a.rel='noopener noreferrer';document.body.appendChild(a);a.click();a.remove();
   }catch(e){fail(e);}
