@@ -2437,12 +2437,16 @@ function courses() {
     .sort((a,b)=>Number(a.enrollment.status==='completed')-Number(b.enrollment.status==='completed')||(new Date(a.course.starts_at||'9999-12-31')-new Date(b.course.starts_at||'9999-12-31')));
   const chosen=myCourses.find(x=>x.course.id===activeCourseId)||myCourses[0];
   const selected=chosen?.course;
+  const myTracks=new Set([...ownLearningTracks,...myCourses.map(x=>courseTrackFor(x.course))]);
+  const trackMaterials=materials.filter(m=>m.learning_track&&myTracks.has(m.learning_track));
+  const generalMaterials=materials.filter(m=>!m.course_id&&!m.learning_track);
   const tab=(key,label,count='')=>`<button type="button" class="course-view-button ${courseView===key?'selected':''}" data-action="courseView" data-view="${key}" aria-pressed="${courseView===key}" aria-controls="course-view-panel">${label}${count?` <span class="course-tab-count">${count}</span>`:''}</button>`;
   const myLearning=`<section id="course-view-panel" class="course-view-panel" aria-label="My learning">
     ${courseReady?`<div class="course-summary"><strong>${enrolled.length} workshop${enrolled.length===1?'':'s'} joined</strong><span>${completed.length} completed</span>${teacher()?'<a href="#teaching">Open teaching studio →</a>':''}</div>`:`<div class="notice">Course enrollment and project submissions need the course journey database setup. You can still explore published workshops.</div>`}
     <div class="section-heading"><div><span class="eyebrow">YOUR LEARNING PLAN</span><h2>My workshops</h2></div><p>Choose a classroom to see its brief, materials, submissions and feedback.</p></div>
     ${myCourses.length?`<div class="course-classroom-layout"><div class="course-class-list" role="group" aria-label="My enrolled workshops">${myCourses.map(({course:c,enrollment:e})=>`<button type="button" class="course-class-choice ${selected?.id===c.id?'selected':''}" data-action="courseSelect" data-id="${esc(c.id)}" aria-pressed="${selected?.id===c.id}"><small>${esc(courseTrackFor(c))}${courseLifecycleReady&&!courseOpen(c)?` · ${esc(courseStateLabel(c))}`:''}</small><strong>${esc(c.title)}</strong><span>${esc(courseProgress(e))} · ${courseDeadline(c)?`Due ${date(c.submission_due_at)}`:'Deadline to be announced'}</span></button>`).join('')}</div>${selected?`<article class="journey-classroom-entry"><span class="eyebrow">YOUR COURSE WORKSPACE</span><h2>${esc(selected.title)}</h2><p>Lessons, files, assignments, project reviews, sessions and certificates are together in your classroom.</p><a class="button" href="#classroom/${esc(selected.id)}/overview">Open classroom →</a></article>`:""}</div>`:`<div class="course-empty-state"><h3>No workshops joined yet</h3><p>Explore the four tracks, choose a practical build, and it will appear here with your materials and teacher feedback.</p><button class="button" data-action="courseView" data-view="explore">Explore workshops →</button></div>`}
-    ${materials.some(m=>!m.course_id)?`<section class="course-general-library"><div class="section-heading"><div><span class="eyebrow">FOR EVERY MEMBER</span><h2>Club learning library</h2></div><p>General notes and guides for any workshop.</p></div><div class="grid grid-2">${materials.filter(m=>!m.course_id).map(m=>`<div class="card">${materialRow(m)}</div>`).join('')}</div></section>`:''}
+    ${courseTracks.map(({name})=>{const rows=trackMaterials.filter(m=>m.learning_track===name);return rows.length?trackMaterialSection(name,rows):'';}).join('')}
+    ${generalMaterials.length?`<section class="course-general-library"><div class="section-heading"><div><span class="eyebrow">FOR EVERY MEMBER</span><h2>Club learning library</h2></div><p>General notes and guides for any workshop.</p></div><div class="grid grid-2">${generalMaterials.map(m=>`<div class="card">${materialRow(m)}</div>`).join('')}</div></section>`:''}
   </section>`;
   const visible=courseTrack==='all'?available:available.filter(c=>courseTrackFor(c)===courseTrack);
   const explore=`<section id="course-view-panel" class="course-view-panel" aria-label="Explore workshops"><div class="course-steps"><div><b>1</b><strong>Choose a workshop</strong><small>Pick one or more tracks.</small></div><div><b>2</b><strong>Learn by doing</strong><small>Follow your teacher’s brief and materials.</small></div><div><b>3</b><strong>Share your build</strong><small>Send test notes and evidence.</small></div><div><b>4</b><strong>Improve with feedback</strong><small>Revise or record completion.</small></div></div>
@@ -2467,13 +2471,30 @@ function learningMaterialButtons(courseId='',uploadLabel='+ Upload file'){
   const course=courseId?` data-course="${esc(courseId)}"`:'';
   return `<div class="drive-material-actions"><button class="button button-sm" data-action="learningForm"${course}>${esc(uploadLabel)}</button><button class="button button-outline button-sm" data-action="driveLearningForm"${course}>+ Google Drive link</button></div>`;
 }
+function shareableLearningTracks(){
+  return admin()?courseTracks.map(t=>t.name):validLearningTracks((cache.teaching_track_assignments||[])
+    .filter(t=>t.teacher_id===session?.user.id).map(t=>t.track));
+}
+function resolveLearningMaterialTarget(value,drive){
+  const [scope,destination]=String(value||'').split(':');
+  if(scope==='track'&&shareableLearningTracks().includes(destination))return {course_id:null,learning_track:destination};
+  if(scope==='workshop'&&(cache.courses||[]).some(c=>c.id===destination&&courseManager(c)))return {course_id:destination};
+  if(scope==='library'&&!drive)return {course_id:null};
+  throw Error('Choose a learning track or one of your workshops.');
+}
+function trackMaterialSection(track,materials){
+  return `<section class="card journey-course-files learning-track-materials"><div class="section-heading"><div><span class="eyebrow">TRACK MATERIALS</span><h2>${esc(track)}</h2></div><p>Shared across this learning track.</p></div>${materials.map(materialRow).join('')}</section>`;
+}
 function learningMaterialEditor(courseId='',source='upload'){
   if(!teacher()||!learningReady)return show('Teacher access and the learning materials migration are required.');
   const courses=(cache.courses||[]).filter(courseManager);
   const selected=courses.some(c=>c.id===courseId)?courseId:'';
+  const tracks=shareableLearningTracks();
   const drive=source==='drive';
-  const options=`<option value="" ${!selected?'selected':''}>${drive?'Choose a workshop':'General learning library'}</option>`
-    +courses.map(c=>`<option value="${esc(c.id)}" ${c.id===selected?'selected':''}>${esc(c.title)}</option>`).join('');
+  const options=`<option value="" ${!selected?'selected':''}>${drive?'Choose a track or workshop':'Choose who can see this material'}</option>`
+    +(tracks.length?`<optgroup label="Learning tracks">${tracks.map(track=>`<option value="track:${esc(track)}">${esc(track)}</option>`).join('')}</optgroup>`:'')
+    +(courses.length?`<optgroup label="Individual workshops">${courses.map(c=>`<option value="workshop:${esc(c.id)}" ${c.id===selected?'selected':''}>${esc(c.title)}</option>`).join('')}</optgroup>`:'')
+    +`<option value="library" ${drive?'hidden disabled':''}>General learning library (all members)</option>`;
   const toggle=(id,label)=>`<button type="button" class="button button-outline button-sm" data-action="learningMaterialSource" data-source="${id}" aria-pressed="${source===id}">${label}</button>`;
   return modal(`<span class="eyebrow">TEACHING STUDIO</span><h2>Add learning material</h2>
     <form id="editor" data-kind="${drive?'driveLearningMaterial':'learningMaterial'}" data-learning-material class="form-stack">
@@ -2485,13 +2506,13 @@ function learningMaterialEditor(courseId='',source='upload'){
       <div class="field" data-learning-source-panel="drive"${drive?'':' hidden'}>
         <label for="drive_url">Google Drive share link</label><input id="drive_url" name="drive_url" type="url" maxlength="1000" placeholder="https://drive.google.com/…" aria-describedby="driveLinkHint" ${drive?'required':'disabled'}>
         <p class="hint" id="driveLinkHint">In Google Drive, choose Share → Copy link. Give your students Viewer access in Drive. Use a link to one file.</p>
-        ${courses.length?'':'<p class="hint">Create or assign a workshop before sharing a Drive link.</p>'}
+        ${courses.length||tracks.length?'':'<p class="hint">Ask an admin to assign a learning track or workshop before sharing a Drive link.</p>'}
       </div>
       ${field('Title','title')}
       <div class="field"><label for="kind">Type</label><select id="kind" name="kind"><option value="slides">Slides</option><option value="notes">Notes</option><option value="worksheet">Worksheet</option><option value="guide">Guide</option><option value="video" ${drive?'':'disabled hidden'}>Video</option></select></div>
-      <div class="field"><label for="course_id">Workshop</label><select id="course_id" name="course_id" ${drive?'required':''}>${options}</select></div>
+      <div class="field"><label for="material_destination">Share with</label><select id="material_destination" name="material_destination" aria-describedby="learningAudienceHint" required>${options}</select><p class="hint" id="learningAudienceHint">Choose a learning track to reach its students across workshops, or choose one workshop for that class only.</p></div>
       <div class="field"><label for="description">Description (optional)</label><textarea id="description" name="description" maxlength="1500"></textarea></div>
-      <button class="button" type="submit">${drive?'Share with workshop':'Publish material'}</button>
+      <button class="button" type="submit">${drive?'Share material':'Publish material'}</button>
     </form>`);
 }
 function selectLearningMaterialSource(editor,source){
@@ -2505,11 +2526,14 @@ function selectLearningMaterialSource(editor,source){
     const active=panel.dataset.learningSourcePanel===source,input=panel.querySelector('input');
     panel.hidden=!active;input.disabled=!active;input.required=active;
   }
-  const course=editor.elements.course_id,kind=editor.elements.kind,video=kind.querySelector('[value=video]');
-  course.required=drive;course.options[0].text=drive?'Choose a workshop':'General learning library';
+  const destination=editor.elements.material_destination,kind=editor.elements.kind,video=kind.querySelector('[value=video]');
+  const library=destination.querySelector('[value=library]');
+  if(drive&&destination.value==='library')destination.value='';
+  library.hidden=drive;library.disabled=drive;
+  destination.options[0].text=drive?'Choose a track or workshop':'Choose who can see this material';
   if(!drive&&kind.value==='video')kind.value='slides';
   video.hidden=!drive;video.disabled=!drive;
-  submitButton.textContent=drive?'Share with workshop':'Publish material';
+  submitButton.textContent=drive?'Share material':'Publish material';
 }
 let teachingTab = 'overview';
 function teachingWorkshopCard(c,enrollments,pending){
@@ -2550,7 +2574,8 @@ function teaching(){
   const unseen=courseSeenReady?pending.filter(s=>!s.seen_at).length:0;
   const reviewed=submissions.filter(s=>s.review_status!=='submitted').sort((a,b)=>new Date(b.reviewed_at||b.created_at)-new Date(a.reviewed_at||a.created_at));
   const completions=courseReady?(cache.course_completions||[]).filter(x=>courseIds.has(x.course_id)):[];
-  const materials=learningReady?(cache.learning_materials||[]).filter(m=>admin()||m.uploaded_by===ownId||courseIds.has(m.course_id)):[];
+  const tracks=new Set(shareableLearningTracks());
+  const materials=learningReady?(cache.learning_materials||[]).filter(m=>admin()||m.uploaded_by===ownId||courseIds.has(m.course_id)||tracks.has(m.learning_track)):[];
   const uniqueLearners=new Set(enrollments.map(e=>e.learner_id)).size;
   const now=Date.now();
   const agenda=currentWorkshops.flatMap(c=>{
@@ -2579,7 +2604,7 @@ function teaching(){
   const pastContent=courseReady&&courseLifecycleReady?`<div class="section-heading"><div><span class="eyebrow">TEACHING HISTORY</span><h2>Past workshops</h2></div><button class="button button-sm" data-action="courseForm">+ Publish next workshop</button></div><p class="subtle">These workshops are closed to new students. Existing students can still submit their work, receive feedback and keep their completion records.</p><div class="teaching-workshops">${pastWorkshops.length?pastWorkshops.map(c=>teachingWorkshopCard(c,enrollments,pending)).join(''):empty('No past workshops yet','End enrollment when a workshop is ready for the next intake.')}</div>`:'';
   const reviewContent=courseReady?`<div class="section-heading"><div><span class="eyebrow">PROJECT FEEDBACK</span><h2>${pending.length} project${pending.length===1?'':'s'} to review</h2></div><p>${courseSeenReady?`${unseen} new · Mark as seen when you read the build, then `:'Read the build and evidence, then '}accept the project or request a specific improvement. Past workshops stay in your review queue.</p></div><div class="grid grid-2">${pending.length?pending.map(s=>courseSubmissionCard(s,true)).join(''):empty('All caught up','New projects from students in your workshops will appear here.')}</div>
     <div class="section-heading"><div><span class="eyebrow">FEEDBACK HISTORY</span><h2>Reviewed projects</h2></div><p>Accepted work has a completion record. Revision requests let students submit an updated build.</p></div><div class="grid grid-2">${reviewed.length?reviewed.map(s=>courseSubmissionCard(s,false)).join(''):empty('No completed reviews yet','Your decisions and feedback will appear here.')}</div>`:'<div class="notice">Run the course journey migration to review project submissions.</div>';
-  const materialContent=learningReady?`<div class="section-heading"><div><span class="eyebrow">LEARNING MATERIALS</span><h2>${admin()?'Club materials':'Materials for my workshops'}</h2></div>${learningMaterialButtons()}</div><p class="subtle">Upload slides or notes, or share a Google Drive file with one of your workshops. Uploads: PDF, PPT, PPTX, DOC or DOCX, up to 20 MB.</p><div class="grid grid-2">${materials.length?materials.map(m=>`<div class="card teaching-card">${materialRow(m)}<div class="card-footer"><span>${m.course_id?esc((cache.courses||[]).find(c=>c.id===m.course_id)?.title||'Workshop'):'General learning library'} · ${esc(memberName(m.uploaded_by))}</span>${admin()?`<button class="text-button" data-action="toggleLearning" data-id="${esc(m.id)}">${m.hidden_at?'Restore':'Hide'}</button>`:''}</div></div>`).join(''):empty('No materials yet','Upload a presentation, worksheet or guide for your students.')}</div>`:'<div class="notice">Run the teacher materials migration to enable slides and learning files.</div>';
+  const materialContent=learningReady?`<div class="section-heading"><div><span class="eyebrow">LEARNING MATERIALS</span><h2>${admin()?'Club materials':'Materials for my workshops'}</h2></div>${learningMaterialButtons()}</div><p class="subtle">Share slides, notes or Drive links with a learning track or an individual workshop. Uploads: PDF, PPT, PPTX, DOC or DOCX, up to 20 MB.</p><div class="grid grid-2">${materials.length?materials.map(m=>`<div class="card teaching-card">${materialRow(m)}<div class="card-footer"><span>${esc(m.learning_track||(m.course_id?(cache.courses||[]).find(c=>c.id===m.course_id)?.title||'Workshop':'General learning library'))} · ${esc(memberName(m.uploaded_by))}</span>${admin()?`<button class="text-button" data-action="toggleLearning" data-id="${esc(m.id)}">${m.hidden_at?'Restore':'Hide'}</button>`:''}</div></div>`).join(''):empty('No materials yet','Upload a presentation, worksheet or guide for your students.')}</div>`:'<div class="notice">Run the teacher materials migration to enable slides and learning files.</div>';
   return `${head('TEACHING','Teaching studio','Plan practical workshops, support enrolled students and review their project work.',`<div class="profile-buttons"><button class="button button-outline" data-action="certificateSettings">Certificate signature</button><button class="button button-outline" data-action="certificateComplete">Confirm course completion</button>${advancedReady?'<a class="button button-outline" href="#classroom">Lessons, attendance & gradebook →</a>':''}${button('+ Publish workshop','courseForm')}${learningReady?button('+ Upload material','learningForm','button-outline'):''}</div>`)}
     ${learningHubReady?`<section class="learning-role-banner"><div><span class="eyebrow">${admin()?'ALL TEACHING COURSES':'YOUR ASSIGNED TEACHING COURSES'}</span><div class="pill-row">${allowedTeachingTracks().map(track=>`<span class="tag blue">${esc(track)}</span>`).join('')||'<span>Ask an administrator to assign your teaching courses.</span>'}</div><p class="subtle">My students shows your learners. Classwork & feedback handles tasks and reviews. Open workshops holds your class plans, materials and final projects.</p></div></section>`:admin()?'<div class="notice">Activate connected course choices, teacher rosters and role management with <code>supabase/upgrade_learning_dashboards.sql</code>.</div>':''}
     ${courseReady?`<div class="course-summary"><strong>${currentWorkshops.length} open workshop${currentWorkshops.length===1?'':'s'}</strong>${courseLifecycleReady?`<span>${pastWorkshops.length} past</span>`:''}<span>${uniqueLearners} student${uniqueLearners===1?'':'s'}</span><span>${pending.length} awaiting feedback${courseSeenReady?` · ${unseen} new`:''}</span><span>${completions.length} completed project${completions.length===1?'':'s'}</span></div>`:''}
@@ -4515,20 +4540,22 @@ async function submit(e) {
     }
     if(kind==='driveLearningMaterial'){
       if(!teacher()||!learningReady)throw Error('Approved teacher access is required.');
-      if(!(cache.courses||[]).some(c=>c.id===payload.course_id&&courseManager(c)))throw Error('Choose one of your assigned workshops.');
+      const target=resolveLearningMaterialTarget(payload.material_destination,true);
       const drive=googleDriveMaterial(payload.drive_url);
       if(!drive)throw Error('Use the share link for a single Google Drive file, Google Slides presentation, Doc or Sheet.');
       const {error}=await db.from('learning_materials').insert({
-        course_id:payload.course_id,uploaded_by:session.user.id,title:String(payload.title).trim(),
+        ...target,uploaded_by:session.user.id,title:String(payload.title).trim(),
         description:String(payload.description||'').trim(),kind:payload.kind,drive_url:drive.open
       });
-      if(error?.code==='PGRST204'||error?.code==='42703')throw Error('Google Drive links are not enabled yet. Ask an administrator to apply the Drive learning materials migration, or upload the file instead.');
+      if(error?.code==='PGRST204'||error?.code==='42703')throw Error(target.learning_track
+        ?'Track sharing is not enabled yet. Apply the learning track materials migration or choose a workshop.'
+        :'Google Drive links are not enabled yet. Ask an administrator to apply the Drive learning materials migration, or upload the file instead.');
       if(error)throw error;
-      close();await refresh();show('Google Drive material shared with the workshop.');return;
+      close();await refresh();show(target.learning_track?'Google Drive material shared with '+target.learning_track+'.':'Google Drive material shared with the workshop.');return;
     }
     if(kind==='learningMaterial'){
       if(!teacher()||!learningReady)throw Error('Approved teacher access is required.');
-      if(payload.course_id&&!(cache.courses||[]).some(c=>c.id===payload.course_id&&(admin()||c.instructor_id===session.user.id)))throw Error('Choose one of your assigned workshops.');
+      const target=resolveLearningMaterialTarget(payload.material_destination,false);
       const file=formEl.querySelector('[name=learning_file]')?.files?.[0];
       const ext=file?.name.split('.').pop()?.toLowerCase();
       const mime={pdf:'application/pdf',ppt:'application/vnd.ms-powerpoint',pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation',doc:'application/msword',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}[ext];
@@ -4537,11 +4564,13 @@ async function submit(e) {
       const path=`${session.user.id}/${crypto.randomUUID()}.${ext}`;
       const {error:uploadError}=await monitoredUpload('club-learning',path,file,{upsert:false,contentType:mime});
       if(uploadError)throw uploadError;
-      const record={course_id:payload.course_id||null,uploaded_by:session.user.id,title:String(payload.title).trim(),description:String(payload.description||'').trim(),kind:payload.kind,file_name:file.name,storage_path:path,file_size:file.size};
+      const record={...target,uploaded_by:session.user.id,title:String(payload.title).trim(),description:String(payload.description||'').trim(),kind:payload.kind,file_name:file.name,storage_path:path,file_size:file.size};
       try{
-        const {error}=await db.from('learning_materials').insert(record);if(error)throw error;
+        const {error}=await db.from('learning_materials').insert(record);
+        if(target.learning_track&&(error?.code==='PGRST204'||error?.code==='42703'))throw Error('Track sharing is not enabled yet. Apply the learning track materials migration or choose a workshop.');
+        if(error)throw error;
       }catch(error){const removed=await db.storage.from('club-learning').remove([path]);if(removed.error)console.error(removed.error);throw error;}
-      close();await refresh();show('Learning material published.');return;
+      close();await refresh();show(target.learning_track?'Learning material shared with '+target.learning_track+'.':'Learning material published.');return;
     }
     if(kind==='feedPost'){
       if(!feedReady)throw Error('Activate the activity feed migration first.');
@@ -4819,10 +4848,11 @@ function classroomWorkspace(){
  const tabs=[['overview','Overview'],['learn','Lessons & files'],['work','Work & feedback'],['sessions','Sessions'],...(manage?[['students','Students']]:[]),['certificates','Certificates']];
  if(!tabs.some(([key])=>key===classroomView))classroomView='overview';
  const brief=courseBrief(c),materials=(cache.learning_materials||[]).filter(m=>m.course_id===c.id&&!m.hidden_at);
+ const track=courseTrackFor(c),trackFiles=(cache.learning_materials||[]).filter(m=>m.learning_track&&m.learning_track===track&&!m.hidden_at);
  const courseSubmissions=(cache.course_submissions||[]).filter(x=>x.course_id===c.id&&(manage||x.learner_id===session.user.id));
  let content='';
  if(classroomView==='overview')content=`<article class="card journey-course-brief"><h2>What you will build</h2><p class="space-preserve">${esc(brief.goal||'Your teacher will share the course brief here.')}</p>${brief.practice?`<h3>Practice and testing</h3><p class="space-preserve">${esc(brief.practice)}</p>`:''}${brief.tools?`<h3>Tools and components</h3><p class="space-preserve">${esc(brief.tools)}</p>`:''}<div class="profile-buttons"><a class="button" href="#classroom/${esc(c.id)}/learn">${manage?'Prepare lessons & files':'Start learning'} →</a><a class="button button-outline" href="#classroom/${esc(c.id)}/work">${manage?'Review student work':'My work & feedback'} →</a></div></article><section class="journey-course-steps" aria-label="Course journey"><span>1. Learn & practice</span><span>2. Submit work</span><span>3. Improve with feedback</span><span>4. Teacher confirms completion</span></section>${manage?`<details class="card journey-course-settings"><summary>Course settings & enrollment</summary><div class="profile-buttons">${courseOpen(c)?`<button class="button button-outline" data-action="editCourseContentForm" data-id="${esc(c.id)}">Edit course brief</button><button class="button button-outline" data-action="editCourseScheduleForm" data-id="${esc(c.id)}">Set dates</button>`:""}${courseOpen(c)?`<button class="text-button" data-action="endCourseForm" data-id="${esc(c.id)}">End enrollment</button>`:''}${courseLifecycleReady&&c.status!=='archived'?`<button class="text-button" data-action="deleteCourseForm" data-id="${esc(c.id)}">${enrollment||courseSubmissions.length?'Archive / remove':'Remove course'}</button>`:''}</div></details>`:''}`;
- if(classroomView==='learn')content=`<section class="card journey-course-files"><div class="section-heading"><div><h2>Materials & slides</h2><p>Resources for this course.</p></div>${manage&&learningReady?learningMaterialButtons(c.id):''}</div>${cleanUrl(c.resource_url)?`<a class="link" href="${esc(cleanUrl(c.resource_url))}" target="_blank" rel="noopener noreferrer">Open course resource ↗</a>`:''}${materials.map(materialRow).join('')||'<p class="subtle">Your teacher will share files here.</p>'}</section>${classroomRecords(c,'lessons')}`;
+ if(classroomView==='learn')content=`<section class="card journey-course-files"><div class="section-heading"><div><h2>Materials & slides</h2><p>Resources for this course.</p></div>${manage&&learningReady?learningMaterialButtons(c.id):''}</div>${cleanUrl(c.resource_url)?`<a class="link" href="${esc(cleanUrl(c.resource_url))}" target="_blank" rel="noopener noreferrer">Open course resource ↗</a>`:''}${materials.map(materialRow).join('')||'<p class="subtle">Your teacher will share files here.</p>'}</section>${trackFiles.length?trackMaterialSection(track,trackFiles):''}${classroomRecords(c,'lessons')}`;
  if(classroomView==='work'){
   if(manage){const pending=courseSubmissions.filter(s=>s.review_status==='submitted'&&s.learner_id!==session.user.id),reviewed=courseSubmissions.filter(s=>s.review_status!=='submitted');classroomProjectPage=Math.min(classroomProjectPage,Math.max(0,Math.ceil(pending.length/24)-1));
    content=`${learningHubReady?teacherClassworkPanel(c.id):'<div class="notice">Classwork is being prepared. Course completion projects remain below.</div>'}<section class="journey-final-project"><div class="section-heading"><div><h2>Course completion projects</h2><p>Accept a completed project with your saved signature to issue its certificate.</p></div><button class="button button-outline" data-action="certificateSettings">My certificate signature</button></div><div class="grid grid-2">${pending.slice(classroomProjectPage*24,(classroomProjectPage+1)*24).map(s=>courseSubmissionCard(s,true)).join('')||empty('No projects awaiting review','Student course completion projects will appear here.')}</div>${advancedPageButtons('classroomProjectPage',classroomProjectPage,pending.length)}<details class="card journey-reviewed-projects"><summary>Reviewed projects · ${reviewed.length}</summary>${reviewed.slice(0,24).map(s=>courseSubmissionCard(s,false)).join('')||'<p>No reviewed projects yet.</p>'}${reviewed.length>24?'<p>Latest 24 shown. Full project history remains in Teaching studio → To review.</p>':''}</details></section><details class="card journey-practical-assessment"><summary>Practical assessment & grade history</summary>${classroomRecords(c,'grades')}</details>`;

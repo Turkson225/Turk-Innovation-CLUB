@@ -1308,28 +1308,29 @@ test('The upload entry point offers Drive in the same dialog and preserves the s
   assert.match(markup,/data-source="drive" aria-pressed="false">Google Drive link/);
   assert.match(markup,/data-learning-source-panel="drive" hidden/);
   assert.match(markup,/id="drive_url"[^>]* disabled>/);
-  assert.match(markup,/<option value="c1" selected>/);
+  assert.match(markup,/<option value="workshop:c1" selected>/);
   action(h,{action:'driveLearningForm',course:'c1'});
   markup=h.elements.get('#modalContent').innerHTML;
   assert.match(markup,/id="drive_url"[^>]* required>/);
   assert.match(markup,/id="learning_file"[^>]* disabled>/);
-  assert.match(markup,/name="course_id" required>/);
+  assert.match(markup,/name="material_destination"[^>]+ required>/);
 });
 test('Switching sources requires the right input and sends only a Drive URL when sharing a link',async()=>{
   const h=learningHarness('teacher');
-  const send=node(),file=node({required:true}),link=node({disabled:true}),video=node({disabled:true});
+  const send=node(),file=node({required:true}),link=node({disabled:true}),video=node({disabled:true}),library=node();
   const inputs=[['upload',file],['drive',link]].map(([source,input])=>node({dataset:{learningSourcePanel:source},querySelector(){return input;}}));
   const form=node({id:'editor',dataset:{kind:'learningMaterial'},matches(){return false;},
     querySelector(){return send;},querySelectorAll(s){return s==='[data-learning-source-panel]'?inputs:[];},
-    elements:{course_id:{value:'c1',options:[{}]},kind:{value:'slides',querySelector(){return video;}}},
-    entries:[['course_id','c1'],['title','Starter slides'],['kind','slides'],['drive_url','https://docs.google.com/presentation/d/Example_File-4QB7qh7Dx/edit?usp=sharing']]
+    elements:{material_destination:{value:'workshop:c1',required:true,options:[{}],querySelector(){return library;}},kind:{value:'slides',querySelector(){return video;}}},
+    entries:[['material_destination','workshop:c1'],['title','Starter slides'],['kind','slides'],['drive_url','https://docs.google.com/presentation/d/Example_File-4QB7qh7Dx/edit?usp=sharing']]
   });
   h.exec("selectLearningMaterialSource(qaArgs,'drive')",form);
-  assert.equal(form.elements.course_id.value,'c1');
-  assert.equal(form.elements.course_id.required,true);
+  assert.equal(form.elements.material_destination.value,'workshop:c1');
+  assert.equal(form.elements.material_destination.required,true);
+  assert.equal(library.disabled,true);
   assert.equal(file.disabled,true);assert.equal(file.required,false);
   assert.equal(link.disabled,false);assert.equal(link.required,true);
-  assert.equal(send.textContent,'Share with workshop');
+  assert.equal(send.textContent,'Share material');
   await h.exec('submit(qaArgs)',{target:form,preventDefault(){}});
   const call=h.requests.find(r=>r.table==='learning_materials').ops.find(([op])=>op==='insert')[1];
   assert.equal(call.drive_url,'https://docs.google.com/presentation/d/Example_File-4QB7qh7Dx/edit');
@@ -1337,8 +1338,45 @@ test('Switching sources requires the right input and sends only a Drive URL when
   assert(!('storage_path' in call));
   assert(!h.requests.some(r=>r.table==='club-learning'));
   h.exec("selectLearningMaterialSource(qaArgs,'upload')",form);
-  assert.equal(form.elements.course_id.required,false);
+  assert.equal(form.elements.material_destination.required,true);
+  assert.equal(library.disabled,false);
   assert.equal(file.required,true);assert.equal(link.disabled,true);
+});
+test('Teachers can send Drive materials to their assigned track without selecting a workshop',async()=>{
+  const h=learningHarness('teacher');
+  h.run('learningMaterialEditor()');
+  const markup=h.elements.get('#modalContent').innerHTML;
+  assert.match(markup,/label="Learning tracks"/);
+  assert.match(markup,/value="track:Controls and Automation"/);
+  assert.doesNotMatch(markup,/value="track:Software and Programming"/);
+  const form=learningForm('driveLearningMaterial',[
+    ['material_destination','track:Controls and Automation'],['title','Controller slides'],['kind','slides'],
+    ['drive_url','https://docs.google.com/presentation/d/Example_File-4QB7qh7Dx/edit']
+  ]);
+  await h.exec('submit(qaArgs)',form.event);
+  const record=h.requests.find(r=>r.table==='learning_materials').ops.find(([op])=>op==='insert')[1];
+  assert.equal(record.course_id,null);
+  assert.equal(record.learning_track,'Controls and Automation');
+  assert.match(h.elements.get('#toast').textContent,/shared with Controls and Automation/);
+  assert.throws(()=>h.run("resolveLearningMaterialTarget('track:Software and Programming',true)"),/Choose a learning track/);
+  assert.throws(()=>h.run("resolveLearningMaterialTarget('',false)"),/Choose a learning track/);
+  h.run("me.role='admin';learningMaterialEditor()");
+  const admin=h.elements.get('#modalContent').innerHTML;
+  assert.equal((admin.match(/value="track:/g)||[]).length,4);
+});
+test('Track materials appear under the matching track and never in the general library',()=>{
+  const h=learningHarness();
+  h.run(`activeCourseId='c1';courseView='mine';classroomView='learn';cache.learning_materials=[
+    {id:'my-track',title:'Controller video',kind:'video',learning_track:'Controls and Automation',drive_url:'https://drive.google.com/file/d/Example_File-4QB7qh7Dx/view'},
+    {id:'not-mine',title:'Robotics notes',kind:'notes',learning_track:'Electronics and Robotics',file_name:'private.pdf'},
+    {id:'general',title:'Club safety note',kind:'notes',file_name:'general.pdf'}
+  ];`);
+  const mine=h.run('courses()');
+  assert.match(mine,/TRACK MATERIALS[\s\S]*Controller video[\s\S]*Club learning library[\s\S]*Club safety note/);
+  assert.doesNotMatch(mine,/Robotics notes/);
+  const classroom=h.run('classroomWorkspace()');
+  assert.match(classroom,/TRACK MATERIALS[\s\S]*Controller video/);
+  assert.doesNotMatch(classroom,/Robotics notes|Club safety note/);
 });
 test('Classroom refresh includes resources and welcome refresh includes own learning dependencies',()=>{const h=harness();assert(h.run("pageRefreshDependencies.classroom.includes('learning_materials')"));assert(h.run("pageRefreshDependencies['getting-started'].includes('member_learning_paths')"));});
 test('Onboarding async actions cannot swallow unrelated workspace actions',()=>{const h=learningHarness();let count=0;h.context.guidanceStub={action(){count++;return Promise.resolve(true);}};h.run('guidance=guidanceStub');action(h,{action:'courseView',view:'explore'});assert.equal(h.run('courseView'),'explore');assert.equal(count,0);action(h,{action:'onboardingShow'});assert.equal(count,1);});
