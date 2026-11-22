@@ -2447,7 +2447,7 @@ function courses() {
     <div class="section-heading"><div><span class="eyebrow">YOUR LEARNING PLAN</span><h2>My workshops</h2></div><p>Choose a classroom to see its brief, materials, submissions and feedback.</p></div>
     ${myCourses.length?`<div class="course-classroom-layout"><div class="course-class-list" role="group" aria-label="My enrolled workshops">${myCourses.map(({course:c,enrollment:e})=>`<button type="button" class="course-class-choice ${selected?.id===c.id?'selected':''}" data-action="courseSelect" data-id="${esc(c.id)}" aria-pressed="${selected?.id===c.id}"><small>${esc(courseTrackFor(c))}${courseLifecycleReady&&!courseOpen(c)?` · ${esc(courseStateLabel(c))}`:''}</small><strong>${esc(c.title)}</strong><span>${esc(courseProgress(e))} · ${courseDeadline(c)?`Due ${date(c.submission_due_at)}`:'Deadline to be announced'}</span></button>`).join('')}</div>${selected?`<article class="journey-classroom-entry"><span class="eyebrow">YOUR COURSE WORKSPACE</span><h2>${esc(selected.title)}</h2><p>Lessons, files, assignments, project reviews, sessions and certificates are together in your classroom.</p><a class="button" href="#classroom/${esc(selected.id)}/overview">Open classroom →</a></article>`:""}</div>`:`<div class="course-empty-state"><h3>No workshops joined yet</h3><p>Explore the four tracks, choose a practical build, and it will appear here with your materials and teacher feedback.</p><button class="button" data-action="courseView" data-view="explore">Explore workshops →</button></div>`}
     ${courseTracks.map(({name})=>{const rows=trackMaterials.filter(m=>m.learning_track===name);return rows.length?trackMaterialSection(name,rows):'';}).join('')}
-    ${generalMaterials.length?`<section class="course-general-library"><div class="section-heading"><div><span class="eyebrow">FOR EVERY MEMBER</span><h2>Club learning library</h2></div><p>General notes and guides for any workshop.</p></div><div class="grid grid-2">${generalMaterials.map(m=>`<div class="card">${materialRow(m)}</div>`).join('')}</div></section>`:''}
+    ${generalMaterials.length?`<section class="course-general-library"><div class="section-heading"><div><span class="eyebrow">FOR EVERY MEMBER</span><h2>Club learning library</h2></div><p>Helpful websites, notes and guides for any workshop.</p></div><div class="grid grid-2">${generalMaterials.map(m=>`<div class="card">${materialRow(m)}</div>`).join('')}</div></section>`:''}
   </section>`;
   const visible=courseTrack==='all'?available:available.filter(c=>courseTrackFor(c)===courseTrack);
   const explore=`<section id="course-view-panel" class="course-view-panel" aria-label="Explore workshops"><div class="course-steps"><div><b>1</b><strong>Choose a workshop</strong><small>Pick one or more tracks.</small></div><div><b>2</b><strong>Learn by doing</strong><small>Follow your teacher’s brief and materials.</small></div><div><b>3</b><strong>Share your build</strong><small>Send test notes and evidence.</small></div><div><b>4</b><strong>Improve with feedback</strong><small>Revise or record completion.</small></div></div>
@@ -2470,26 +2470,47 @@ function learningMaterialControl(m){
   if(!canManageLearningMaterial(m))return '';
   return `<button type="button" class="text-button ${m.hidden_at?'':'course-remove-button'}" data-action="learningRemovalForm" data-id="${esc(m.id)}">${m.hidden_at?'Restore':'Delete from SPACE'}</button>`;
 }
+const suggestedLearningWebsites=[
+  {title:'Learn Arduino: RGB LED lesson',url:'https://learn-arduino-red.vercel.app/#rgb'},
+  {title:'Cirkit Designer',url:'https://app.cirkitdesigner.com/'},
+  {title:'BenchTwin',url:'https://benchtwin.com/'}
+];
+const learningMaterialSourceKinds={upload:'learningMaterial',drive:'driveLearningMaterial',website:'webLearningMaterial'};
+function learningWebsite(value){
+  const raw=String(value||'').trim();
+  if(raw.length>2000||!/^https:\/\/[^/]/i.test(raw)||/[\s\\\u0000-\u001f\u007f]/u.test(raw))return null;
+  try{
+    const url=new URL(raw);
+    if(url.protocol!=='https:'||url.username||url.password||url.href.length>2000
+      ||!(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.?$/i.test(url.hostname)||/^\[[0-9a-f:.]+\]$/i.test(url.hostname)))return null;
+    return {href:url.href,host:url.host};
+  }catch{return null;}
+}
 function materialRow(m,allowManage=false){
   const drive=googleDriveMaterial(m.drive_url);
-  const label=drive?(drive.preview?'Google Drive':'Google Drive folder'):m.drive_url?'Link unavailable':esc(m.file_name)+' · '+fileSize(m.file_size);
-  const action=m.hidden_at?'<span class="tag gold">Hidden</span>':m.drive_url
+  const website=learningWebsite(m.external_url);
+  const label=m.external_url?(website?esc(website.host):'Link unavailable')
+    :drive?(drive.preview?'Google Drive':'Google Drive folder'):m.drive_url?'Link unavailable':esc(m.file_name)+' · '+fileSize(m.file_size);
+  const action=m.hidden_at?'<span class="tag gold">Hidden</span>':m.external_url
+    ?(website?`<div class="drive-material-actions learning-drive-links"><a class="link" href="${esc(website.href)}" target="_blank" rel="noopener noreferrer" aria-label="${esc('Open '+m.title+' in a new tab')}">Open website ↗</a></div>`:'')
+    :m.drive_url
     ?(drive?`<div class="drive-material-actions learning-drive-links"><a class="link" href="${esc(drive.open)}" target="_blank" rel="noopener noreferrer">Open in Google Drive</a>${drive.preview?`<button type="button" class="text-button" data-action="viewDriveMaterial" data-id="${esc(m.id)}">Preview in SPACE</button>`:''}</div>`:'')
     :`<button class="text-button" data-action="downloadLearning" data-id="${esc(m.id)}">Download ↓</button>`;
-  return `<div class="learning-row"><span class="tag blue">${esc(m.kind)}</span><div><strong>${esc(m.title)}</strong><small>${label} · ${date(m.created_at)}</small>${m.description?`<p>${esc(m.description)}</p>`:''}</div>${action}${allowManage===true?learningMaterialControl(m):''}</div>`;
+  return `<div class="learning-row"><span class="tag blue">${m.external_url?'Website':esc(m.kind)}</span><div><strong>${esc(m.title)}</strong><small>${label} · ${date(m.created_at)}</small>${m.description?`<p>${esc(m.description)}</p>`:''}</div>${action}${allowManage===true?learningMaterialControl(m):''}</div>`;
 }
 function learningRemovalForm(id){
   const material=(cache.learning_materials||[]).find(m=>m.id===id);
   if(!canManageLearningMaterial(material))return;
   const remove=!material.hidden_at;
   const detail=remove
-    ? (material.drive_url?'The link will disappear from SPACE. Your original file or folder and its sharing settings stay in Google Drive.':'Students will no longer see this material or be able to get a new download link. You can restore it later from Teaching studio.')
+    ? (material.external_url?'The link will disappear from SPACE. You can restore it later from Teaching studio.'
+      :material.drive_url?'The link will disappear from SPACE. Your original file or folder and its sharing settings stay in Google Drive.':'Students will no longer see this material or be able to get a new download link. You can restore it later from Teaching studio.')
     : 'The material will be available again to the same learners it was originally shared with.';
   modal(`<span class="eyebrow">LEARNING MATERIALS</span><h2>${remove?'Delete from SPACE?':'Restore material?'}</h2><p><strong>${esc(material.title)}</strong></p><p class="muted">${detail}</p><form id="editor" data-kind="learningRemoval" class="form-stack"><input type="hidden" name="material_id" value="${esc(id)}"><input type="hidden" name="removed" value="${remove}"><div class="profile-buttons"><button type="button" class="button button-outline" data-action="close">Cancel</button><button class="button ${remove?'button-danger':''}" type="submit">${remove?'Delete from SPACE':'Restore material'}</button></div></form>`);
 }
 function learningMaterialButtons(courseId='',uploadLabel='+ Upload file'){
   const course=courseId?` data-course="${esc(courseId)}"`:'';
-  return `<div class="drive-material-actions"><button class="button button-sm" data-action="learningForm"${course}>${esc(uploadLabel)}</button><button class="button button-outline button-sm" data-action="driveLearningForm"${course}>+ Google Drive link</button></div>`;
+  return `<div class="drive-material-actions"><button class="button button-sm" data-action="learningForm"${course}>${esc(uploadLabel)}</button><button class="button button-outline button-sm" data-action="driveLearningForm"${course}>+ Google Drive link</button><button class="button button-outline button-sm" data-action="webLearningForm"${course}>+ Website link</button></div>`;
 }
 function shareableLearningTracks(){
   return admin()?courseTracks.map(t=>t.name):validLearningTracks((cache.teaching_track_assignments||[])
@@ -2511,16 +2532,17 @@ function learningMaterialEditor(courseId='',source='upload'){
   const selected=courses.some(c=>c.id===courseId)?courseId:'';
   const tracks=shareableLearningTracks();
   const drive=source==='drive';
+  const website=source==='website',upload=source==='upload';
   const options=`<option value="" ${!selected?'selected':''}>${drive?'Choose a track or workshop':'Choose who can see this material'}</option>`
     +(tracks.length?`<optgroup label="Learning tracks">${tracks.map(track=>`<option value="track:${esc(track)}">${esc(track)}</option>`).join('')}</optgroup>`:'')
     +(courses.length?`<optgroup label="Individual workshops">${courses.map(c=>`<option value="workshop:${esc(c.id)}" ${c.id===selected?'selected':''}>${esc(c.title)}</option>`).join('')}</optgroup>`:'')
     +`<option value="library" ${drive?'hidden disabled':''}>General learning library (all members)</option>`;
   const toggle=(id,label)=>`<button type="button" class="button button-outline button-sm" data-action="learningMaterialSource" data-source="${id}" aria-pressed="${source===id}">${label}</button>`;
   return modal(`<span class="eyebrow">TEACHING STUDIO</span><h2>Add learning material</h2>
-    <form id="editor" data-kind="${drive?'driveLearningMaterial':'learningMaterial'}" data-learning-material class="form-stack">
-      <div class="drive-material-actions drive-source-switch" role="group" aria-label="Material source">${toggle('upload','Upload a file')}${toggle('drive','Google Drive link')}</div>
-      <div class="field" data-learning-source-panel="upload"${drive?' hidden':''}>
-        <label for="learning_file">Choose a file</label><input id="learning_file" name="learning_file" type="file" accept=".pdf,.ppt,.pptx,.doc,.docx" ${drive?'disabled':'required'}>
+    <form id="editor" data-kind="${learningMaterialSourceKinds[source]}" data-learning-material class="form-stack">
+      <div class="drive-material-actions drive-source-switch" role="group" aria-label="Material source">${toggle('upload','Upload a file')}${toggle('drive','Google Drive link')}${toggle('website','Website link')}</div>
+      <div class="field" data-learning-source-panel="upload"${upload?'':' hidden'}>
+        <label for="learning_file">Choose a file</label><input id="learning_file" name="learning_file" type="file" accept=".pdf,.ppt,.pptx,.doc,.docx" ${upload?'required':'disabled'}>
         <p class="hint">PDF, PPT, PPTX, DOC or DOCX, up to 20 MB.</p>
       </div>
       <div class="field" data-learning-source-panel="drive"${drive?'':' hidden'}>
@@ -2528,19 +2550,26 @@ function learningMaterialEditor(courseId='',source='upload'){
         <p class="hint" id="driveLinkHint">In Google Drive, choose Share → Copy link on a file or folder. Students can open the link directly. Access follows the sharing settings in Drive.</p>
         ${courses.length||tracks.length?'':'<p class="hint">Ask an admin to assign a learning track or workshop before sharing a Drive link.</p>'}
       </div>
+      <div class="field" data-learning-source-panel="website"${website?'':' hidden'}>
+        <label for="external_url">Website URL</label><input id="external_url" name="external_url" type="url" maxlength="2000" placeholder="https://example.com/lesson" aria-describedby="websiteLinkHint" ${website?'required':'disabled'}>
+        <p class="hint" id="websiteLinkHint">Paste an HTTPS link. Students will open the website in a new tab.</p>
+        <details><summary>Suggested Electronics &amp; Robotics tools</summary><div class="drive-material-actions">
+          ${suggestedLearningWebsites.map((item,i)=>`<button type="button" class="button button-outline button-sm" data-action="learningWebsiteSuggestion" data-index="${i}">${esc(item.title)}</button>`).join('')}
+        </div></details>
+      </div>
       ${field('Title','title')}
-      <div class="field"><label for="kind">Type</label><select id="kind" name="kind"><option value="slides">Slides</option><option value="notes">Notes</option><option value="worksheet">Worksheet</option><option value="guide">Guide</option><option value="video" ${drive?'':'disabled hidden'}>Video</option></select></div>
+      <div class="field"><label for="kind">Type</label><select id="kind" name="kind"><option value="slides">Slides</option><option value="notes">Notes</option><option value="worksheet">Worksheet</option><option value="guide" ${website?'selected':''}>Guide</option><option value="video" ${upload?'disabled hidden':''}>Video</option></select></div>
       <div class="field"><label for="material_destination">Share with</label><select id="material_destination" name="material_destination" aria-describedby="learningAudienceHint" required>${options}</select><p class="hint" id="learningAudienceHint">Choose a learning track to reach its students across workshops, or choose one workshop for that class only.</p></div>
       <div class="field"><label for="description">Description (optional)</label><textarea id="description" name="description" maxlength="1500"></textarea></div>
-      <button class="button" type="submit">${drive?'Share material':'Publish material'}</button>
+      <button class="button" type="submit">${website?'Publish website link':drive?'Share material':'Publish material'}</button>
     </form>`);
 }
 function selectLearningMaterialSource(editor,source){
-  if(!editor||!['upload','drive'].includes(source))return;
+  if(!editor||!Object.hasOwn(learningMaterialSourceKinds,source))return;
   const submitButton=editor.querySelector('[type=submit]');
   if(submitButton.disabled)return;
-  const drive=source==='drive';
-  editor.dataset.kind=drive?'driveLearningMaterial':'learningMaterial';
+  const drive=source==='drive',upload=source==='upload';
+  editor.dataset.kind=learningMaterialSourceKinds[source];
   for(const choice of editor.querySelectorAll('[data-source]'))choice.setAttribute('aria-pressed',String(choice.dataset.source===source));
   for(const panel of editor.querySelectorAll('[data-learning-source-panel]')){
     const active=panel.dataset.learningSourcePanel===source,input=panel.querySelector('input');
@@ -2551,9 +2580,19 @@ function selectLearningMaterialSource(editor,source){
   if(drive&&destination.value==='library')destination.value='';
   library.hidden=drive;library.disabled=drive;
   destination.options[0].text=drive?'Choose a track or workshop':'Choose who can see this material';
-  if(!drive&&kind.value==='video')kind.value='slides';
-  video.hidden=!drive;video.disabled=!drive;
-  submitButton.textContent=drive?'Share material':'Publish material';
+  if(upload&&kind.value==='video')kind.value='slides';
+  video.hidden=upload;video.disabled=upload;
+  submitButton.textContent=source==='website'?'Publish website link':drive?'Share material':'Publish material';
+}
+function fillLearningWebsiteSuggestion(editor,index){
+  if(!/^[0-9]+$/.test(index))return;
+  const suggestion=suggestedLearningWebsites[Number(index)];
+  if(!editor||editor.dataset.kind!=='webLearningMaterial'||!suggestion||editor.querySelector('[type=submit]').disabled)return;
+  const {external_url,title}=editor.elements;
+  const previous=suggestedLearningWebsites.find(item=>item.url===external_url.value);
+  if(!title.value.trim()||title.value===previous?.title)title.value=suggestion.title;
+  external_url.value=suggestion.url;
+  external_url.focus();
 }
 let teachingTab = 'overview';
 function teachingWorkshopCard(c,enrollments,pending){
@@ -3724,8 +3763,10 @@ function actions(e) {
     const options='<option value="">Library only</option>'+(cache.channels||[]).map(c=>`<option value="${esc(c.id)}" ${c.id===activeChannelId&&page==='channels'?'selected':''}># ${esc(c.name)}</option>`).join('');
     return modal(`<span class="eyebrow">CLUB LIBRARY</span><h2>Share a document</h2><p class="muted">Files are private to signed-in club members. Maximum size: 10 MB.</p><form id="editor" data-kind="document" class="form-stack"><div class="field"><label for="upload">Choose a file</label><input id="upload" name="upload" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.zip,.png,.jpg,.jpeg,.stl" required></div><div class="field"><label for="channel_id">Share in channel</label><select id="channel_id" name="channel_id">${options}</select></div><button class="button" type="submit">Upload document</button></form>`);
   }
-  if(action==='learningForm'||action==='driveLearningForm')return learningMaterialEditor(el.dataset.course,action==='driveLearningForm'?'drive':'upload');
+  if(action==='learningForm'||action==='driveLearningForm'||action==='webLearningForm')return learningMaterialEditor(el.dataset.course,
+    action==='webLearningForm'?'website':action==='driveLearningForm'?'drive':'upload');
   if(action==='learningMaterialSource'&&teacher()&&learningReady)return selectLearningMaterialSource(el.closest('form[data-learning-material]'),el.dataset.source);
+  if(action==='learningWebsiteSuggestion'&&teacher()&&learningReady)return fillLearningWebsiteSuggestion(el.closest('form[data-learning-material]'),el.dataset.index);
   if(action==='downloadLearning')return downloadLearning(id);
   if(action==='viewDriveMaterial')return viewDriveMaterial(id);
   if(action==='learningRemovalForm')return learningRemovalForm(id);
@@ -4073,7 +4114,7 @@ async function openLearningMaterialAlert(id){
   const material=await readVisibleLearningMaterial(id);
   if(owner!==session?.user.id||generation!==authGeneration||!clubAccess())return;
   if(!material)return show('This learning material is no longer available to your account.');
-  const scope=material.learning_track||(cache.courses||[]).find(c=>c.id===material.course_id)?.title||'Workshop materials';
+  const scope=material.learning_track||(cache.courses||[]).find(c=>c.id===material.course_id)?.title||(material.course_id?'Workshop materials':'Club learning library');
   const destination=material.course_id?`#classroom/${esc(material.course_id)}/learn`:'#courses';
   modal(`<span class="eyebrow">LEARNING MATERIALS</span><h2>${esc(scope)}</h2>${materialRow(material)}
     <a class="button button-outline button-sm" href="${destination}" data-action="close">See course materials</a>`);
@@ -4092,7 +4133,7 @@ async function downloadLearning(id){
   const owner=session?.user.id,generation=authGeneration;
   try{
     const m=(cache.learning_materials||[]).find(x=>x.id===id&&!x.hidden_at)||await readVisibleLearningMaterial(id);
-    if(!m?.storage_path||m.drive_url)return;
+    if(!m?.storage_path||m.drive_url||m.external_url)return;
     const {data,error}=await db.storage.from('club-learning').createSignedUrl(m.storage_path,120);
     if(owner!==session?.user.id||generation!==authGeneration||!clubAccess())return;
     if(error)throw error;
@@ -4597,6 +4638,25 @@ async function submit(e) {
       close();if(page==='teaching')teachingTab='materials';
       await refresh();show(removed?'Material deleted from SPACE. You can restore it in Teaching studio.':'Material restored.');return;
     }
+    if(kind==='webLearningMaterial'){
+      if(!teacher()||!learningReady)throw Error('Approved teacher access is required.');
+      const target=resolveLearningMaterialTarget(payload.material_destination,false);
+      const website=learningWebsite(payload.external_url);
+      if(!website)throw Error('Enter a valid HTTPS website URL without a username or password.');
+      const title=String(payload.title||'').trim();
+      if(title.length<3||title.length>160)throw Error('Enter a title between 3 and 160 characters.');
+      const {error}=await db.from('learning_materials').insert({
+        ...target,external_library:!target.course_id&&!target.learning_track,
+        uploaded_by:session.user.id,title,description:String(payload.description||'').trim(),
+        kind:payload.kind,external_url:website.href
+      });
+      if(error?.code==='PGRST204'||error?.code==='42703')throw Error('Website links are not enabled yet. Ask an administrator to apply the external learning links migration.');
+      if(error)throw error;
+      close();if(page==='teaching')teachingTab='materials';
+      await refresh();
+      show('Website link shared '+(target.learning_track?'with '+target.learning_track:target.course_id?'with the workshop':'in the club learning library')+'.');
+      return;
+    }
     if(kind==='driveLearningMaterial'){
       if(!teacher()||!learningReady)throw Error('Approved teacher access is required.');
       const target=resolveLearningMaterialTarget(payload.material_destination,true);
@@ -4915,7 +4975,7 @@ function classroomWorkspace(){
  const courseSubmissions=(cache.course_submissions||[]).filter(x=>x.course_id===c.id&&(manage||x.learner_id===session.user.id));
  let content='';
  if(classroomView==='overview')content=`<article class="card journey-course-brief"><h2>What you will build</h2><p class="space-preserve">${esc(brief.goal||'Your teacher will share the course brief here.')}</p>${brief.practice?`<h3>Practice and testing</h3><p class="space-preserve">${esc(brief.practice)}</p>`:''}${brief.tools?`<h3>Tools and components</h3><p class="space-preserve">${esc(brief.tools)}</p>`:''}<div class="profile-buttons"><a class="button" href="#classroom/${esc(c.id)}/learn">${manage?'Prepare lessons & files':'Start learning'} →</a><a class="button button-outline" href="#classroom/${esc(c.id)}/work">${manage?'Review student work':'My work & feedback'} →</a></div></article><section class="journey-course-steps" aria-label="Course journey"><span>1. Learn & practice</span><span>2. Submit work</span><span>3. Improve with feedback</span><span>4. Teacher confirms completion</span></section>${manage?`<details class="card journey-course-settings"><summary>Course settings & enrollment</summary><div class="profile-buttons">${courseOpen(c)?`<button class="button button-outline" data-action="editCourseContentForm" data-id="${esc(c.id)}">Edit course brief</button><button class="button button-outline" data-action="editCourseScheduleForm" data-id="${esc(c.id)}">Set dates</button>`:""}${courseOpen(c)?`<button class="text-button" data-action="endCourseForm" data-id="${esc(c.id)}">End enrollment</button>`:''}${courseLifecycleReady&&c.status!=='archived'?`<button class="text-button" data-action="deleteCourseForm" data-id="${esc(c.id)}">${enrollment||courseSubmissions.length?'Archive / remove':'Remove course'}</button>`:''}</div></details>`:''}`;
- if(classroomView==='learn')content=`<section class="card journey-course-files"><div class="section-heading"><div><h2>Materials & slides</h2><p>Resources for this course.</p></div>${manage&&learningReady?learningMaterialButtons(c.id):''}</div>${cleanUrl(c.resource_url)?`<a class="link" href="${esc(cleanUrl(c.resource_url))}" target="_blank" rel="noopener noreferrer">Open course resource ↗</a>`:''}${materials.map(m=>materialRow(m,manage)).join('')||'<p class="subtle">Your teacher will share files here.</p>'}</section>${trackFiles.length?trackMaterialSection(track,trackFiles,manage):''}${classroomRecords(c,'lessons')}`;
+ if(classroomView==='learn')content=`<section class="card journey-course-files"><div class="section-heading"><div><h2>Materials & slides</h2><p>Resources for this course.</p></div>${manage&&learningReady?learningMaterialButtons(c.id):''}</div>${cleanUrl(c.resource_url)?`<a class="link" href="${esc(cleanUrl(c.resource_url))}" target="_blank" rel="noopener noreferrer">Open course resource ↗</a>`:''}${materials.map(m=>materialRow(m,manage)).join('')||'<p class="subtle">Your teacher will share files and links here.</p>'}</section>${trackFiles.length?trackMaterialSection(track,trackFiles,manage):''}${classroomRecords(c,'lessons')}`;
  if(classroomView==='work'){
   if(manage){const pending=courseSubmissions.filter(s=>s.review_status==='submitted'&&s.learner_id!==session.user.id),reviewed=courseSubmissions.filter(s=>s.review_status!=='submitted');classroomProjectPage=Math.min(classroomProjectPage,Math.max(0,Math.ceil(pending.length/24)-1));
    content=`${learningHubReady?teacherClassworkPanel(c.id):'<div class="notice">Classwork is being prepared. Course completion projects remain below.</div>'}<section class="journey-final-project"><div class="section-heading"><div><h2>Course completion projects</h2><p>Accept a completed project with your saved signature to issue its certificate.</p></div><button class="button button-outline" data-action="certificateSettings">My certificate signature</button></div><div class="grid grid-2">${pending.slice(classroomProjectPage*24,(classroomProjectPage+1)*24).map(s=>courseSubmissionCard(s,true)).join('')||empty('No projects awaiting review','Student course completion projects will appear here.')}</div>${advancedPageButtons('classroomProjectPage',classroomProjectPage,pending.length)}<details class="card journey-reviewed-projects"><summary>Reviewed projects · ${reviewed.length}</summary>${reviewed.slice(0,24).map(s=>courseSubmissionCard(s,false)).join('')||'<p>No reviewed projects yet.</p>'}${reviewed.length>24?'<p>Latest 24 shown. Full project history remains in Teaching studio → To review.</p>':''}</details></section><details class="card journey-practical-assessment"><summary>Practical assessment & grade history</summary>${classroomRecords(c,'grades')}</details>`;
