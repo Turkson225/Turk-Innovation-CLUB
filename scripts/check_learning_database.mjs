@@ -134,6 +134,21 @@ await check('A track PDF can be downloaded only by its audience and stops appear
   assert.deepEqual(await visible(actors.student),[]);
   assert.deepEqual(await visible(actors.teacher),[]);
 });
+await check('A Drive folder link stays in the selected track and does not change access rules',async()=>{
+  const folderSql=fs.readFileSync(new URL('supabase/migrations/20261122010000_drive_folder_materials.sql',root),'utf8');
+  await db.exec(folderSql);await db.exec(folderSql);
+  const folder='https://drive.google.com/drive/folders/Example_File-4QB7qh7Dx?resourcekey=0-example';
+  const insert=(actor,link,track=controlsTrack,course=null)=>as(actor,
+    "insert into public.learning_materials(course_id,learning_track,uploaded_by,title,kind,drive_url) values($1,$2,auth.uid(),'Course folder','guide',$3) returning id",
+    [course,track,link]);
+  const id=(await insert(actors.teacher,folder)).rows[0].id;
+  assert.deepEqual((await as(actors.student,'select learning_track,drive_url from public.learning_materials where id=$1',[id])).rows,[{learning_track:controlsTrack,drive_url:folder}]);
+  assert.deepEqual((await as(actors.otherStudent,'select id from public.learning_materials where id=$1',[id])).rows,[]);
+  await insert(actors.teacher,folder,null,c1);
+  await reject(()=>insert(actors.otherTeacher,folder),/row-level security/);
+  await reject(()=>insert(actors.admin,folder,null),/learning_materials_source_check/);
+  await reject(()=>insert(actors.admin,'https://drive.google.com.invalid/drive/folders/Example_File-4QB7qh7Dx'),/learning_materials_source_check/);
+});
 await check('Empty, duplicate and invented courses are rejected',async()=>{for(const tracks of [[],['fake'],['Controls and Automation','Controls and Automation']])await reject(()=>as(actors.student,'select public.set_my_learning_tracks($1)',[tracks]),/Select one or more/);});
 await check('Unverified and investor accounts cannot choose member courses',async()=>{for(const actor of [actors.unverified,actors.investor])await reject(()=>as(actor,"select public.set_my_learning_tracks(array['Controls and Automation'])"),/Verified club account/);});
 await check('Pending applicants save choices without joining a private class',async()=>{await as(actors.pending,"select public.set_my_learning_tracks(array['Controls and Automation'])");assert.equal((await db.query('select * from public.course_enrollments where learner_id=$1',[actors.pending])).rows.length,0);});

@@ -1,6 +1,7 @@
-// Rebuild each URL from a supported Google file ID. Never embed a supplied URL
+// Rebuild each URL from a supported Google file or folder ID. Never embed a supplied URL
 // directly or keep arbitrary query parameters from the share link.
 const fileId = /^[A-Za-z0-9_-]{10,150}$/;
+const folderPath = /^\/drive\/(?:u\/\d+\/)?folders\/([A-Za-z0-9_-]{10,150})\/?$/;
 const editorPath = /^\/(presentation|document|spreadsheets)\/d\/([A-Za-z0-9_-]{10,150})(?:\/(?:edit|view|preview|present|embed))?\/?$/;
 
 export function googleDriveMaterial(value) {
@@ -12,11 +13,14 @@ export function googleDriveMaterial(value) {
   if (url.protocol !== 'https:' || url.username || url.password || url.port) return null;
   let base;
   let editor;
+  let folder = false;
   if (url.hostname === 'drive.google.com') {
-    const id = url.pathname === '/open' ? url.searchParams.get('id')
-      : url.pathname.match(/^\/file\/d\/([A-Za-z0-9_-]{10,150})(?:\/(?:view|preview|edit))?\/?$/)?.[1];
+    const folderId = url.pathname.match(folderPath)?.[1];
+    const id = folderId || (url.pathname === '/open' ? url.searchParams.get('id')
+      : url.pathname.match(/^\/file\/d\/([A-Za-z0-9_-]{10,150})(?:\/(?:view|preview|edit))?\/?$/)?.[1]);
     if (!id || !fileId.test(id)) return null;
-    base = `https://drive.google.com/file/d/${id}`;
+    folder = !!folderId;
+    base = folder ? `https://drive.google.com/drive/folders/${id}` : `https://drive.google.com/file/d/${id}`;
   } else if (url.hostname === 'docs.google.com') {
     const match = url.pathname.match(editorPath);
     if (!match) return null;
@@ -30,7 +34,7 @@ export function googleDriveMaterial(value) {
     query = `?resourcekey=${key}`;
   }
   return {
-    open: `${base}/${editor ? 'edit' : 'view'}${query}`,
-    preview: `${base}/preview${query}`
+    open: folder ? base + query : `${base}/${editor ? 'edit' : 'view'}${query}`,
+    preview: folder ? null : `${base}/preview${query}`
   };
 }
