@@ -98,6 +98,42 @@ await check('Drive records must belong to a course and contain a supported Googl
     [c1,actors.admin,'https://drive.google.com/file/d/Example_File-4QB7qh7Dx/view']);
   assert.equal(result.rows[0].kind,'video');
 });
+const trackMigration=fs.readFileSync(new URL('supabase/migrations/20261122000000_track_learning_materials.sql',root),'utf8');
+const controlsTrack='Controls and Automation';
+const shareTrack=(actor,track,course=null)=>as(actor,
+  "insert into public.learning_materials(course_id,learning_track,uploaded_by,title,kind,drive_url) values($1,$2,auth.uid(),'Track slides','slides',$3) returning id",
+  [course,track,driveUrl]);
+await check('A track Drive link reaches its students without becoming a workshop or general-library item',async()=>{
+  await db.exec(trackMigration);await db.exec(trackMigration);
+  const id=(await shareTrack(actors.teacher,controlsTrack)).rows[0].id;
+  const visible=async actor=>(await as(actor,'select course_id,learning_track,drive_url from public.learning_materials where id=$1',[id])).rows;
+  for(const actor of [actors.admin,actors.teacher,actors.student])assert.deepEqual(await visible(actor),[{course_id:null,learning_track:controlsTrack,drive_url:driveUrl}]);
+  for(const actor of [actors.otherTeacher,actors.otherStudent,actors.pending,actors.investor])assert.deepEqual(await visible(actor),[]);
+  // A current course choice is enough, even before the learner has joined a workshop.
+  await db.query("insert into public.member_learning_paths(user_id,tracks) values($1,array[$2::text]),($3,array[$2::text])",[actors.outsider,controlsTrack,actors.pending]);
+  assert.equal((await as(actors.outsider,'select * from public.course_enrollments where learner_id=auth.uid()')).rows.length,0);
+  assert.equal((await visible(actors.outsider)).length,1);
+  assert.deepEqual(await visible(actors.pending),[]);
+  await db.query('delete from public.member_learning_paths where user_id in ($1,$2)',[actors.outsider,actors.pending]);
+  await reject(()=>shareTrack(actors.otherTeacher,controlsTrack),/row-level security/);
+  await reject(()=>shareTrack(actors.student,controlsTrack),/row-level security/);
+  await reject(()=>shareTrack(actors.admin,'Not a real course'),/learning_materials_track_check/);
+  await reject(()=>shareTrack(actors.admin,controlsTrack,c1),/row-level security|learning_materials_track_check/);
+  assert.equal((await shareTrack(actors.admin,'AI & Machine Learning')).rows.length,1);
+});
+await check('A track PDF can be downloaded only by its audience and stops appearing after administrators hide it',async()=>{
+  const path=actors.teacher+'/track-practice.pdf';
+  await as(actors.teacher,"insert into storage.objects(bucket_id,name) values('club-learning',$1)",[path]);
+  const id=(await as(actors.teacher,
+    "insert into public.learning_materials(learning_track,uploaded_by,title,kind,file_name,storage_path,file_size) values($1,auth.uid(),'Track notes','notes','track-practice.pdf',$2,2048) returning id",
+    [controlsTrack,path])).rows[0].id;
+  const visible=async actor=>(await as(actor,"select name from storage.objects where bucket_id='club-learning' and name=$1",[path])).rows.map(r=>r.name);
+  for(const actor of [actors.admin,actors.teacher,actors.student])assert.deepEqual(await visible(actor),[path]);
+  for(const actor of [actors.otherTeacher,actors.otherStudent,actors.pending,actors.investor])assert.deepEqual(await visible(actor),[]);
+  await as(actors.admin,'update public.learning_materials set hidden_at=now() where id=$1',[id]);
+  assert.deepEqual(await visible(actors.student),[]);
+  assert.deepEqual(await visible(actors.teacher),[]);
+});
 await check('Empty, duplicate and invented courses are rejected',async()=>{for(const tracks of [[],['fake'],['Controls and Automation','Controls and Automation']])await reject(()=>as(actors.student,'select public.set_my_learning_tracks($1)',[tracks]),/Select one or more/);});
 await check('Unverified and investor accounts cannot choose member courses',async()=>{for(const actor of [actors.unverified,actors.investor])await reject(()=>as(actor,"select public.set_my_learning_tracks(array['Controls and Automation'])"),/Verified club account/);});
 await check('Pending applicants save choices without joining a private class',async()=>{await as(actors.pending,"select public.set_my_learning_tracks(array['Controls and Automation'])");assert.equal((await db.query('select * from public.course_enrollments where learner_id=$1',[actors.pending])).rows.length,0);});
