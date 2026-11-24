@@ -33,6 +33,8 @@ jobs:
           npm run check:admin-mail
           npm run check:chapters
           npm run check:chapter-operations
+          node scripts/check_data_center_database.mjs
+          node scripts/check_data_center_ui.mjs
       - name: Check application and public verification
         run: |
           node --check member-id.js
