@@ -1,0 +1,17 @@
+.dc-workspace{min-width:0}
+.dc-workspace h1{margin:.25rem 0}
+.dc-controls,.dc-workspace .section-heading{margin-bottom:1rem}
+.dc-controls p{margin:.75rem 0}
+.dc-actions{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem}
+.dc-filters{display:flex;flex-wrap:wrap;align-items:end;gap:.75rem}
+.dc-filters label{display:grid;gap:.3rem;font-weight:650;flex:0 1 auto;max-width:100%}
+.dc-filters label:first-child{flex:1 1 225px}
+.dc-filters input,.dc-filters select{width:100%;min-height:42px;min-width:0;font:inherit}
+.dc-results{border:1px solid var(--line);border-radius:12px;overflow:auto;max-height:62vh;background:var(--white)}
+.dc-results table{border-collapse:collapse;width:100%;font-size:.87rem;text-align:left}
+.dc-results td,.dc-results th{padding:.7rem .8rem;border-bottom:1px solid var(--line);max-width:25ch;min-width:11ch;overflow-wrap:anywhere;vertical-align:top}
+.dc-results th{position:sticky;top:0;background:var(--white);z-index:1}
+.dc-pager{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;padding:.8rem 0}
+.dc-pager span{margin-inline-end:auto}
+.dc-results[hidden],.dc-pager[hidden]{display:none}
+.dc-status:empty{display:none}

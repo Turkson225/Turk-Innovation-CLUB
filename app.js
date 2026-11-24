@@ -1,6 +1,7 @@
 import { createClient } from './vendor/supabase.js';
 import {pages,workspacePageInfo,canOpenWorkspacePage} from './workspace-navigation.js';
 import {createAdminSecurity} from './admin-security.js';
+import {createDataCenter} from './assets/space-data-center.js';
 import {createAuthPersistence} from './auth-session.js';
 import {createChapterWorkspace} from './space-chapters.js';
 import {createChapterOperations} from './chapter-operations.js';
@@ -19,7 +20,7 @@ let accountNavigationPending=false;
 const {authTabStorage,authBrowserStorage,authBaseStorageKey,separateAccountMarker,separateAccountTab,separateSessionKey,authStorageKey,authPersistentStorage,SIGNED_OUT_KEY,clearSavedAuthTokens,migrateSavedAuth,clearTabEntries}=createAuthPersistence({cfg,configured,startupAuthCallback,startupRecovery,navigationPending:()=>accountNavigationPending});
 const db = configured && !startupRecovery ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, storageKey:authStorageKey, storage:authPersistentStorage, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
 let commerce=null,certification=null,mobileWorkspace=null,guidance=null,memberWall=null,bento=null,cardSwap=null,memberId=null,sharedGlow=null,avatarStudio=null,spaceMap=null,metrics=null,analytics=null;
-let adminSecurity=null,chapters=null,chapterOps=null;
+let adminSecurity=null,chapters=null,chapterOps=null,dataCenter=null;
 let sessionEnding=false,sessionSignOutPromise=null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -516,7 +517,7 @@ const networkOffline=()=>navigator.onLine===false;
 const schemaUnavailable=error=>['PGRST202','PGRST204','PGRST205','42P01','42703','42883'].includes(error?.code);
 const pageDataReady=(target=page)=>(pageRefreshDependencies[target]||[]).every(name=>Object.hasOwn(cache,name));
 function clearWorkspaceLoads(){
-  chapters?.reset();chapterOps?.reset();
+  chapters?.reset();chapterOps?.reset();dataCenter?.reset();
   for(const load of workspacePageLoads.values())clearTimeout(load.timer);
   workspacePageLoads.clear();workspacePageRequests.clear();workspacePageVersions.clear();workspaceCapabilityTask=null;profilesComplete=false;
   updateNetworkStatus();
@@ -825,7 +826,7 @@ function applyUnreadCounts(data){
 
 // Load the open page on demand. Exports fetch complete records independently.
 const pageRefreshDependencies={
-  'getting-started':['courses','course_enrollments','activity_posts','learning_materials','member_learning_paths','classroom_assignments','classroom_assignment_submissions','teaching_track_assignments'],'system-health':[],
+  'getting-started':['courses','course_enrollments','activity_posts','learning_materials','member_learning_paths','classroom_assignments','classroom_assignment_submissions','teaching_track_assignments'],'system-health':[],'data-center':[],
   shop:[],cart:[],orders:[],'order-desk':[],'shop-admin':[],'role-updates':[],
   classroom:['courses','learning_materials','course_enrollments','course_submissions','course_completions','classroom_assignments','classroom_assignment_submissions'],'meeting-room':['profiles'],'project-board':['projects','project_tasks','project_members','project_milestones','profiles','topics','replies','documents'],
   home:['project_tasks','courses','course_enrollments','course_submissions','course_completions','events','announcements','activity_posts','member_learning_paths','teaching_track_assignments','classroom_assignments','classroom_assignment_submissions'],
@@ -1467,7 +1468,7 @@ function route() {
   if(['officers','shop-admin','order-desk'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   if(officerAccessChecked&&(page==='office'&&!officerAccess()||page==='finance-reports'&&!financeReportAccess())){page='home';history.replaceState(null,'','#home');}
   if(page==='founder-room'&&authReady&&!founder()){page='founders';history.replaceState(null,'','#founders');show('Founder access required.');}
-  if(['admin','applications','moderation','system-health','chapter-admin'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
+  if(['admin','applications','moderation','system-health','chapter-admin','data-center'].includes(page)&&authReady&&!admin()){page='home';history.replaceState(null,'','#home');}
   if(page==='messages'){const peer=location.hash.slice(1).split('/')[1]||'';const next=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(peer)?peer:null;if(next!==activePeerId){activePeerId=next;dmRequest++;dmSearchRequest++;dmThreadLoading=false;dmEarlierLoading=false;dmSearchOpen=false;dmSearchBusy=false;dmReactionTarget=null;dmEmojiOpen=false;}}
   setSidebarOpen(false);
   if(session&&authReady&&approved()&&!workspaceHydrating)void refreshVisiblePage({force:true});
@@ -1479,7 +1480,7 @@ function route() {
   if(!networkOffline()&&page==='messages'&&dmReady){if(dmInboxReady)void loadDmInbox().then(()=>{if(page==='messages'&&!activePeerId)render();});if(activePeerId)void loadDmThread();}
 }
 function render() {
-  chapters?.sync();chapterOps?.sync();
+  chapters?.sync();chapterOps?.sync();dataCenter?.sync();
   updateNetworkStatus();
   const ownProfile=$('#myProfileLink');if(ownProfile&&session?.user.id)ownProfile.href='#members/'+session.user.id;
   if(adminSecurity?.blocked){
@@ -1528,7 +1529,7 @@ function render() {
   if(session&&approved()&&load&&!load.hadData&&['loading','offline','error'].includes(load.status)&&!learningSelectionRequired()){
     analytics?.sync(null);metrics?.sync(null);spaceMap?.sync(null);avatarStudio?.sync(null);sharedGlow?.sync(null);window.SpaceChatWaves?.sync(null);memberWall?.sync(null);bento?.sync(null);cardSwap?.sync(null);$('#content').classList.remove('dm-view');$('#content').innerHTML=workspaceSkeleton(page,{slow:load.slow,error:load.status==='error'});return;
   }
-  const views={chapters:()=>chapters.view(),'chapter-admin':()=>chapterOps.view(),'chapter-offices':()=>chapterOps.view(),'space-map':()=>spaceMap?.view()||head('COMMUNITY','SPACE Map','Reload SPACE to open the map.'),'avatar-studio':()=>avatarStudio?.view()||head('YOUR SPACE','Avatar studio','Reload SPACE to open the studio.'),'getting-started':()=>guidance?.welcome()||head('WELCOME','Getting started','Reload SPACE to open your welcome guide.'),'system-health':()=>admin()?(guidance?.healthView()||head('ADMINISTRATION','System health','Reload SPACE to open the checks.')):'',...Object.fromEntries(['shop','cart','orders','order-desk','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
+  const views={'data-center':()=>dataCenter.view(),chapters:()=>chapters.view(),'chapter-admin':()=>chapterOps.view(),'chapter-offices':()=>chapterOps.view(),'space-map':()=>spaceMap?.view()||head('COMMUNITY','SPACE Map','Reload SPACE to open the map.'),'avatar-studio':()=>avatarStudio?.view()||head('YOUR SPACE','Avatar studio','Reload SPACE to open the studio.'),'getting-started':()=>guidance?.welcome()||head('WELCOME','Getting started','Reload SPACE to open your welcome guide.'),'system-health':()=>admin()?(guidance?.healthView()||head('ADMINISTRATION','System health','Reload SPACE to open the checks.')):'',...Object.fromEntries(['shop','cart','orders','order-desk','shop-admin','role-updates'].map(name=>[name,()=>commerce?commerce.render(name):head('WORKSPACE','Please reload SPACE','The shop and role update tools could not download. Check your connection and reload.')])),classroom:classroomWorkspace,'meeting-room':advancedMeetingWorkspace,'project-board':advancedProjectWorkspace,home,about,founders,investors,'investor-portal':investorPortal,admin:adminDashboard,privacy,application,applications,moderation,notifications,members,messages,feed,channels,library,news,projects,inventory,finance,'finance-review':financeReview,'finance-reports':financeReportsPage,officers:officersPage,office:officePage,discussions,courses,teaching,events,calendar:calendarPage,announcements,'founder-room':founderRoom};
   $('#content').classList.toggle('dm-view',page==='messages');
   $('#content').innerHTML=(!compactHome&&advancedReady&&advancedLoadError&&page!=='classroom'?`<div class="notice">${esc(advancedLoadError)} <button class="text-button" data-action="spaceReload">Reload workspace</button></div>`:'')+(page==='home'&&!compactHome?(guidance?.banner()||''):'')+(page==='admin'?'<a class="admin-order-shortcut" href="#order-desk"><strong>Orders &amp; fulfilment</strong><span>Process new purchases, update status and send receipts →</span></a>':'')+views[page]();
   if(homeFocus?.homeTab)$('#space-home-tab-'+homeFocus.homeTab)?.focus({preventScroll:true});
@@ -1569,7 +1570,7 @@ function workspaceSearchItems(){
   if(teacher())destinations.push(['teaching','Teaching studio','Workshops, students and feedback']);
   if(founder())destinations.push(['founder-room','Founder room','Meetings and decisions'],['investors','Investors','Club partnerships']);
   if(officerAccess())destinations.push(['office','My office','Officer duties and work records']);
-  if(admin())destinations.push(['system-health','System health','Delivery queues and configuration'],['order-desk','Orders & fulfilment','Process incoming orders update status and receipts'],['shop-admin','Manage shop','Products prices sale stock and orders'],['officers','Roles & offices','Assign club responsibilities']);
+  if(admin())destinations.push(['system-health','System health','Delivery queues and configuration'],['data-center','Data Center','Records change history daily activity data CSV JSON exports'],['order-desk','Orders & fulfilment','Process incoming orders update status and receipts'],['shop-admin','Manage shop','Products prices sale stock and orders'],['officers','Roles & offices','Assign club responsibilities']);
   if(financeReportAccess())destinations.push(['finance-reports','Finance reports','Approved monthly reports']);
   if(investor()||admin())destinations.push(['investor-portal','Investor portal','Approved investor updates']);
   if(admin())destinations.push(['admin','Admin dashboard','Club oversight'],['applications','Applications','Review new accounts'],['moderation','Moderation','Review reports'],['finance','Finance','Funds and records']);
@@ -3109,7 +3110,7 @@ function adminDashboard(){
   const inquiries=(cache.investor_inquiries||[]).filter(q=>q.status==='new');
   const posts=cache.activity_posts||[],projects=cache.projects||[];
   const exports=[['profiles','Applications & members'],['projects','Projects'],['events','Events'],['activity_posts','Activity posts'],['reports','Reports'],['investor_inquiries','Investor inquiries'],['audit_events','Audit log']];
-  return `${head('ADMINISTRATION','Admin overview','Start with membership approvals, then check reports, club records and recent actions.', '<a class="button button-outline" href="#officers">Roles & offices →</a>')}
+  return `${head('ADMINISTRATION','Admin overview','Start with membership approvals, then check reports, club records and recent actions.', '<a class="button button-outline" href="#data-center">Open Data Center →</a>')}
   ${!roleReady?'<div class="notice">Run the roles and investors migration to enable applicant types and the investor portal.</div>':''}
   <div class="grid grid-4" data-bento="summary"><a class="stat dashboard-stat" href="#applications"><small>Pending applications</small><b>${adminPendingCount}</b><span>Review requests →</span></a><a class="stat dashboard-stat" href="#moderation"><small>Open reports</small><b>${reports.length}</b><span>Moderate content →</span></a><a class="stat dashboard-stat" href="#feed"><small>Recent activity posts</small><b>${posts.length}</b><span>View feed →</span></a><a class="stat dashboard-stat" href="#projects"><small>Projects</small><b>${projects.length}</b><span>View plans →</span></a></div>
   ${privacyQueue.length?`<div class="notice privacy-admin-notice"><strong>${privacyQueue.length} privacy ${privacyQueue.length===1?'request needs':'requests need'} review.</strong> <a href="#privacy">Open the administrator queue →</a></div>`:''}
@@ -5162,6 +5163,12 @@ function memberIdState(){
 }
 adminSecurity=createAdminSecurity({db,current:()=>({id:session?.user.id||''}),changed:()=>{if(adminSecurity?.blocked)render();},verified:async owner=>{const {data,error}=await db.auth.getSession();if(error)throw error;if(session?.user.id===owner&&data.session?.user.id===owner)await signedIn(data.session);},signOut});
 adminSecurity.bind();
+dataCenter=createDataCenter({
+  rpc:(name,args)=>requestWithDeadline(()=>db.rpc(name,args),15000,'The Data Center request timed out. Try a shorter date range.'),
+  current:()=>({id:session?.user.id||'',generation:authGeneration,page,admin:!!db&&!sessionEnding&&admin()}),
+  redraw:render,authFailure:fail
+});
+dataCenter.bind(document);
 chapters=createChapterWorkspace({db,esc,head,render,modal,close,show,fail,deadline:requestWithDeadline,missing:schemaUnavailable,
  get:()=>{const slug=location.hash.slice(1).split('/')[1]||'';return {page,id:session?.user.id,generation:authGeneration,admin:admin(),allowed:!sessionEnding&&!workspaceHydrating&&!workspaceLoading&&!workspaceLoadError&&clubAccess(),slug:/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)&&slug.length<=48?slug:''};}
 });
